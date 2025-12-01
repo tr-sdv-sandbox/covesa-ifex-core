@@ -1,0 +1,14 @@
+build
+cmake-build-*
+logs
+proto/*.proto
+proto/python
+test-logs
+.claude
+.idea
+test-gui/venv
+venv
+__pycache__
+third_party
+*/*.log
+

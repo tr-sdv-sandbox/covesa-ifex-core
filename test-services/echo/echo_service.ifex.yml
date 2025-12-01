@@ -1,0 +1,60 @@
+name: echo_service
+major_version: 1
+minor_version: 0
+description: Simple echo service for testing IFEX dynamic invocation
+
+namespaces:
+  - name: basic
+    description: Basic echo operations
+    methods:
+      - name: echo
+        description: Echo back the input message
+        input:
+          - name: message
+            datatype: string
+            description: Message to echo back
+            mandatory: true
+        output:
+          - name: response
+            datatype: string
+            description: Echoed message
+            
+      - name: echo_with_delay
+        description: Echo back the input message after a delay
+        input:
+          - name: message
+            datatype: string
+            description: Message to echo back
+            mandatory: true
+          - name: delay_ms
+            datatype: uint32
+            description: Delay in milliseconds
+            mandatory: true
+        output:
+          - name: response
+            datatype: string
+            description: Echoed message
+          - name: actual_delay_ms
+            datatype: uint32
+            description: Actual delay in milliseconds
+            
+      - name: concat
+        description: Concatenate two strings
+        input:
+          - name: first
+            datatype: string
+            description: First string
+            mandatory: true
+          - name: second
+            datatype: string
+            description: Second string
+            mandatory: true
+          - name: separator
+            datatype: string
+            description: Separator between strings
+            mandatory: false
+            default: " "
+        output:
+          - name: result
+            datatype: string
+            description: Concatenated string

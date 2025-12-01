@@ -1,0 +1,146 @@
+---
+name: defrost_service
+major_version: 1
+minor_version: 0
+description: Windshield and mirror defrost control service
+
+namespaces:
+  - name: defrost
+    description: Defrost and visibility management
+    
+    enumerations:
+      - name: defrost_mode_t
+        datatype: uint8
+        description: Defrost operation modes
+        options:
+          - name: "OFF"
+            value: 0
+            description: Defrost disabled
+          - name: WINDSHIELD_ONLY
+            value: 1
+            description: Front windshield only
+          - name: ALL_WINDOWS
+            value: 2
+            description: All windows defrost
+          - name: QUICK_CLEAR
+            value: 3
+            description: Maximum defrost all surfaces
+            
+      - name: surface_t
+        datatype: uint8
+        description: Defrostable surfaces
+        options:
+          - name: FRONT_WINDSHIELD
+            value: 0
+          - name: REAR_WINDOW
+            value: 1
+          - name: SIDE_MIRRORS
+            value: 2
+          - name: SIDE_WINDOWS
+            value: 3
+            
+      - name: visibility_status_t
+        datatype: uint8
+        description: Visibility condition
+        options:
+          - name: CLEAR
+            value: 0
+            description: Surface is clear
+          - name: LIGHT_FOG
+            value: 1
+            description: Light condensation
+          - name: HEAVY_FOG
+            value: 2
+            description: Heavy condensation
+          - name: FROST
+            value: 3
+            description: Frost buildup
+          - name: ICE
+            value: 4
+            description: Ice formation
+            
+    structs:
+      - name: defrost_request_t
+        description: Defrost operation request
+        members:
+          - name: mode
+            datatype: defrost_mode_t
+            description: Defrost mode to activate
+          - name: max_duration_minutes
+            datatype: uint8
+            description: Maximum operation duration
+            default: 10
+            constraints:
+              min: 1
+              max: 30
+          - name: auto_stop_when_clear
+            datatype: boolean
+            description: Stop when sensors detect clear
+            default: true
+            
+      - name: surface_status_t
+        description: Status of a defrostable surface
+        members:
+          - name: surface
+            datatype: surface_t
+            description: Surface identifier
+          - name: visibility
+            datatype: visibility_status_t
+            description: Current visibility status
+          - name: heater_active
+            datatype: boolean
+            description: Whether heater is active
+          - name: temperature_celsius
+            datatype: float
+            description: Surface temperature
+            
+    methods:
+      - name: start_defrost
+        description: Start defrost operation
+        input:
+          - name: request
+            datatype: defrost_request_t
+            description: Defrost request parameters
+            mandatory: true
+        output:
+          - name: operation_id
+            datatype: string
+            description: Unique operation identifier
+          - name: accepted
+            datatype: boolean
+            description: Whether request was accepted
+          - name: estimated_clear_time_seconds
+            datatype: uint32
+            description: Estimated time to clear
+            
+      - name: stop_defrost
+        description: Stop active defrost operation
+        input:
+          - name: operation_id
+            datatype: string
+            description: Operation to stop
+            mandatory: false
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether stop succeeded
+            
+      - name: get_visibility_status
+        description: Get current visibility status
+        output:
+          - name: surfaces
+            datatype: surface_status_t[]
+            description: Status of all surfaces
+          - name: overall_visibility_safe
+            datatype: boolean
+            description: Whether visibility is safe for driving
+            
+      - name: quick_clear_windshield
+        description: Emergency quick clear for windshield
+        output:
+          - name: activated
+            datatype: boolean
+            description: Whether quick clear activated
+          - name: estimated_clear_seconds
+            datatype: uint32
+            description: Seconds until clear

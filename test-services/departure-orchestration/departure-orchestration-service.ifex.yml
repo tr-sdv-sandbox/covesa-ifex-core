@@ -1,0 +1,236 @@
+---
+name: departure_orchestration_service
+major_version: 1
+minor_version: 0
+description: Orchestrates vehicle preparation for scheduled departures
+
+namespaces:
+  - name: departure
+    description: Departure scheduling and preparation orchestration
+    
+    enumerations:
+      - name: preparation_step_type_t
+        datatype: uint8
+        description: Types of preparation steps
+        options:
+          - name: CLIMATE_START
+            value: 0
+            description: Start climate control
+          - name: DEFROST_START
+            value: 1
+            description: Start defrost sequence
+          - name: SEAT_HEATING_START
+            value: 2
+            description: Start seat heating/cooling
+          - name: BEVERAGE_START
+            value: 3
+            description: Start beverage preparation
+          - name: BATTERY_PRECONDITIONING
+            value: 4
+            description: Precondition battery for optimal range
+          - name: ROUTE_CALCULATION
+            value: 5
+            description: Calculate optimal route
+            
+      - name: schedule_status_t
+        datatype: uint8
+        description: Status of departure schedule
+        options:
+          - name: SCHEDULED
+            value: 0
+            description: Schedule created and waiting
+          - name: PREPARING
+            value: 1
+            description: Actively preparing vehicle
+          - name: READY
+            value: 2
+            description: Vehicle ready for departure
+          - name: COMPLETED
+            value: 3
+            description: Departure time passed
+          - name: CANCELLED
+            value: 4
+            description: Schedule cancelled
+          - name: ERROR
+            value: 5
+            description: Preparation error occurred
+            
+    structs:
+      - name: comfort_preferences_t
+        description: Comfort preferences for departure
+        members:
+          - name: cabin_temperature_celsius
+            datatype: float
+            description: Desired cabin temperature
+            default: 22.0
+            constraints:
+              min: 16.0
+              max: 28.0
+          - name: seat_temperature_level
+            datatype: int32
+            description: Seat heating/cooling level (-3 to +3)
+            default: 0
+            constraints:
+              min: -3
+              max: 3
+          - name: steering_wheel_heating
+            datatype: boolean
+            description: Enable steering wheel heating
+            default: false
+            
+      - name: beverage_request_t
+        description: Beverage preparation request
+        members:
+          - name: prepare_beverage
+            datatype: boolean
+            description: Whether to prepare a beverage
+            default: false
+          - name: beverage_type
+            datatype: string
+            description: Type of beverage (maps to beverage service)
+            mandatory: false
+          - name: strength
+            datatype: uint8
+            description: Strength level (1-4)
+            default: 2
+            mandatory: false
+            
+      - name: departure_schedule_t
+        description: Complete departure schedule configuration
+        members:
+          - name: departure_time
+            datatype: int64
+            description: Unix timestamp of planned departure
+          - name: comfort_prefs
+            datatype: comfort_preferences_t
+            description: Comfort preferences
+          - name: beverage_request
+            datatype: beverage_request_t
+            description: Beverage preparation request
+          - name: auto_defrost
+            datatype: boolean
+            description: Automatically defrost if needed
+            default: true
+          - name: precondition_battery
+            datatype: boolean
+            description: Precondition battery for EVs
+            default: true
+          - name: calculate_route_to
+            datatype: string
+            description: Destination for route calculation
+            mandatory: false
+            
+      - name: preparation_step_t
+        description: Individual preparation step in timeline
+        members:
+          - name: step_type
+            datatype: preparation_step_type_t
+            description: Type of preparation step
+          - name: scheduled_start_time
+            datatype: int64
+            description: Unix timestamp when step should start
+          - name: duration_seconds
+            datatype: uint32
+            description: Expected duration of this step
+          - name: description
+            datatype: string
+            description: Human-readable description
+            
+      - name: schedule_status_info_t
+        description: Detailed schedule status information
+        members:
+          - name: schedule_id
+            datatype: string
+            description: Unique schedule identifier
+          - name: status
+            datatype: schedule_status_t
+            description: Current schedule status
+          - name: departure_time
+            datatype: int64
+            description: Scheduled departure time
+          - name: preparation_start_time
+            datatype: int64
+            description: When preparation will/did start
+          - name: current_step
+            datatype: string
+            description: Currently executing step
+            mandatory: false
+          - name: completion_percent
+            datatype: uint8
+            description: Overall completion percentage
+            
+    methods:
+      - name: schedule_departure
+        description: Create a new departure schedule
+        input:
+          - name: schedule
+            datatype: departure_schedule_t
+            description: Departure schedule configuration
+            mandatory: true
+        output:
+          - name: schedule_id
+            datatype: string
+            description: Unique identifier for this schedule
+          - name: accepted
+            datatype: boolean
+            description: Whether schedule was accepted
+          - name: preparation_timeline
+            datatype: preparation_step_t[]
+            description: Planned preparation timeline
+            
+      - name: get_schedule_status
+        description: Get status of a departure schedule
+        input:
+          - name: schedule_id
+            datatype: string
+            description: Schedule ID to query
+        output:
+          - name: status_info
+            datatype: schedule_status_info_t
+            description: Current schedule status
+          - name: active_steps
+            datatype: preparation_step_t[]
+            description: Currently active preparation steps
+            
+      - name: cancel_schedule
+        description: Cancel a departure schedule
+        input:
+          - name: schedule_id
+            datatype: string
+            description: Schedule ID to cancel
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether cancellation succeeded
+          - name: systems_to_shutdown
+            datatype: string[]
+            description: Systems that will be shut down
+            
+      - name: modify_schedule
+        description: Modify an existing schedule
+        input:
+          - name: schedule_id
+            datatype: string
+            description: Schedule ID to modify
+          - name: new_departure_time
+            datatype: int64
+            description: New departure time
+            mandatory: false
+          - name: new_comfort_prefs
+            datatype: comfort_preferences_t
+            description: Updated comfort preferences
+            mandatory: false
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether modification succeeded
+          - name: updated_timeline
+            datatype: preparation_step_t[]
+            description: Updated preparation timeline
+            
+      - name: get_active_schedules
+        description: Get all active departure schedules
+        output:
+          - name: schedules
+            datatype: schedule_status_info_t[]
+            description: List of active schedules

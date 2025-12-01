@@ -1,0 +1,185 @@
+---
+name: climate_comfort_service
+major_version: 1
+minor_version: 0
+description: High-level climate comfort orchestration service
+
+namespaces:
+  - name: comfort
+    description: Climate comfort control with semantic operations
+    
+    enumerations:
+      - name: comfort_mode_t
+        datatype: uint8
+        description: Semantic comfort modes
+        options:
+          - name: ECO
+            value: 0
+            description: Maximize efficiency, moderate comfort
+          - name: COMFORT
+            value: 1
+            description: Balanced comfort and efficiency
+          - name: PERFORMANCE
+            value: 2
+            description: Maximum comfort, ignore efficiency
+          - name: QUIET
+            value: 3
+            description: Minimize noise, reduced fan speeds
+            
+      - name: air_quality_mode_t
+        datatype: uint8
+        description: Air quality management modes
+        options:
+          - name: FRESH_AIR
+            value: 0
+            description: Maximize outside air intake
+          - name: RECIRCULATE
+            value: 1
+            description: Recirculate cabin air
+          - name: AUTO
+            value: 2
+            description: Automatic based on sensors
+          - name: POLLUTION_PROTECT
+            value: 3
+            description: Minimize outside air in polluted areas
+            
+      - name: zone_preset_t
+        datatype: uint8
+        description: Zone configuration presets
+        options:
+          - name: ALL_ZONES
+            value: 0
+            description: All zones same temperature
+          - name: DRIVER_ONLY
+            value: 1
+            description: Focus on driver comfort
+          - name: FRONT_ONLY
+            value: 2
+            description: Front seats only
+          - name: INDIVIDUAL
+            value: 3
+            description: Each zone different
+            
+    structs:
+      - name: comfort_request_t
+        description: High-level comfort request
+        members:
+          - name: mode
+            datatype: comfort_mode_t
+            description: Overall comfort mode
+            default: 1  # COMFORT
+          - name: target_temperature
+            datatype: float
+            description: Target cabin temperature
+            constraints:
+              min: 16.0
+              max: 28.0
+          - name: zone_preset
+            datatype: zone_preset_t
+            description: Zone configuration preset
+            default: 0  # ALL_ZONES
+          - name: air_quality_mode
+            datatype: air_quality_mode_t
+            description: Air quality preference
+            default: 2  # AUTO
+            
+      - name: comfort_status_t
+        description: Current comfort status
+        members:
+          - name: current_mode
+            datatype: comfort_mode_t
+            description: Active comfort mode
+          - name: average_cabin_temp
+            datatype: float
+            description: Average cabin temperature
+          - name: achieving_target
+            datatype: boolean
+            description: Whether target is being achieved
+          - name: efficiency_score
+            datatype: uint8
+            description: Current efficiency (0-100)
+          - name: estimated_time_to_comfort
+            datatype: uint32
+            description: Seconds until comfort achieved
+            
+    methods:
+      - name: set_comfort
+        description: Set cabin comfort using semantic preferences
+        input:
+          - name: request
+            datatype: comfort_request_t
+            description: Comfort request
+            mandatory: true
+        output:
+          - name: accepted
+            datatype: boolean
+            description: Whether request was accepted
+          - name: estimated_time_seconds
+            datatype: uint32
+            description: Estimated time to achieve comfort
+          - name: vss_signals_modified
+            datatype: uint32
+            description: Number of VSS signals that will be modified
+            
+      - name: quick_comfort_adjustment
+        description: Quick comfort adjustments
+        input:
+          - name: adjustment
+            datatype: string
+            description: "warmer|cooler|quieter|fresher"
+          - name: intensity
+            datatype: uint8
+            description: Adjustment intensity (1-3)
+            default: 2
+            constraints:
+              min: 1
+              max: 3
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether adjustment was applied
+          - name: new_settings
+            datatype: string
+            description: Description of new settings
+            
+      - name: optimize_for_efficiency
+        description: Optimize current settings for efficiency
+        input:
+          - name: maintain_minimum_comfort
+            datatype: boolean
+            description: Maintain basic comfort level
+            default: true
+        output:
+          - name: optimizations_applied
+            datatype: string[]
+            description: List of optimizations applied
+          - name: efficiency_improvement_percent
+            datatype: uint8
+            description: Expected efficiency improvement
+            
+      - name: get_comfort_status
+        description: Get current comfort status
+        output:
+          - name: status
+            datatype: comfort_status_t
+            description: Current comfort status
+          - name: zone_temperatures
+            datatype: float[]
+            description: Current temperature by zone
+            
+      - name: prepare_for_occupancy
+        description: Prepare cabin for upcoming occupancy
+        input:
+          - name: expected_occupancy_seconds
+            datatype: uint32
+            description: Seconds until occupancy
+          - name: target_comfort
+            datatype: comfort_request_t
+            description: Desired comfort when occupied
+        output:
+          - name: preparation_started
+            datatype: boolean
+            description: Whether preparation started
+          - name: ready_by_time
+            datatype: boolean
+            description: Whether target will be achieved in time

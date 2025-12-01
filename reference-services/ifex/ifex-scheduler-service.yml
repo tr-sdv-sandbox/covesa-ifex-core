@@ -1,0 +1,313 @@
+---
+name: ifex_scheduler
+major_version: 2
+minor_version: 0
+description: Calendar-style scheduler for IFEX-defined services
+
+namespaces:
+  - name: core
+    description: Core scheduling functionality
+    
+    enumerations:
+      - name: job_status_t
+        datatype: uint8
+        description: Job execution status
+        options:
+          - name: PENDING
+            value: 0
+            description: Job is scheduled but not yet executed
+          - name: RUNNING
+            value: 1
+            description: Job is currently executing
+          - name: COMPLETED
+            value: 2
+            description: Job completed successfully
+          - name: FAILED
+            value: 3
+            description: Job execution failed
+          - name: CANCELLED
+            value: 4
+            description: Job was cancelled
+            
+      - name: view_type_t
+        datatype: uint8
+        description: Calendar view types
+        options:
+          - name: DAY
+            value: 0
+            description: Daily view
+          - name: WEEK
+            value: 1
+            description: Weekly view
+          - name: MONTH
+            value: 2
+            description: Monthly view
+          - name: RANGE
+            value: 3
+            description: Custom date range
+
+    structs:
+      - name: job_t
+        description: Complete job information
+        members:
+          - name: id
+            datatype: string
+            description: Unique job identifier
+          - name: title
+            datatype: string
+            description: Human-readable job title
+          - name: service
+            datatype: string
+            description: Target service name
+          - name: method
+            datatype: string
+            description: Target method name
+          - name: parameters
+            datatype: string
+            description: JSON-encoded method parameters
+          - name: scheduled_time
+            datatype: string
+            description: ISO 8601 datetime (e.g., 2025-06-16T09:00:00)
+          - name: recurrence_rule
+            datatype: string
+            description: Cron expression or RFC 5545 RRULE
+            mandatory: false
+          - name: end_time
+            datatype: string
+            description: End time for recurring jobs (ISO 8601)
+            mandatory: false
+          - name: status
+            datatype: job_status_t
+            description: Current job status
+          - name: created_at
+            datatype: string
+            description: ISO 8601 creation timestamp
+          - name: updated_at
+            datatype: string
+            description: ISO 8601 last update timestamp
+          - name: executed_at
+            datatype: string
+            description: ISO 8601 last execution timestamp
+            mandatory: false
+          - name: next_run_time
+            datatype: string
+            description: ISO 8601 next scheduled run (for recurring)
+            mandatory: false
+          - name: error_message
+            datatype: string
+            description: Error message if failed
+            mandatory: false
+          - name: result
+            datatype: string
+            description: JSON-encoded result from service call
+            mandatory: false
+          - name: service_address
+            datatype: string
+            description: Service endpoint address
+            mandatory: false
+            
+      - name: job_filter_t
+        description: Filter criteria for retrieving jobs
+        members:
+          - name: start_date
+            datatype: string
+            description: ISO date for range start
+            mandatory: false
+          - name: end_date
+            datatype: string
+            description: ISO date for range end
+            mandatory: false
+          - name: service
+            datatype: string
+            description: Filter by service name
+            mandatory: false
+          - name: status
+            datatype: job_status_t
+            description: Filter by status
+            mandatory: false
+          - name: has_status_filter
+            datatype: boolean
+            description: Whether to apply status filter
+            mandatory: false
+            default: false
+          - name: include_completed
+            datatype: boolean
+            description: Include completed jobs
+            default: false
+            
+      - name: job_create_t
+        description: Information needed to create a new job
+        members:
+          - name: title
+            datatype: string
+            description: Human-readable job title
+          - name: service
+            datatype: string
+            description: Target service name
+          - name: method
+            datatype: string
+            description: Target method name
+          - name: parameters
+            datatype: string
+            description: JSON-encoded method parameters
+          - name: scheduled_time
+            datatype: string
+            description: ISO 8601 datetime for first execution
+          - name: recurrence_rule
+            datatype: string
+            description: Cron expression (e.g., "0 8 * * MON-FRI") or RRULE
+            mandatory: false
+          - name: end_time
+            datatype: string
+            description: End time for recurring jobs (ISO 8601)
+            mandatory: false
+          - name: service_address
+            datatype: string
+            description: Override service discovery with specific address
+            mandatory: false
+            
+      - name: job_update_t
+        description: Fields that can be updated in an existing job
+        members:
+          - name: title
+            datatype: string
+            description: New title
+            mandatory: false
+          - name: scheduled_time
+            datatype: string
+            description: New scheduled time (ISO 8601)
+            mandatory: false
+          - name: recurrence_rule
+            datatype: string
+            description: New recurrence rule
+            mandatory: false
+          - name: end_time
+            datatype: string
+            description: New end time for recurring
+            mandatory: false
+          - name: parameters
+            datatype: string
+            description: New JSON parameters
+            mandatory: false
+          - name: service_address
+            datatype: string
+            description: New service address
+            mandatory: false
+
+    methods:
+      - name: create_job
+        description: Create a new scheduled job
+        input:
+          - name: job
+            datatype: job_create_t
+            description: Job creation details
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether creation succeeded
+          - name: job_id
+            datatype: string
+            description: Unique identifier for the created job
+          - name: message
+            datatype: string
+            description: Success or error message
+            
+      - name: get_jobs
+        description: Retrieve jobs based on filter criteria
+        input:
+          - name: filter
+            datatype: job_filter_t
+            description: Filter criteria (empty for all jobs)
+            mandatory: false
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether request succeeded
+          - name: jobs
+            datatype: job_t[]
+            description: List of jobs matching criteria
+            
+      - name: get_job
+        description: Retrieve a specific job by ID
+        input:
+          - name: job_id
+            datatype: string
+            description: Job identifier
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether job was found
+          - name: job
+            datatype: job_t
+            description: Job details
+            mandatory: false
+          - name: message
+            datatype: string
+            description: Error message if not found
+            mandatory: false
+            
+      - name: update_job
+        description: Update an existing job
+        input:
+          - name: job_id
+            datatype: string
+            description: Job identifier to update
+            mandatory: true
+          - name: updates
+            datatype: job_update_t
+            description: Fields to update
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether update succeeded
+          - name: message
+            datatype: string
+            description: Success or error message
+            
+      - name: delete_job
+        description: Delete a scheduled job
+        input:
+          - name: job_id
+            datatype: string
+            description: Job identifier to delete
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether deletion succeeded
+          - name: message
+            datatype: string
+            description: Success or error message
+            
+      - name: get_calendar_view
+        description: Get jobs formatted for calendar display
+        input:
+          - name: view_type
+            datatype: view_type_t
+            description: Type of calendar view
+            mandatory: true
+          - name: date
+            datatype: string
+            description: Reference date (ISO format)
+            mandatory: true
+          - name: timezone
+            datatype: string
+            description: IANA timezone (e.g., "America/New_York")
+            mandatory: false
+            default: "UTC"
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether request succeeded
+          - name: start_date
+            datatype: string
+            description: Actual start date of the view
+          - name: end_date
+            datatype: string
+            description: Actual end date of the view
+          - name: jobs
+            datatype: job_t[]
+            description: Jobs within the date range

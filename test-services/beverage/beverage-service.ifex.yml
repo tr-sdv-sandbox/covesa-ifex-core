@@ -1,0 +1,168 @@
+---
+name: beverage_service
+major_version: 1
+minor_version: 0
+description: In-vehicle beverage preparation system
+
+namespaces:
+  - name: beverage
+    description: Beverage preparation control and monitoring
+    
+    enumerations:
+      - name: beverage_type_t
+        datatype: uint8
+        description: Available beverage types
+        options:
+          - name: COFFEE
+            value: 0
+            description: Regular coffee
+          - name: ESPRESSO
+            value: 1
+            description: Espresso shot
+          - name: CAPPUCCINO
+            value: 2
+            description: Cappuccino with steamed milk
+          - name: TEA
+            value: 3
+            description: Hot tea
+          - name: HOT_WATER
+            value: 4
+            description: Plain hot water
+            
+      - name: preparation_state_t
+        datatype: uint8
+        description: Current state of beverage preparation
+        options:
+          - name: IDLE
+            value: 0
+            description: No active preparation
+          - name: HEATING
+            value: 1
+            description: Heating water
+          - name: BREWING
+            value: 2
+            description: Brewing beverage
+          - name: READY
+            value: 3
+            description: Beverage ready for consumption
+          - name: ERROR
+            value: 4
+            description: Preparation error occurred
+            
+      - name: strength_level_t
+        datatype: uint8
+        description: Beverage strength preference
+        options:
+          - name: MILD
+            value: 0
+            description: Mild strength
+          - name: REGULAR
+            value: 1
+            description: Regular strength
+          - name: STRONG
+            value: 2
+            description: Strong
+          - name: EXTRA_STRONG
+            value: 3
+            description: Extra strong
+            
+    structs:
+      - name: beverage_config_t
+        description: Configuration for beverage preparation
+        members:
+          - name: type
+            datatype: beverage_type_t
+            description: Type of beverage to prepare
+          - name: strength
+            datatype: strength_level_t
+            description: Strength preference
+            default: 1  # REGULAR
+          - name: temperature_celsius
+            datatype: uint8
+            description: Target temperature in Celsius
+            default: 85
+            constraints:
+              min: 60
+              max: 95
+          - name: size_ml
+            datatype: uint16
+            description: Beverage size in milliliters
+            default: 250
+            constraints:
+              min: 100
+              max: 500
+              
+      - name: preparation_status_t
+        description: Current preparation status
+        members:
+          - name: state
+            datatype: preparation_state_t
+            description: Current state
+          - name: progress_percent
+            datatype: uint8
+            description: Progress percentage (0-100)
+            constraints:
+              min: 0
+              max: 100
+          - name: remaining_seconds
+            datatype: uint32
+            description: Estimated time remaining
+          - name: ready_at_timestamp
+            datatype: int64
+            description: Unix timestamp when beverage will be ready
+            mandatory: false
+            
+    methods:
+      - name: prepare_beverage
+        description: Start beverage preparation
+        input:
+          - name: config
+            datatype: beverage_config_t
+            description: Beverage configuration
+            mandatory: true
+        output:
+          - name: accepted
+            datatype: boolean
+            description: Whether preparation was accepted
+          - name: preparation_id
+            datatype: string
+            description: Unique ID for this preparation
+          - name: estimated_duration_seconds
+            datatype: uint32
+            description: Estimated preparation time
+            
+      - name: get_preparation_status
+        description: Get current preparation status
+        input:
+          - name: preparation_id
+            datatype: string
+            description: Preparation ID to check
+            mandatory: false
+        output:
+          - name: status
+            datatype: preparation_status_t
+            description: Current preparation status
+            
+      - name: cancel_preparation
+        description: Cancel ongoing preparation
+        input:
+          - name: preparation_id
+            datatype: string
+            description: Preparation ID to cancel
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether cancellation succeeded
+            
+      - name: get_capabilities
+        description: Get beverage system capabilities
+        output:
+          - name: available_types
+            datatype: beverage_type_t[]
+            description: Available beverage types
+          - name: water_level_percent
+            datatype: uint8
+            description: Current water level percentage
+          - name: requires_maintenance
+            datatype: boolean
+            description: Whether maintenance is needed

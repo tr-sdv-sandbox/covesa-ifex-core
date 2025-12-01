@@ -1,0 +1,293 @@
+---
+name: service_discovery
+major_version: 1
+minor_version: 0
+description: Service discovery and registry for dynamic service binding and capability detection
+
+namespaces:
+  - name: registry
+    description: Service registration and discovery functionality
+    
+    enumerations:
+      - name: service_status_t
+        datatype: uint8
+        description: Current status of a registered service
+        options:
+          - name: AVAILABLE
+            value: 0
+            description: Service is available and responding
+          - name: UNAVAILABLE
+            value: 1
+            description: Service is registered but not responding
+          - name: STARTING
+            value: 2
+            description: Service is starting up
+          - name: STOPPING
+            value: 3
+            description: Service is shutting down
+          - name: ERROR
+            value: 4
+            description: Service is in error state
+            
+      - name: transport_type_t
+        datatype: uint8
+        description: Transport protocol used by service
+        options:
+          - name: GRPC
+            value: 0
+            description: gRPC transport
+          - name: DBUS
+            value: 1
+            description: D-Bus transport
+          - name: SOMEIP
+            value: 2
+            description: SOME/IP transport
+          - name: HTTP_REST
+            value: 3
+            description: HTTP REST API
+          - name: MQTT
+            value: 4
+            description: MQTT messaging
+            
+      - name: parameter_type_t
+        datatype: uint8
+        description: IFEX parameter data types
+        options:
+          - name: UINT8
+            value: 0
+          - name: UINT16
+            value: 1
+          - name: UINT32
+            value: 2
+          - name: UINT64
+            value: 3
+          - name: INT8
+            value: 4
+          - name: INT16
+            value: 5
+          - name: INT32
+            value: 6
+          - name: INT64
+            value: 7
+          - name: FLOAT
+            value: 8
+          - name: DOUBLE
+            value: 9
+          - name: BOOLEAN
+            value: 10
+          - name: STRING
+            value: 11
+          - name: BYTES
+            value: 12
+          - name: STRUCT
+            value: 13
+          - name: ARRAY
+            value: 14
+          - name: ENUM
+            value: 15
+            
+    structs:
+      - name: parameter_info_t
+        description: Information about a method parameter
+        members:
+          - name: name
+            datatype: string
+            description: Parameter name
+          - name: type
+            datatype: parameter_type_t
+            description: Parameter data type
+          - name: is_optional
+            datatype: boolean
+            description: Whether parameter is optional
+          - name: description
+            datatype: string
+            description: Parameter description
+          - name: min_value
+            datatype: string
+            description: Minimum value (if applicable)
+          - name: max_value
+            datatype: string
+            description: Maximum value (if applicable)
+          - name: enum_values
+            datatype: string[]
+            description: Valid enum values (if type is ENUM)
+            
+      - name: method_info_t
+        description: Information about a service method
+        members:
+          - name: name
+            datatype: string
+            description: Method name
+          - name: description
+            datatype: string
+            description: Method description
+          - name: input_parameters
+            datatype: parameter_info_t[]
+            description: Input parameters
+          - name: output_parameters
+            datatype: parameter_info_t[]
+            description: Output parameters
+          - name: max_execution_time_ms
+            datatype: uint32
+            description: Expected maximum execution time
+            
+      - name: namespace_info_t
+        description: Information about a service namespace
+        members:
+          - name: name
+            datatype: string
+            description: Namespace name
+          - name: description
+            datatype: string
+            description: Namespace description
+          - name: methods
+            datatype: method_info_t[]
+            description: Methods in this namespace
+            
+      - name: service_endpoint_t
+        description: Service endpoint information
+        members:
+          - name: transport
+            datatype: transport_type_t
+            description: Transport protocol
+          - name: address
+            datatype: string
+            description: Service address (IP:port, D-Bus name, etc.)
+          - name: path
+            datatype: string
+            description: Service path or endpoint path
+          - name: security_info
+            datatype: string
+            description: Security/authentication information
+            
+      - name: service_info_t
+        description: Complete service information
+        members:
+          - name: name
+            datatype: string
+            description: Service name
+          - name: version
+            datatype: string
+            description: Service version (major.minor)
+          - name: description
+            datatype: string
+            description: Service description
+          - name: status
+            datatype: service_status_t
+            description: Current service status
+          - name: endpoint
+            datatype: service_endpoint_t
+            description: How to reach the service
+          - name: namespaces
+            datatype: namespace_info_t[]
+            description: Service namespaces and methods
+          - name: ifex_schema
+            datatype: string
+            description: Full IFEX schema definition (optional)
+          - name: last_heartbeat
+            datatype: uint64
+            description: Unix timestamp of last heartbeat
+            
+      - name: service_filter_t
+        description: Filter criteria for service queries
+        members:
+          - name: name_pattern
+            datatype: string
+            description: Service name pattern (glob style)
+          - name: has_method
+            datatype: string
+            description: Service must have this method
+          - name: transport_type
+            datatype: transport_type_t
+            description: Required transport type
+          - name: available_only
+            datatype: boolean
+            description: Only return available services
+          - name: extension_paths
+            datatype: string[]
+            description: Extension paths to filter on (e.g., "x-scheduling.enabled=true")
+            
+    methods:
+      - name: register_service
+        description: Register a service with the discovery system
+        input:
+          - name: service_info
+            datatype: service_info_t
+            description: Complete service information
+        output:
+          - name: registration_id
+            datatype: string
+            description: Unique registration handle for this service instance
+      - name: unregister_service
+        description: Unregister a service
+        input:
+          - name: registration_id
+            datatype: string
+            description: Registration handle returned from register_service
+            
+      - name: get_service
+        description: Get a specific service by name
+        input:
+          - name: service_name
+            datatype: string
+            description: Name of service to get
+        output:
+          - name: service_info
+            datatype: service_info_t
+            description: Service information
+            
+      - name: query_services
+        description: Query services matching filter criteria
+        input:
+          - name: filter
+            datatype: service_filter_t
+            description: Filter criteria
+        output:
+          - name: services
+            datatype: service_info_t[]
+            description: Matching services
+        
+      - name: validate_method_call
+        description: Validate if a method call is valid
+        input:
+          - name: service_name
+            datatype: string
+            description: Target service name
+          - name: method_name
+            datatype: string
+            description: Target method name
+          - name: parameters_json
+            datatype: string
+            description: JSON parameters to validate
+        output:
+          - name: is_valid
+            datatype: boolean
+            description: Whether the call is valid
+          - name: validation_errors
+            datatype: string[]
+            description: List of validation errors
+            
+      - name: get_method_schema
+        description: Get parameter schema for a method
+        input:
+          - name: service_name
+            datatype: string
+            description: Service name
+          - name: method_name
+            datatype: string
+            description: Method name
+        output:
+          - name: method_info
+            datatype: method_info_t
+            description: Method information and parameters
+            
+      - name: heartbeat
+        description: Service heartbeat to indicate availability
+        input:
+          - name: registration_id
+            datatype: string
+            description: Registration handle returned from register_service
+          - name: status
+            datatype: service_status_t
+            description: Current service status
+            

@@ -1,0 +1,310 @@
+name: settings_service
+major_version: 1
+minor_version: 0
+description: Generic settings and preset management service for IFEX services
+
+namespaces:
+  - name: config
+    description: Configuration and preset management
+    
+    enumerations:
+      - name: preset_type_t
+        datatype: uint8
+        description: Type of preset
+        options:
+          - name: TYPE_SYSTEM
+            value: 0
+            description: System-defined preset (read-only)
+          - name: TYPE_USER
+            value: 1
+            description: User-defined preset
+          - name: TYPE_FLEET
+            value: 2
+            description: Fleet-wide preset
+          - name: TYPE_DEVICE
+            value: 3
+            description: Device-specific preset
+            
+      - name: preset_scope_t
+        datatype: uint8
+        description: Scope of preset applicability
+        options:
+          - name: SCOPE_GLOBAL
+            value: 0
+            description: Available to all users/devices
+          - name: SCOPE_USER
+            value: 1
+            description: Specific to a user
+          - name: SCOPE_DEVICE
+            value: 2
+            description: Specific to a device
+          - name: SCOPE_GROUP
+            value: 3
+            description: Specific to a group of users/devices
+
+    structs:
+      - name: preset_metadata_t
+        description: Metadata about a preset
+        members:
+          - name: name
+            datatype: string
+            description: Unique preset identifier
+          - name: display_name
+            datatype: string
+            description: Human-readable name
+          - name: description
+            datatype: string
+            description: Detailed description
+          - name: type
+            datatype: preset_type_t
+            description: Type of preset
+          - name: scope
+            datatype: preset_scope_t
+            description: Applicability scope
+          - name: created_timestamp
+            datatype: uint64
+            description: Creation timestamp (unix epoch ms)
+          - name: modified_timestamp
+            datatype: uint64
+            description: Last modification timestamp
+          - name: created_by
+            datatype: string
+            description: Creator identifier
+            mandatory: false
+          - name: tags
+            datatype: string[]
+            description: Tags for categorization
+            mandatory: false
+            
+      - name: preset_t
+        description: Complete preset with metadata and values
+        members:
+          - name: metadata
+            datatype: preset_metadata_t
+            description: Preset metadata
+          - name: values
+            datatype: string
+            description: JSON-encoded preset values
+          - name: version
+            datatype: uint32
+            description: Preset version number
+            
+      - name: service_method_t
+        description: Service and method identifier
+        members:
+          - name: service_name
+            datatype: string
+            description: IFEX service name
+          - name: service_version
+            datatype: string
+            description: Service version
+            mandatory: false
+          - name: namespace_name
+            datatype: string
+            description: Namespace within service
+            mandatory: false
+          - name: method_name
+            datatype: string
+            description: Method name
+            
+      - name: preset_filter_t
+        description: Filter criteria for preset queries
+        members:
+          - name: type
+            datatype: preset_type_t
+            description: Filter by preset type
+            mandatory: false
+          - name: scope
+            datatype: preset_scope_t
+            description: Filter by scope
+            mandatory: false
+          - name: tags
+            datatype: string[]
+            description: Filter by tags (any match)
+            mandatory: false
+          - name: created_after
+            datatype: uint64
+            description: Filter by creation time
+            mandatory: false
+          - name: created_by
+            datatype: string
+            description: Filter by creator
+            mandatory: false
+
+    methods:
+      - name: get_presets
+        description: Get all presets for a specific service method
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method to get presets for
+          - name: filter
+            datatype: preset_filter_t
+            description: Optional filter criteria
+            mandatory: false
+        output:
+          - name: presets
+            datatype: preset_t[]
+            description: List of matching presets
+            
+      - name: get_preset
+        description: Get a specific preset by name
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method identifier
+          - name: preset_name
+            datatype: string
+            description: Preset name
+        output:
+          - name: preset
+            datatype: preset_t
+            description: The requested preset
+            mandatory: false
+          - name: found
+            datatype: boolean
+            description: Whether preset was found
+            
+      - name: create_preset
+        description: Create a new preset
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method for the preset
+          - name: preset
+            datatype: preset_t
+            description: Preset to create
+        output:
+          - name: success
+            datatype: boolean
+            description: Creation success
+          - name: error_message
+            datatype: string
+            description: Error message if failed
+            mandatory: false
+            
+      - name: update_preset
+        description: Update an existing preset
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method identifier
+          - name: preset_name
+            datatype: string
+            description: Name of preset to update
+          - name: preset
+            datatype: preset_t
+            description: Updated preset data
+        output:
+          - name: success
+            datatype: boolean
+            description: Update success
+          - name: new_version
+            datatype: uint32
+            description: New version number after update
+            mandatory: false
+          - name: error_message
+            datatype: string
+            description: Error message if failed
+            mandatory: false
+            
+      - name: delete_preset
+        description: Delete a preset
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method identifier
+          - name: preset_name
+            datatype: string
+            description: Name of preset to delete
+        output:
+          - name: success
+            datatype: boolean
+            description: Deletion success
+          - name: error_message
+            datatype: string
+            description: Error message if failed
+            mandatory: false
+            
+      - name: apply_preset
+        description: Get the values from a preset for application
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method identifier
+          - name: preset_name
+            datatype: string
+            description: Preset to apply
+          - name: merge_with
+            datatype: string
+            description: JSON values to merge with preset
+            mandatory: false
+        output:
+          - name: values
+            datatype: string
+            description: JSON-encoded values to use
+          - name: success
+            datatype: boolean
+            description: Whether preset was found and applied
+            
+      - name: export_presets
+        description: Export presets for backup or sharing
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Optional service filter
+            mandatory: false
+          - name: filter
+            datatype: preset_filter_t
+            description: Optional filter criteria
+            mandatory: false
+        output:
+          - name: export_data
+            datatype: string
+            description: JSON-encoded export data
+          - name: preset_count
+            datatype: uint32
+            description: Number of presets exported
+            
+      - name: import_presets
+        description: Import presets from export data
+        input:
+          - name: export_data
+            datatype: string
+            description: JSON-encoded export data
+          - name: overwrite_existing
+            datatype: boolean
+            description: Whether to overwrite existing presets
+            default: false
+        output:
+          - name: imported_count
+            datatype: uint32
+            description: Number of presets imported
+          - name: skipped_count
+            datatype: uint32
+            description: Number of presets skipped
+          - name: errors
+            datatype: string[]
+            description: Import errors if any
+            mandatory: false
+            
+      - name: validate_preset
+        description: Validate preset values against method signature
+        input:
+          - name: service_method
+            datatype: service_method_t
+            description: Service and method to validate against
+          - name: ifex_schema
+            datatype: string
+            description: IFEX schema for the service
+          - name: preset_values
+            datatype: string
+            description: JSON-encoded preset values to validate
+        output:
+          - name: valid
+            datatype: boolean
+            description: Whether preset values are valid
+          - name: errors
+            datatype: string[]
+            description: Validation errors if any
+            mandatory: false

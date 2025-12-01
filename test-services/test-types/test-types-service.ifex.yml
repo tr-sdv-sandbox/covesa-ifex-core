@@ -1,0 +1,272 @@
+name: test_types_service
+major_version: 1
+minor_version: 0
+description: Comprehensive test service for IFEX type system validation
+
+namespaces:
+  - name: types
+    description: Type system testing namespace
+    
+    enumerations:
+      - name: color_t
+        datatype: uint32
+        description: Basic color enumeration
+        options:
+          - name: RED
+            value: 0
+            description: Red color
+          - name: GREEN
+            value: 1
+            description: Green color
+          - name: BLUE
+            value: 2
+            description: Blue color
+          - name: YELLOW
+            value: 3
+            description: Yellow color
+            
+      - name: status_t
+        datatype: int32
+        description: Status codes
+        options:
+          - name: STATUS_OK
+            value: 0
+            description: Operation successful
+          - name: STATUS_ERROR
+            value: -1
+            description: Generic error
+          - name: STATUS_PENDING
+            value: 1
+            description: Operation pending
+          - name: STATUS_CANCELLED
+            value: -2
+            description: Operation cancelled
+
+    structs:
+      - name: point_2d_t
+        description: 2D point coordinates
+        members:
+          - name: x
+            datatype: double
+            description: X coordinate
+          - name: y
+            datatype: double
+            description: Y coordinate
+            
+      - name: point_3d_t
+        description: 3D point coordinates
+        members:
+          - name: x
+            datatype: double
+            description: X coordinate
+          - name: y
+            datatype: double
+            description: Y coordinate
+          - name: z
+            datatype: double
+            description: Z coordinate
+            
+      - name: sensor_data_t
+        description: Complex sensor data structure
+        members:
+          - name: sensor_id
+            datatype: uint32
+            description: Unique sensor identifier
+          - name: timestamp
+            datatype: uint64
+            description: Unix timestamp in milliseconds
+          - name: temperature
+            datatype: float
+            description: Temperature reading in Celsius
+          - name: pressure
+            datatype: float
+            description: Pressure reading in kPa
+          - name: humidity
+            datatype: float
+            description: Humidity percentage (0-100)
+          - name: location
+            datatype: point_3d_t
+            description: Sensor location
+          - name: status
+            datatype: status_t
+            description: Sensor status
+          - name: error_message
+            datatype: string
+            description: Error description if status is error
+            mandatory: false
+            
+      - name: test_all_primitives_t
+        description: Structure containing all primitive types
+        members:
+          - name: bool_val
+            datatype: boolean
+            description: Boolean value
+          - name: int32_val
+            datatype: int32
+            description: 32-bit signed integer
+          - name: int64_val
+            datatype: int64
+            description: 64-bit signed integer
+          - name: uint32_val
+            datatype: uint32
+            description: 32-bit unsigned integer
+          - name: uint64_val
+            datatype: uint64
+            description: 64-bit unsigned integer
+          - name: float_val
+            datatype: float
+            description: 32-bit floating point
+          - name: double_val
+            datatype: double
+            description: 64-bit floating point
+          - name: string_val
+            datatype: string
+            description: String value
+          - name: bytes_val
+            datatype: bytes
+            description: Binary data
+            
+      - name: nested_struct_t
+        description: Structure with nested types
+        members:
+          - name: id
+            datatype: string
+            description: Unique identifier
+          - name: primitives
+            datatype: test_all_primitives_t
+            description: All primitive types
+          - name: points
+            datatype: point_3d_t[]
+            description: Array of 3D points
+          - name: colors
+            datatype: color_t[]
+            description: Array of colors
+          - name: metadata
+            datatype: string
+            description: JSON metadata
+            mandatory: false
+
+    methods:
+      - name: test_primitives
+        description: Test all primitive types
+        input:
+          - name: primitives
+            datatype: test_all_primitives_t
+            description: Input primitive values
+        output:
+          - name: echoed
+            datatype: test_all_primitives_t
+            description: Echoed primitive values
+          - name: validation_passed
+            datatype: boolean
+            description: Whether validation passed
+            
+      - name: test_arrays
+        description: Test array handling
+        input:
+          - name: int_array
+            datatype: int32[]
+            description: Array of integers
+          - name: string_array
+            datatype: string[]
+            description: Array of strings
+          - name: point_array
+            datatype: point_2d_t[]
+            description: Array of 2D points
+        output:
+          - name: int_sum
+            datatype: int64
+            description: Sum of all integers
+          - name: concatenated_strings
+            datatype: string
+            description: All strings concatenated
+          - name: centroid
+            datatype: point_2d_t
+            description: Centroid of all points
+            
+      - name: test_enums
+        description: Test enum handling
+        input:
+          - name: color
+            datatype: color_t
+            description: Input color
+          - name: status
+            datatype: status_t
+            description: Input status
+        output:
+          - name: color_name
+            datatype: string
+            description: String representation of color
+          - name: status_message
+            datatype: string
+            description: Human readable status message
+          - name: next_color
+            datatype: color_t
+            description: Next color in sequence
+            
+      - name: test_nested_structs
+        description: Test nested struct handling
+        input:
+          - name: nested
+            datatype: nested_struct_t
+            description: Nested structure input
+        output:
+          - name: summary
+            datatype: string
+            description: Summary of nested data
+          - name: point_count
+            datatype: uint32
+            description: Number of points
+          - name: color_count
+            datatype: uint32
+            description: Number of colors
+            
+      - name: test_optional_fields
+        description: Test optional field handling
+        input:
+          - name: required_string
+            datatype: string
+            description: Required string parameter
+          - name: optional_int
+            datatype: int32
+            description: Optional integer parameter
+            mandatory: false
+          - name: optional_struct
+            datatype: point_2d_t
+            description: Optional struct parameter
+            mandatory: false
+          - name: optional_array
+            datatype: string[]
+            description: Optional string array
+            mandatory: false
+        output:
+          - name: received_count
+            datatype: uint32
+            description: Number of parameters received
+          - name: summary
+            datatype: string
+            description: Summary of received parameters
+            
+      - name: test_sensor_data_stream
+        description: Test complex data streaming
+        input:
+          - name: sensor_readings
+            datatype: sensor_data_t[]
+            description: Array of sensor readings
+          - name: filter_by_status
+            datatype: status_t
+            description: Filter readings by status
+            mandatory: false
+        output:
+          - name: processed_count
+            datatype: uint32
+            description: Number of readings processed
+          - name: average_temperature
+            datatype: float
+            description: Average temperature across all sensors
+          - name: error_sensors
+            datatype: uint32[]
+            description: IDs of sensors with errors
+          - name: summary_report
+            datatype: string
+            description: JSON summary report

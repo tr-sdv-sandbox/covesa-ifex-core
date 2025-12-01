@@ -1,0 +1,2100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFEX Explorer - Interactive Service Browser</title>
+    <style>
+        :root {
+            --primary-color: #1976d2;
+            --secondary-color: #424242;
+            --success-color: #4caf50;
+            --error-color: #f44336;
+            --warning-color: #ff9800;
+            --background-color: #f5f5f5;
+            --card-background: #ffffff;
+            --text-primary: #212121;
+            --text-secondary: #757575;
+            --border-color: #e0e0e0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        /* Header */
+        .header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header .subtitle {
+            font-size: 0.875rem;
+            opacity: 0.9;
+            margin-top: 0.25rem;
+        }
+
+        /* Layout */
+        .container {
+            display: flex;
+            height: calc(100vh - 80px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 300px;
+            background-color: var(--card-background);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .refresh-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            transition: background-color 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background-color: #1565c0;
+        }
+
+        .refresh-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* Service List */
+        .service-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+
+        .service-item {
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            background-color: var(--background-color);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .service-item:hover {
+            background-color: #e3f2fd;
+            border-color: var(--primary-color);
+        }
+
+        .service-item.selected {
+            background-color: #e3f2fd;
+            border-color: var(--primary-color);
+        }
+
+        .service-name {
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .service-version {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .service-endpoint {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-family: monospace;
+        }
+
+        .service-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.25rem;
+        }
+
+        .service-status.available {
+            background-color: var(--success-color);
+        }
+
+        .service-status.unavailable {
+            background-color: var(--error-color);
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Service Details */
+        .service-details {
+            padding: 2rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .welcome-message {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 4rem 2rem;
+        }
+
+        .welcome-message h2 {
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        .detail-section {
+            background-color: var(--card-background);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .detail-section h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .detail-section h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        /* Methods List */
+        .method-list {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .method-item {
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            background-color: var(--background-color);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .method-item:hover {
+            border-color: var(--primary-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .method-item.expanded {
+            background-color: white;
+            border-color: var(--primary-color);
+        }
+
+        .method-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .method-name {
+            font-weight: 500;
+            font-family: monospace;
+            color: var(--primary-color);
+        }
+
+        .method-schedulable {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            background-color: #e8f5e9;
+            color: #2e7d32;
+            border-radius: 4px;
+        }
+
+        .method-description {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        /* Method Details */
+        .method-details {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .parameter-editor {
+            margin-top: 1rem;
+        }
+
+        .parameter-editor h4 {
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .json-editor {
+            width: 100%;
+            min-height: 200px;
+            padding: 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            resize: vertical;
+            background-color: #f8f8f8;
+        }
+
+        .json-editor:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        /* Form Builder Styles */
+        .form-builder {
+            background-color: white;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+            color: var(--text-primary);
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .form-group .help-text {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .form-group.optional label::after {
+            content: ' (optional)';
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .form-view-toggle {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .form-view-toggle button {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+            background-color: white;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .form-view-toggle button.active {
+            background-color: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .array-field {
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 0.5rem;
+            background-color: #f9f9f9;
+        }
+
+        .array-item {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .array-item input {
+            flex: 1;
+        }
+
+        .array-add-button {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #1565c0;
+        }
+
+        .btn-secondary {
+            background-color: var(--secondary-color);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #616161;
+        }
+
+        .btn-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #388e3c;
+        }
+
+        .btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* Response Display */
+        .response-section {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        .response-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .response-status {
+            font-weight: 500;
+        }
+
+        .response-status.success {
+            color: var(--success-color);
+        }
+
+        .response-status.error {
+            color: var(--error-color);
+        }
+
+        .response-time {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .response-content {
+            background-color: white;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        /* Schema Display */
+        .schema-display {
+            background-color: #f8f8f8;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-top: 0.5rem;
+            font-family: monospace;
+            font-size: 0.75rem;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        /* Loading States */
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Utility Classes */
+        .text-muted {
+            color: var(--text-secondary);
+        }
+
+        .mb-1 { margin-bottom: 0.5rem; }
+        .mb-2 { margin-bottom: 1rem; }
+        .mt-1 { margin-top: 0.5rem; }
+        .mt-2 { margin-top: 1rem; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: 200px;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>
+            🔍 IFEX Explorer
+        </h1>
+        <div class="subtitle">Interactive Service Browser and Testing Tool</div>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <button class="refresh-btn" onclick="refreshServices()">
+                    <span id="refresh-icon">🔄</span>
+                    <span>Refresh Services</span>
+                </button>
+            </div>
+            <div class="service-list" id="serviceList">
+                <div class="text-muted" style="text-align: center; padding: 2rem;">
+                    Click "Refresh Services" to discover available services
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="service-details" id="serviceDetails">
+                <div class="welcome-message">
+                    <h2>Welcome to IFEX Explorer</h2>
+                    <p>Select a service from the left sidebar to explore its methods and types.</p>
+                    <p class="mt-2">Features:</p>
+                    <ul style="list-style: none; margin-top: 1rem;">
+                        <li>📋 Browse all IFEX-defined services</li>
+                        <li>🔍 Explore service methods and data types</li>
+                        <li>📝 View JSON schemas for input/output</li>
+                        <li>🚀 Test methods with live execution</li>
+                        <li>✅ Validate parameters before calling</li>
+                        <li>📅 Identify schedulable methods</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE_URL = 'http://localhost:5002/api';
+        
+        // State
+        let services = [];
+        let selectedService = null;
+        let selectedServiceDetails = null;
+        let selectedMethod = null;
+        let expandedMethods = new Set();
+
+        // DOM Elements
+        const serviceList = document.getElementById('serviceList');
+        const serviceDetails = document.getElementById('serviceDetails');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Auto-refresh on load
+            setTimeout(refreshServices, 500);
+        });
+
+        // Refresh services
+        async function refreshServices() {
+            const refreshBtn = document.querySelector('.refresh-btn');
+            const refreshIcon = document.getElementById('refresh-icon');
+            
+            refreshBtn.disabled = true;
+            refreshIcon.classList.add('loading');
+            refreshIcon.textContent = '';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/services`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    services = data.services;
+                    renderServiceList();
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    showError(errorData.error || `Failed to load services: ${response.status} ${response.statusText}`);
+                }
+            } catch (error) {
+                console.error('Error refreshing services:', error);
+                showError('Failed to connect to IFEX Explorer proxy');
+            } finally {
+                refreshBtn.disabled = false;
+                refreshIcon.classList.remove('loading');
+                refreshIcon.textContent = '🔄';
+            }
+        }
+
+        // Render service list
+        function renderServiceList() {
+            if (services.length === 0) {
+                serviceList.innerHTML = `
+                    <div class="text-muted" style="text-align: center; padding: 2rem;">
+                        No services found
+                    </div>
+                `;
+                return;
+            }
+
+            serviceList.innerHTML = services.map(service => {
+                // Count methods from namespaces
+                const methodCount = service.namespaces?.reduce((total, ns) => 
+                    total + (ns.methods?.length || 0), 0) || 0;
+                
+                return `
+                    <div class="service-item ${selectedService?.name === service.name ? 'selected' : ''}" 
+                         onclick="selectService('${service.name}')">
+                        <div class="service-name">
+                            <span class="service-status ${service.status === 'AVAILABLE' ? 'available' : 'unavailable'}"></span>
+                            ${service.name}
+                            <span class="service-version">v${service.version}</span>
+                        </div>
+                        <div class="service-endpoint">${service.address}</div>
+                        <div class="text-muted" style="font-size: 0.75rem;">
+                            ${methodCount} methods • ${service.description || 'No description'}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Select service
+        async function selectService(serviceName) {
+            selectedService = services.find(s => s.name === serviceName);
+            expandedMethods.clear();
+            
+            // Update UI
+            renderServiceList();
+            
+            // Show loading
+            serviceDetails.innerHTML = `
+                <div style="text-align: center; padding: 4rem;">
+                    <div class="loading" style="width: 32px; height: 32px; margin: 0 auto;"></div>
+                    <p class="mt-2 text-muted">Loading service details...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/services/${serviceName}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    selectedServiceDetails = data;
+                    renderServiceDetails(data);
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    showError(errorData.error || errorData.message || `Failed to load service details: ${response.status} ${response.statusText}`);
+                }
+            } catch (error) {
+                console.error('Error loading service:', error);
+                showError('Failed to load service details');
+            }
+        }
+
+        // Render service details
+        function renderServiceDetails(data) {
+            const service = data.service;
+            
+            // Extract methods from namespaces
+            const methods = [];
+            service.namespaces?.forEach(ns => {
+                ns.methods?.forEach(method => {
+                    methods.push({
+                        ...method,
+                        namespace: ns.name
+                    });
+                });
+            });
+
+            serviceDetails.innerHTML = `
+                <div class="detail-section">
+                    <h2>${service.name}</h2>
+                    <p class="text-muted mb-2">${service.description || 'No description available'}</p>
+                    
+                    <div class="mb-1">
+                        <strong>Version:</strong> ${service.version}
+                    </div>
+                    <div class="mb-1">
+                        <strong>Endpoint:</strong> <code>${service.address}</code>
+                    </div>
+                    <div class="mb-1">
+                        <strong>Status:</strong> 
+                        <span style="color: ${service.status === 'AVAILABLE' ? 'var(--success-color)' : 'var(--error-color)'}">
+                            ${service.status === 'AVAILABLE' ? '✅ Available' : '❌ Unavailable'}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="detail-section">
+                    <h2>Methods (${methods.length})</h2>
+                    <div class="method-list">
+                        ${methods.map(method => renderMethod(method)).join('')}
+                    </div>
+                </div>
+
+            `;
+        }
+
+        // Render method
+        function renderMethod(method) {
+            const isExpanded = expandedMethods.has(method.name);
+            const methodId = method.name.replace(/[^a-zA-Z0-9]/g, '_');
+            
+            // Debug log
+            console.log('Rendering method:', method.name, 'with', method.input_parameters?.length || 0, 'parameters');
+            
+            return `
+                <div class="method-item ${isExpanded ? 'expanded' : ''}" 
+                     onclick="toggleMethod('${method.name}')">
+                    <div class="method-header">
+                        <span class="method-name">${method.name}()</span>
+                        ${method.is_schedulable ? '<span class="method-schedulable">📅 Schedulable</span>' : ''}
+                    </div>
+                    ${method.description ? `<div class="method-description">${method.description}</div>` : ''}
+                    
+                    ${isExpanded ? `
+                        <div class="method-details" onclick="event.stopPropagation()">
+                            ${method.input_parameters && method.input_parameters.length > 0 ? `
+                                <div class="mb-2">
+                                    <h4>Input Parameters</h4>
+                                    <div class="schema-display">
+                                        ${JSON.stringify(method.input_parameters.map(p => ({
+                                            name: p.name,
+                                            type: p.type,
+                                            description: p.description,
+                                            optional: p.is_optional,
+                                            default: p.default_value,
+                                            min: p.min_value,
+                                            max: p.max_value,
+                                            enum: p.enum_values
+                                        })), null, 2)}
+                                    </div>
+                                </div>
+                            ` : '<div class="mb-2"><h4>No Input Parameters</h4></div>'}
+
+                            ${method.output_parameters && method.output_parameters.length > 0 ? `
+                                <div class="mb-2">
+                                    <h4>Output Parameters</h4>
+                                    <div class="schema-display">
+                                        ${JSON.stringify(method.output_parameters.map(p => ({
+                                            name: p.name,
+                                            type: p.type,
+                                            description: p.description
+                                        })), null, 2)}
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            <div class="parameter-editor">
+                                <h4>Test Parameters</h4>
+                                <div class="form-view-toggle">
+                                    <button class="active" onclick="event.stopPropagation(); setParameterView('${method.name}', 'form')">📝 Form View</button>
+                                    <button onclick="event.stopPropagation(); setParameterView('${method.name}', 'json')">{ } JSON View</button>
+                                </div>
+                                <div id="form-${methodId}" class="form-builder">
+                                    ${renderFormBuilder(method, selectedServiceDetails?.service?.struct_definitions || {})}
+                                </div>
+                                <textarea class="json-editor" id="params-${methodId}" 
+                                          placeholder="Enter JSON parameters..." style="display: none;">${buildDefaultParameters(method, selectedServiceDetails?.service?.struct_definitions || {})}</textarea>
+                            </div>
+
+                            <div class="action-buttons">
+                                <button class="btn btn-success" onclick="callMethod('${method.name}')">
+                                    🚀 Execute
+                                </button>
+                                <button class="btn btn-secondary" onclick="loadExample('${method.name}')">
+                                    📝 Load Example
+                                </button>
+                            </div>
+
+                            <div id="response-${methodId}"></div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // Toggle method expansion
+        function toggleMethod(methodName) {
+            if (expandedMethods.has(methodName)) {
+                expandedMethods.delete(methodName);
+            } else {
+                expandedMethods.add(methodName);
+            }
+            
+            // Re-render with cached data
+            if (selectedServiceDetails) {
+                renderServiceDetails(selectedServiceDetails);
+            }
+        }
+
+        // Validate parameters (removed - no longer needed)
+        /*
+        async function validateParameters(methodName) {
+            const methodId = methodName.replace(/[^a-zA-Z0-9]/g, '_');
+            const responseDiv = document.getElementById(`response-${methodId}`);
+            
+            // Get parameters based on current view
+            let params;
+            const currentView = parameterViews.get(methodName) || 'form';
+            
+            if (currentView === 'form') {
+                params = collectFormData(methodId);
+            } else {
+                const textarea = document.getElementById(`params-${methodId}`);
+                try {
+                    params = JSON.parse(textarea.value || '{}');
+                } catch (e) {
+                    responseDiv.innerHTML = `
+                        <div class="response-section">
+                            <div class="response-header">
+                                <span class="response-status error">❌ Invalid JSON</span>
+                            </div>
+                            <div class="response-content">${e.message}</div>
+                        </div>
+                    `;
+                    return;
+                }
+            }
+            
+            try {
+                console.log('Validating parameters:', params);
+                
+                const response = await fetch(
+                    `${API_BASE_URL}/services/${selectedService.name}/methods/${methodName}/validate`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ parameters: params })
+                    }
+                );
+
+                const data = await response.json();
+
+                if (response.ok && data.is_valid) {
+                    responseDiv.innerHTML = `
+                        <div class="response-section">
+                            <div class="response-header">
+                                <span class="response-status success">✅ Valid Parameters</span>
+                            </div>
+                            ${data.normalized_parameters ? `
+                                <div class="response-content">
+                                    Normalized parameters:
+                                    ${JSON.stringify(data.normalized_parameters, null, 2)}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                } else {
+                    // Format error messages properly
+                    let errorMessages = '';
+                    if (Array.isArray(data.errors)) {
+                        errorMessages = data.errors.map(err => {
+                            if (typeof err === 'object' && err.error_message) {
+                                return `${err.field_name}: ${err.error_message}`;
+                            } else if (typeof err === 'string') {
+                                return err;
+                            } else {
+                                return JSON.stringify(err);
+                            }
+                        }).join('\n');
+                    } else {
+                        errorMessages = JSON.stringify(data.errors, null, 2);
+                    }
+                    
+                    responseDiv.innerHTML = `
+                        <div class="response-section">
+                            <div class="response-header">
+                                <span class="response-status error">❌ Invalid Parameters</span>
+                            </div>
+                            <div class="response-content">
+                                <pre>${errorMessages}</pre>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                responseDiv.innerHTML = `
+                    <div class="response-section">
+                        <div class="response-header">
+                            <span class="response-status error">❌ Validation Error</span>
+                        </div>
+                        <div class="response-content">${error.message}</div>
+                    </div>
+                `;
+            }
+        }
+        */
+
+        // Call method
+        async function callMethod(methodName) {
+            const methodId = methodName.replace(/[^a-zA-Z0-9]/g, '_');
+            const responseDiv = document.getElementById(`response-${methodId}`);
+            
+            // Get parameters based on current view
+            let parameters;
+            const currentView = parameterViews.get(methodName) || 'form';
+            
+            if (currentView === 'form') {
+                parameters = collectFormData(methodId);
+            } else {
+                const textarea = document.getElementById(`params-${methodId}`);
+                try {
+                    parameters = JSON.parse(textarea.value || '{}');
+                } catch (e) {
+                    responseDiv.innerHTML = `
+                        <div class="response-section">
+                            <div class="response-header">
+                                <span class="response-status error">❌ Invalid JSON</span>
+                            </div>
+                            <div class="response-content">${e.message}</div>
+                        </div>
+                    `;
+                    return;
+                }
+            }
+            
+            // Show loading
+            responseDiv.innerHTML = `
+                <div class="response-section">
+                    <div style="text-align: center; padding: 1rem;">
+                        <div class="loading"></div>
+                        <p class="mt-1 text-muted">Executing method...</p>
+                    </div>
+                </div>
+            `;
+
+            try {
+                const startTime = Date.now();
+                
+                const response = await fetch(
+                    `${API_BASE_URL}/services/${selectedService.name}/methods/${methodName}/call`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            parameters: parameters,
+                            timeout_ms: 30000
+                        })
+                    }
+                );
+
+                const data = await response.json();
+                const duration = Date.now() - startTime;
+
+                if (response.ok && data.status === 'success') {
+                    responseDiv.innerHTML = `
+                        <div class="response-section">
+                            <div class="response-header">
+                                <span class="response-status success">✅ Success</span>
+                                <span class="response-time">${data.duration_ms || duration}ms</span>
+                            </div>
+                            <div class="response-content">
+                                ${JSON.stringify(data.result, null, 2)}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    responseDiv.innerHTML = `
+                        <div class="response-section">
+                            <div class="response-header">
+                                <span class="response-status error">❌ Failed</span>
+                                <span class="response-time">${data.duration_ms || duration}ms</span>
+                            </div>
+                            <div class="response-content">${data.error || 'Unknown error'}</div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                responseDiv.innerHTML = `
+                    <div class="response-section">
+                        <div class="response-header">
+                            <span class="response-status error">❌ Request Error</span>
+                        </div>
+                        <div class="response-content">${error.message}</div>
+                    </div>
+                `;
+            }
+        }
+
+        // Load example
+        async function loadExample(methodName) {
+            const methodId = methodName.replace(/[^a-zA-Z0-9]/g, '_');
+            const textarea = document.getElementById(`params-${methodId}`);
+            
+            try {
+                const response = await fetch(
+                    `${API_BASE_URL}/services/${selectedService.name}/methods/${methodName}`
+                );
+                const data = await response.json();
+
+                if (data.success && data.example_input) {
+                    textarea.value = JSON.stringify(data.example_input, null, 2);
+                } else {
+                    // Generate basic example from schema
+                    const method = data.method;
+                    const example = generateExampleFromSchema(method.input_schema);
+                    textarea.value = JSON.stringify(example, null, 2);
+                }
+            } catch (error) {
+                console.error('Error loading example:', error);
+                textarea.value = '{}';
+            }
+        }
+
+        // Generate example from schema
+        function generateExampleFromSchema(schema) {
+            if (!schema || !schema.properties) return {};
+            
+            const example = {};
+            for (const [key, prop] of Object.entries(schema.properties)) {
+                if (prop.type === 'string') {
+                    example[key] = prop.default || `example_${key}`;
+                } else if (prop.type === 'number' || prop.type === 'integer') {
+                    example[key] = prop.default || 0;
+                } else if (prop.type === 'boolean') {
+                    example[key] = prop.default || false;
+                } else if (prop.type === 'array') {
+                    example[key] = [];
+                } else if (prop.type === 'object') {
+                    example[key] = {};
+                }
+            }
+            return example;
+        }
+
+        // Show error
+        function showError(message) {
+            serviceDetails.innerHTML = `
+                <div style="text-align: center; padding: 4rem; color: var(--error-color);">
+                    <h2>❌ Error</h2>
+                    <p class="mt-2">${message}</p>
+                </div>
+            `;
+        }
+
+        // Parameter view state
+        const parameterViews = new Map(); // method -> 'form' or 'json'
+
+        // Set parameter view mode
+        function setParameterView(methodName, view) {
+            const methodId = methodName.replace(/[^a-zA-Z0-9]/g, '_');
+            parameterViews.set(methodName, view);
+            
+            const formDiv = document.getElementById(`form-${methodId}`);
+            const jsonTextarea = document.getElementById(`params-${methodId}`);
+            const buttons = formDiv.parentElement.querySelectorAll('.form-view-toggle button');
+            
+            if (view === 'form') {
+                formDiv.style.display = 'block';
+                jsonTextarea.style.display = 'none';
+                buttons[0].classList.add('active');
+                buttons[1].classList.remove('active');
+                
+                // Sync JSON to form
+                try {
+                    const jsonData = JSON.parse(jsonTextarea.value || '{}');
+                    populateForm(methodId, jsonData);
+                } catch (e) {
+                    console.error('Invalid JSON:', e);
+                }
+            } else {
+                formDiv.style.display = 'none';
+                jsonTextarea.style.display = 'block';
+                buttons[0].classList.remove('active');
+                buttons[1].classList.add('active');
+                
+                // If the JSON is empty, rebuild default parameters
+                if (!jsonTextarea.value || jsonTextarea.value.trim() === '{}') {
+                    // Find the method object
+                    const method = selectedServiceDetails?.service?.namespaces?.flatMap(ns => ns.methods)
+                        .find(m => m.name === methodName);
+                    if (method) {
+                        jsonTextarea.value = buildDefaultParameters(method, selectedServiceDetails?.service?.struct_definitions || {});
+                    }
+                } else {
+                    // Sync form to JSON
+                    const formData = collectFormData(methodId);
+                    if (Object.keys(formData).length > 0) {
+                        jsonTextarea.value = JSON.stringify(formData, null, 2);
+                    }
+                }
+            }
+        }
+
+        // Build default parameters from method input_parameters
+        function buildDefaultParameters(method, structDefinitions) {
+            console.log('Building default parameters for method:', method.name);
+            console.log('Input parameters:', method.input_parameters);
+            
+            // Make it globally accessible for debugging
+            window._lastMethod = method;
+            
+            if (!method.input_parameters || method.input_parameters.length === 0) {
+                return '{}';
+            }
+            
+            const params = {};
+            
+            method.input_parameters.forEach(param => {
+                console.log('Processing parameter:', param);
+                
+                // Handle STRUCT parameters using their definitions
+                if (param.type === 'STRUCT' && param.struct_type && structDefinitions[param.struct_type]) {
+                    params[param.name] = buildStructDefaults(structDefinitions[param.struct_type], structDefinitions);
+                } else {
+                    // Regular parameter
+                    if (param.default_value !== undefined && param.default_value !== null) {
+                        params[param.name] = param.default_value;
+                    } else {
+                        // Set appropriate default based on type
+                        switch (param.type) {
+                            case 'FLOAT':
+                            case 'DOUBLE':
+                                params[param.name] = param.min_value || 0.0;
+                                break;
+                            case 'UINT8':
+                            case 'UINT16':
+                            case 'UINT32':
+                            case 'UINT64':
+                            case 'INT8':
+                            case 'INT16':
+                            case 'INT32':
+                            case 'INT64':
+                                params[param.name] = param.min_value || 0;
+                                break;
+                            case 'BOOLEAN':
+                                params[param.name] = false;
+                                break;
+                            case 'STRING':
+                                params[param.name] = '';
+                                break;
+                            case 'ARRAY':
+                                params[param.name] = [];
+                                break;
+                            default:
+                                params[param.name] = null;
+                        }
+                    }
+                }
+            });
+            
+            const result = JSON.stringify(params, null, 2);
+            console.log('Built default parameters:', result);
+            return result;
+        }
+        
+        // Build default values for a struct based on its definition
+        function buildStructDefaults(structDef, allStructDefs) {
+            const defaults = {};
+            
+            structDef.members.forEach(member => {
+                if (member.default_value !== undefined && member.default_value !== null) {
+                    defaults[member.name] = member.default_value;
+                } else if (member.type === 'STRUCT' && member.struct_type && allStructDefs[member.struct_type]) {
+                    // Nested struct
+                    defaults[member.name] = buildStructDefaults(allStructDefs[member.struct_type], allStructDefs);
+                } else {
+                    // Set type-appropriate default
+                    switch (member.type) {
+                        case 'FLOAT':
+                        case 'DOUBLE':
+                            defaults[member.name] = member.constraints?.min || 0.0;
+                            break;
+                        case 'UINT8':
+                        case 'UINT16':
+                        case 'UINT32':
+                        case 'UINT64':
+                        case 'INT8':
+                        case 'INT16':
+                        case 'INT32':
+                        case 'INT64':
+                            defaults[member.name] = member.constraints?.min || 0;
+                            break;
+                        case 'BOOLEAN':
+                            defaults[member.name] = false;
+                            break;
+                        case 'STRING':
+                            defaults[member.name] = '';
+                            break;
+                        case 'ARRAY':
+                            defaults[member.name] = [];
+                            break;
+                        case 'ENUM':
+                            // For enums, try to use the first value if available
+                            if (member.enum_values && member.enum_values.length > 0) {
+                                // Extract numeric value from "NAME (value)" format
+                                const match = member.enum_values[0].match(/\((\d+)\)/);
+                                defaults[member.name] = match ? parseInt(match[1]) : 0;
+                            } else {
+                                defaults[member.name] = 0;
+                            }
+                            break;
+                        default:
+                            defaults[member.name] = null;
+                    }
+                }
+            });
+            
+            return defaults;
+        }
+        
+        // Render form builder based on schema 
+        function renderFormBuilder(method, structDefinitions) {
+            if (!method.input_parameters || method.input_parameters.length === 0) {
+                return '<div class="text-muted">No input parameters</div>';
+            }
+            
+            // Group parameters by their parent structure
+            const paramGroups = {};
+            const topLevelParams = [];
+            
+            method.input_parameters.forEach(param => {
+                if (param.name.includes('.')) {
+                    const [parent, ...rest] = param.name.split('.');
+                    if (!paramGroups[parent]) {
+                        paramGroups[parent] = [];
+                    }
+                    paramGroups[parent].push({
+                        ...param,
+                        fieldName: rest.join('.')
+                    });
+                } else {
+                    topLevelParams.push(param);
+                }
+            });
+            
+            let html = '';
+            
+            
+            // Render top-level parameters
+            topLevelParams.forEach(param => {
+                // Check if this is a STRUCT parameter by looking for sub-parameters
+                if (paramGroups[param.name]) {
+                    // This is a struct - render it using the struct definition
+                    html += renderStructFromDefinition(param, structDefinitions);
+                } else if (param.type === 'STRUCT' && param.struct_type) {
+                    // STRUCT type explicitly marked - use struct definition
+                    html += renderStructFromDefinition(param, structDefinitions);
+                } else {
+                    html += renderParameterField(param, param.name);
+                }
+            });
+            
+            // Render any remaining grouped parameters (shouldn't be any if we handle structs above)
+            Object.entries(paramGroups).forEach(([groupName, params]) => {
+                // Skip if already rendered as part of a struct
+                if (topLevelParams.some(p => p.name === groupName)) {
+                    return;
+                }
+                
+                html += `
+                    <fieldset style="border: 1px solid var(--border-color); border-radius: 4px; padding: 1rem; margin-bottom: 1rem;">
+                        <legend style="font-weight: 500; padding: 0 0.5rem;">${groupName}</legend>
+                `;
+                
+                params.forEach(param => {
+                    html += renderParameterField(param, `${groupName}_${param.fieldName}`);
+                });
+                
+                html += `</fieldset>`;
+            });
+            
+            return html;
+        }
+        
+        // Render a STRUCT parameter from its definition
+        function renderStructFromDefinition(param, structDefinitions) {
+            const structDef = structDefinitions[param.struct_type];
+            if (!structDef) {
+                // Fallback to JSON textarea if no definition found
+                return renderStructParameter(param, null);
+            }
+            
+            const isRequired = !param.is_optional;
+            const structName = param.name;
+            
+            let html = `
+                <fieldset style="border: 1px solid var(--border-color); border-radius: 4px; padding: 1rem; margin-bottom: 1rem;">
+                    <legend style="font-weight: 500; padding: 0 0.5rem;">
+                        ${structName} (${param.struct_type})${!isRequired ? ' <span style="font-weight: normal; font-size: 0.875rem; color: var(--text-secondary)">(optional)</span>' : ''}
+                    </legend>
+            `;
+            
+            if (param.description) {
+                html += `<div class="help-text" style="margin-bottom: 1rem;">${param.description}</div>`;
+            }
+            
+            // Render each member of the struct
+            structDef.members.forEach(member => {
+                const fieldId = `${structName}_${member.name}`;
+                
+                // Handle nested structs
+                if (member.type === 'STRUCT' && member.struct_type) {
+                    const nestedParam = {
+                        name: `${structName}.${member.name}`,
+                        type: 'STRUCT',
+                        struct_type: member.struct_type,
+                        description: member.description,
+                        is_optional: member.is_optional
+                    };
+                    html += renderStructFromDefinition(nestedParam, structDefinitions);
+                } else {
+                    // Regular field
+                    const fieldParam = {
+                        name: member.name,
+                        fieldName: member.name,
+                        type: member.type,
+                        description: member.description,
+                        is_optional: member.is_optional,
+                        min_value: member.constraints?.min || null,
+                        max_value: member.constraints?.max || null,
+                        enum_values: member.enum_values || null,
+                        default_value: member.default_value
+                    };
+                    // Store the actual parameter name for collection
+                    fieldParam.parameterName = `${structName}.${member.name}`;
+                    html += renderParameterField(fieldParam, fieldId);
+                }
+            });
+            
+            html += `</fieldset>`;
+            return html;
+        }
+        
+        // Render a STRUCT parameter as a fieldset with sub-fields (legacy)
+        function renderStructAsFieldset(structParam, subParams, method) {
+            const isRequired = structParam ? !structParam.is_optional : false;
+            const structType = structParam?.struct_type || 'object';
+            const structName = structParam?.name || 'config';
+            
+            let html = `
+                <fieldset style="border: 1px solid var(--border-color); border-radius: 4px; padding: 1rem; margin-bottom: 1rem;">
+                    <legend style="font-weight: 500; padding: 0 0.5rem;">
+                        ${structName} (${structType})${!isRequired ? ' <span style="font-weight: normal; font-size: 0.875rem; color: var(--text-secondary)">(optional)</span>' : ''}
+                    </legend>
+            `;
+            
+            // Group sub-parameters by their nested structure
+            const nestedGroups = {};
+            const directFields = [];
+            
+            subParams.forEach(param => {
+                if (param.fieldName.includes('.')) {
+                    const [parent, ...rest] = param.fieldName.split('.');
+                    if (!nestedGroups[parent]) {
+                        nestedGroups[parent] = [];
+                    }
+                    nestedGroups[parent].push({
+                        ...param,
+                        fieldName: rest.join('.')
+                    });
+                } else {
+                    directFields.push(param);
+                }
+            });
+            
+            // Render direct fields first
+            directFields.forEach(param => {
+                html += renderParameterField(param, `${structName}_${param.fieldName}`);
+            });
+            
+            // Render nested groups
+            Object.entries(nestedGroups).forEach(([groupName, params]) => {
+                html += `
+                    <fieldset style="border: 1px solid #ddd; border-radius: 4px; padding: 0.75rem; margin: 0.5rem 0;">
+                        <legend style="font-size: 0.9rem; font-weight: 500; padding: 0 0.5rem;">${groupName}</legend>
+                `;
+                
+                params.forEach(param => {
+                    html += renderParameterField(param, `${structName}_${groupName}_${param.fieldName}`);
+                });
+                
+                html += `</fieldset>`;
+            });
+            
+            html += `</fieldset>`;
+            return html;
+        }
+        
+        // Render a STRUCT parameter as an object input (fallback for when we don't have sub-parameters)
+        function renderStructParameter(param, method) {
+            const fieldId = param.name;
+            const id = `field_${fieldId}`;
+            const isRequired = !param.is_optional;
+            
+            // For now, render as a JSON textarea for the struct
+            let html = `<div class="form-group ${!isRequired ? 'optional' : ''}">`;
+            html += `<label for="${id}">${param.name} (${param.struct_type || 'object'})</label>`;
+            html += `<textarea id="${id}" class="json-editor" rows="10" 
+                     placeholder='Enter ${param.struct_type} JSON...' 
+                     ${isRequired ? 'required' : ''}>${getDefaultStructValue(param, method)}</textarea>`;
+            
+            if (param.description) {
+                html += `<div class="help-text">${param.description}</div>`;
+            }
+            
+            html += `</div>`;
+            return html;
+        }
+        
+        // Get default value for a struct parameter
+        function getDefaultStructValue(param, method) {
+            // Build default structure from input parameters that belong to this struct
+            if (param.struct_type && method.input_parameters) {
+                const structData = {};
+                const prefix = param.name + '.';
+                
+                // Find all parameters that belong to this struct
+                method.input_parameters.forEach(p => {
+                    if (p.name.startsWith(prefix)) {
+                        const fieldName = p.name.substring(prefix.length);
+                        const parts = fieldName.split('.');
+                        
+                        // Build nested structure
+                        let current = structData;
+                        for (let i = 0; i < parts.length - 1; i++) {
+                            if (!current[parts[i]]) {
+                                current[parts[i]] = {};
+                            }
+                            current = current[parts[i]];
+                        }
+                        
+                        // Set default value
+                        const lastField = parts[parts.length - 1];
+                        if (p.default_value !== undefined && p.default_value !== null) {
+                            current[lastField] = p.default_value;
+                        } else {
+                            // Set type-appropriate default
+                            switch (p.type) {
+                                case 'STRING':
+                                    current[lastField] = '';
+                                    break;
+                                case 'BOOLEAN':
+                                    current[lastField] = false;
+                                    break;
+                                case 'FLOAT':
+                                case 'DOUBLE':
+                                    current[lastField] = 0.0;
+                                    break;
+                                case 'INT8':
+                                case 'INT16':
+                                case 'INT32':
+                                case 'INT64':
+                                case 'UINT8':
+                                case 'UINT16':
+                                case 'UINT32':
+                                case 'UINT64':
+                                    current[lastField] = 0;
+                                    break;
+                                case 'ARRAY':
+                                    current[lastField] = [];
+                                    break;
+                                default:
+                                    current[lastField] = null;
+                            }
+                        }
+                    }
+                });
+                
+                return JSON.stringify(structData, null, 2);
+            }
+            
+            return '{}';
+        }
+        
+        // Render a single parameter field
+        function renderParameterField(param, fieldId) {
+            const id = `field_${fieldId.replace(/\./g, '_')}`;
+            const isRequired = !param.is_optional;
+            const originalPath = param.name; // Preserve the original dot notation path
+            
+            let html = `<div class="form-group ${!isRequired ? 'optional' : ''}">`;
+            html += `<label for="${id}">${param.fieldName || param.name}</label>`;
+            
+            switch (param.type) {
+                case 'STRING':
+                    if (param.enum_values && param.enum_values.length > 0) {
+                        html += `<select id="${id}" ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''} ${isRequired ? 'required' : ''}>`;
+                        param.enum_values.forEach(val => {
+                            const selected = param.default_value === val ? 'selected' : '';
+                            html += `<option value="${val}" ${selected}>${val}</option>`;
+                        });
+                        html += `</select>`;
+                    } else {
+                        html += `<input type="text" id="${id}" 
+                                 data-field-path="${originalPath}"
+                                 ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}
+                                 value="${param.default_value || ''}" 
+                                 placeholder="${param.description || ''}"
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                case 'FLOAT':
+                case 'DOUBLE':
+                    html += `<input type="number" id="${id}" 
+                             ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}
+                             value="${param.default_value || ''}" 
+                             ${param.min_value !== null ? `min="${param.min_value}"` : ''}
+                             ${param.max_value !== null ? `max="${param.max_value}"` : ''}
+                             step="0.1"
+                             placeholder="${param.description || ''}"
+                             ${isRequired ? 'required' : ''}>`;
+                    break;
+                    
+                case 'INT8':
+                case 'INT16':
+                case 'INT32':
+                case 'INT64':
+                case 'UINT8':
+                case 'UINT16':
+                case 'UINT32':
+                case 'UINT64':
+                    // Check if this is an enum type
+                    if (param.enum_values && param.enum_values.length > 0) {
+                        console.log('Rendering enum field:', param.name, 'default:', param.default_value, 'enum_values:', param.enum_values);
+                        html += `<select id="${id}" ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''} ${isRequired ? 'required' : ''}>`;
+                        param.enum_values.forEach(val => {
+                            // Parse "NAME (value)" format
+                            const match = val.match(/(.+)\s*\((\d+)\)/);
+                            if (match) {
+                                const [, label, value] = match;
+                                const selected = param.default_value == value ? 'selected' : '';
+                                console.log('  Option:', label, 'value:', value, 'selected:', selected);
+                                html += `<option value="${value}" ${selected}>${label}</option>`;
+                            } else {
+                                const selected = param.default_value == val ? 'selected' : '';
+                                html += `<option value="${val}" ${selected}>${val}</option>`;
+                            }
+                        });
+                        html += `</select>`;
+                    } else {
+                        html += `<input type="number" id="${id}" 
+                                 ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}
+                                 value="${param.default_value || ''}" 
+                                 ${param.min_value !== null ? `min="${param.min_value}"` : ''}
+                                 ${param.max_value !== null ? `max="${param.max_value}"` : ''}
+                                 step="1"
+                                 placeholder="${param.description || ''}"
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                case 'ENUM':
+                    // Handle enum fields specifically
+                    if (param.enum_values && param.enum_values.length > 0) {
+                        console.log('Rendering ENUM field:', param.name, 'default:', param.default_value, 'enum_values:', param.enum_values);
+                        html += `<select id="${id}" ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''} ${isRequired ? 'required' : ''}>`;
+                        param.enum_values.forEach(val => {
+                            // Parse "NAME (value)" format
+                            const match = val.match(/(.+)\s*\((\d+)\)/);
+                            if (match) {
+                                const [, label, value] = match;
+                                const selected = param.default_value == value ? 'selected' : '';
+                                console.log('  ENUM Option:', label, 'value:', value, 'selected:', selected);
+                                html += `<option value="${value}" ${selected}>${label}</option>`;
+                            } else {
+                                const selected = param.default_value == val ? 'selected' : '';
+                                html += `<option value="${val}" ${selected}>${val}</option>`;
+                            }
+                        });
+                        html += `</select>`;
+                    } else {
+                        // Fallback to number input
+                        html += `<input type="number" id="${id}" 
+                                 ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}
+                                 value="${param.default_value || ''}" 
+                                 step="1"
+                                 placeholder="${param.description || ''}"
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                case 'BOOLEAN':
+                    const checked = param.default_value === true || param.default_value === 'true' ? 'checked' : '';
+                    html += `<input type="checkbox" id="${id}" ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''} ${checked} style="width: auto;">`;
+                    break;
+                    
+                case 'ARRAY':
+                    if (param.enum_values && param.enum_values.length > 0) {
+                        // Multi-select for enum arrays
+                        html += `<div class="array-enum-container" id="${id}" ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}>`;
+                        const defaultValues = Array.isArray(param.default_value) ? param.default_value : [];
+                        param.enum_values.forEach(val => {
+                            const match = val.match(/(.+)\s*\((\d+)\)/);
+                            if (match) {
+                                const [, label, value] = match;
+                                const checked = defaultValues.includes(parseInt(value)) ? 'checked' : '';
+                                html += `
+                                    <label style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+                                        <input type="checkbox" data-array-field="${id}" value="${value}" ${checked} style="width: auto;">
+                                        <span>${label}</span>
+                                    </label>`;
+                            }
+                        });
+                        html += `</div>`;
+                    } else {
+                        // Text input for simple arrays
+                        const defaultVal = Array.isArray(param.default_value) ? param.default_value.join(', ') : '';
+                        html += `<input type="text" id="${id}" 
+                                 ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}
+                                 value="${defaultVal}" 
+                                 placeholder="Enter comma-separated values"
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                default:
+                    // Fallback to text input
+                    html += `<input type="text" id="${id}" 
+                             ${param.parameterName ? `data-parameter-name="${param.parameterName}"` : ''}
+                             value="${param.default_value || ''}" 
+                             placeholder="${param.description || ''}"
+                             ${isRequired ? 'required' : ''}>`;
+            }
+            
+            if (param.description) {
+                html += `<div class="help-text">${param.description}</div>`;
+            }
+            
+            html += `</div>`;
+            return html;
+        }
+
+
+        // Generic form builder from IFEX schema
+        function renderGenericForm(method, structMap = {}) {
+            // Parse schema if it's a string
+            let schema;
+            try {
+                schema = typeof method.input_schema === 'string' 
+                    ? JSON.parse(method.input_schema) 
+                    : method.input_schema;
+            } catch (e) {
+                console.error('Failed to parse input schema:', e);
+                return '<p class="text-muted">Invalid schema</p>';
+            }
+            
+            if (!schema || !schema.properties) {
+                return '<p class="text-muted">No parameters required</p>';
+            }
+            
+            console.log('Parsed schema:', schema);
+            
+            let html = '';
+            const required = schema.required || [];
+            
+            for (const [fieldName, fieldSchema] of Object.entries(schema.properties)) {
+                const isRequired = required.includes(fieldName);
+                console.log(`Rendering field ${fieldName}:`, fieldSchema, 'Required:', isRequired);
+                html += renderFormField(fieldName, fieldSchema, isRequired, structMap);
+            }
+            
+            return html;
+        }
+
+        // Render individual form field
+        function renderFormField(name, schema, isRequired = false, structs = {}) {
+            const fieldId = `field_${name}`;
+            const type = schema.type;
+            
+            // Check if this is an IFEX struct type (has $ref)
+            if (schema.$ref) {
+                const structName = schema.$ref.replace('#/definitions/', '');
+                const structDef = structs[structName];
+                
+                console.log(`Expanding struct ${structName}:`, structDef);
+                
+                if (structDef && structDef.properties) {
+                    // Render struct as fieldset with nested fields
+                    let html = `<fieldset style="border: 1px solid var(--border-color); border-radius: 4px; padding: 1rem; margin-bottom: 1rem;">`;
+                    html += `<legend style="font-weight: 500; padding: 0 0.5rem;">${name} (${structName})</legend>`;
+                    
+                    const structRequired = structDef.required || [];
+                    for (const [fieldName, fieldSchema] of Object.entries(structDef.properties)) {
+                        const fieldRequired = structRequired.includes(fieldName);
+                        const nestedFieldId = `${name}_${fieldName}`;
+                        console.log(`Rendering nested field ${fieldName}:`, fieldSchema);
+                        html += renderNestedField(nestedFieldId, fieldName, fieldSchema, fieldRequired, structs);
+                    }
+                    
+                    html += `</fieldset>`;
+                    return html;
+                } else {
+                    console.log(`Struct ${structName} not found or has no properties. Available structs:`, Object.keys(structs));
+                }
+            }
+            
+            let html = `<div class="form-group ${!isRequired ? 'optional' : ''}">`;
+            html += `<label for="${fieldId}">${name}</label>`;
+            
+            switch (type) {
+                case 'string':
+                    if (schema.enum) {
+                        html += `<select id="${fieldId}" ${isRequired ? 'required' : ''}>`;
+                        html += `<option value="">Select...</option>`;
+                        for (const option of schema.enum) {
+                            html += `<option value="${option}">${option}</option>`;
+                        }
+                        html += `</select>`;
+                    } else if (schema.format === 'time') {
+                        html += `<input type="time" id="${fieldId}" 
+                                 value="${schema.default || ''}" 
+                                 ${isRequired ? 'required' : ''}>`;
+                    } else {
+                        html += `<input type="text" id="${fieldId}" 
+                                 placeholder="${schema.default || ''}" 
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                case 'number':
+                case 'integer':
+                    const min = schema.minimum !== undefined ? `min="${schema.minimum}"` : '';
+                    const max = schema.maximum !== undefined ? `max="${schema.maximum}"` : '';
+                    const step = schema.type === 'number' ? 'step="0.1"' : '';
+                    html += `<input type="number" id="${fieldId}" 
+                             value="${schema.default || ''}" 
+                             ${min} ${max} ${step}
+                             ${isRequired ? 'required' : ''}>`;
+                    break;
+                    
+                case 'boolean':
+                    html += `<input type="checkbox" id="${fieldId}" 
+                             ${schema.default ? 'checked' : ''} 
+                             style="width: auto;">`;
+                    break;
+                    
+                case 'array':
+                    html += `<div class="array-field" id="${fieldId}">`;
+                    html += `<div id="${fieldId}_items"></div>`;
+                    html += `<button class="btn btn-secondary array-add-button" 
+                             onclick="addArrayItem('${fieldId}')">+ Add Item</button>`;
+                    html += `</div>`;
+                    break;
+                    
+                case 'object':
+                    html += `<textarea id="${fieldId}" rows="3" 
+                             placeholder="{}" ${isRequired ? 'required' : ''}>{}</textarea>`;
+                    break;
+            }
+            
+            if (schema.description) {
+                html += `<div class="help-text">${schema.description}</div>`;
+            }
+            
+            html += `</div>`;
+            return html;
+        }
+
+        // Render nested struct field
+        function renderNestedField(fieldId, fieldName, schema, isRequired = false, structs = {}) {
+            const type = schema.type;
+            
+            // Handle nested struct references
+            if (schema.$ref) {
+                const structName = schema.$ref.replace('#/definitions/', '');
+                const structDef = structs[structName];
+                
+                if (structDef && structDef.properties) {
+                    let html = `<fieldset style="border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem;">`;
+                    html += `<legend style="font-size: 0.9em; font-weight: 500; padding: 0 0.5rem;">${fieldName} (${structName})</legend>`;
+                    
+                    const structRequired = structDef.required || [];
+                    for (const [subFieldName, subFieldSchema] of Object.entries(structDef.properties)) {
+                        const subFieldRequired = structRequired.includes(subFieldName);
+                        const nestedFieldId = `${fieldId}_${subFieldName}`;
+                        html += renderNestedField(nestedFieldId, subFieldName, subFieldSchema, subFieldRequired, structs);
+                    }
+                    
+                    html += `</fieldset>`;
+                    return html;
+                }
+            }
+            
+            let html = `<div class="form-group ${!isRequired ? 'optional' : ''}">`;
+            
+            switch (type) {
+                case 'string':
+                    if (schema.enum) {
+                        // Handle enum dropdown
+                        html += `<label for="${fieldId}">${fieldName}</label>`;
+                        html += `<select id="${fieldId}" ${isRequired ? 'required' : ''}>`;
+                        html += `<option value="">Select ${fieldName}</option>`;
+                        for (const option of schema.enum) {
+                            const selected = schema.default === option ? 'selected' : '';
+                            html += `<option value="${option}" ${selected}>${option}</option>`;
+                        }
+                        html += `</select>`;
+                    } else if (schema.format === 'time' || fieldName.includes('time')) {
+                        // Handle time input
+                        html += `<label for="${fieldId}">${fieldName}</label>`;
+                        const defaultTime = schema.default === 5 ? '05:00' : (schema.default || '');
+                        html += `<input type="time" id="${fieldId}" 
+                                 value="${defaultTime}" 
+                                 ${isRequired ? 'required' : ''}>`;
+                    } else {
+                        // Regular string input
+                        html += `<label for="${fieldId}">${fieldName}</label>`;
+                        html += `<input type="text" id="${fieldId}" 
+                                 value="${schema.default || ''}" 
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                case 'number':
+                case 'integer':
+                    html += `<label for="${fieldId}">${fieldName}</label>`;
+                    const min = schema.minimum !== undefined ? `min="${schema.minimum}"` : '';
+                    const max = schema.maximum !== undefined ? `max="${schema.maximum}"` : '';
+                    const step = type === 'number' ? 'step="0.5"' : 'step="1"';
+                    html += `<input type="number" id="${fieldId}" 
+                             value="${schema.default || ''}" 
+                             ${min} ${max} ${step}
+                             ${isRequired ? 'required' : ''}>`;
+                    break;
+                    
+                case 'boolean':
+                    // Handle boolean with proper default parsing
+                    const defaultChecked = schema.default === true || schema.default === 'true' || schema.default === '1';
+                    html += `<label for="${fieldId}" style="display: flex; align-items: center; gap: 0.5rem;">`;
+                    html += `<input type="checkbox" id="${fieldId}" 
+                             ${defaultChecked ? 'checked' : ''} 
+                             style="width: auto;">`;
+                    html += `<span>${fieldName}</span></label>`;
+                    break;
+                    
+                case 'array':
+                    // Handle arrays (including enum arrays)
+                    html += `<label for="${fieldId}">${fieldName}</label>`;
+                    if (schema.items && schema.items.enum) {
+                        // Array of enums - show as checkboxes
+                        html += `<div class="array-enum-container">`;
+                        const defaultValues = Array.isArray(schema.default) ? schema.default : [];
+                        for (const option of schema.items.enum) {
+                            const checked = defaultValues.includes(option) ? 'checked' : '';
+                            html += `<label style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">`;
+                            html += `<input type="checkbox" data-array-field="${fieldId}" value="${option}" ${checked} style="width: auto;">`;
+                            html += `<span>${option}</span></label>`;
+                        }
+                        html += `</div>`;
+                    } else {
+                        // Regular array input
+                        const defaultVal = Array.isArray(schema.default) ? schema.default.join(', ') : '';
+                        html += `<input type="text" id="${fieldId}" 
+                                 value="${defaultVal}" 
+                                 placeholder="Enter comma-separated values"
+                                 ${isRequired ? 'required' : ''}>`;
+                    }
+                    break;
+                    
+                default:
+                    html += `<label for="${fieldId}">${fieldName}</label>`;
+                    html += `<input type="text" id="${fieldId}" 
+                             value="${schema.default || ''}" 
+                             ${isRequired ? 'required' : ''}>`;
+                    break;
+            }
+            
+            if (schema.description) {
+                html += `<div class="help-text">${schema.description}</div>`;
+            }
+            
+            html += `</div>`;
+            return html;
+        }
+
+        // Add array item
+        function addArrayItem(fieldId) {
+            const container = document.getElementById(`${fieldId}_items`);
+            const itemId = `${fieldId}_item_${Date.now()}`;
+            
+            const itemHtml = `
+                <div class="array-item" id="${itemId}">
+                    <input type="text" placeholder="Item value">
+                    <button class="btn btn-danger" onclick="removeArrayItem('${itemId}')">×</button>
+                </div>
+            `;
+            
+            container.insertAdjacentHTML('beforeend', itemHtml);
+        }
+
+        // Remove array item
+        function removeArrayItem(itemId) {
+            document.getElementById(itemId).remove();
+        }
+
+        // Collect form data
+        function collectFormData(methodId) {
+            const formDiv = document.getElementById(`form-${methodId}`);
+            if (!formDiv) return {};
+            
+            const data = {};
+            
+            // Handle all form inputs
+            formDiv.querySelectorAll('input, select, textarea').forEach(input => {
+                if (!input.id || !input.id.startsWith('field_') || input.id.includes('_item_')) return;
+                
+                // Skip array checkboxes - they're handled separately
+                if (input.hasAttribute('data-array-field')) return;
+                
+                const value = getInputValue(input);
+                
+                // Debug logging for coffee fields
+                if (input.id.includes('coffee')) {
+                    console.log('Coffee field:', input.id, 'type:', input.tagName, 'value:', value, 'raw value:', input.value);
+                }
+                
+                // Check if this is a JSON textarea (for STRUCT types)
+                if (input.classList.contains('json-editor') && input.tagName === 'TEXTAREA') {
+                    const fieldPath = input.id.replace('field_', '');
+                    try {
+                        const jsonValue = JSON.parse(input.value || '{}');
+                        data[fieldPath] = jsonValue;
+                    } catch (e) {
+                        console.error('Invalid JSON in field', fieldPath, e);
+                        data[fieldPath] = {};
+                    }
+                } else {
+                    // Use the parameter name from data attribute if available
+                    const parameterName = input.getAttribute('data-parameter-name');
+                    if (parameterName) {
+                        // For checkboxes (booleans), always include the value even if false
+                        if (input.type === 'checkbox' || value !== null && value !== undefined && value !== '') {
+                            setNestedValue(data, parameterName, value);
+                        }
+                    } else {
+                        // Fallback for fields without parameter name
+                        const fieldPath = input.id.replace('field_', '');
+                        if (input.type === 'checkbox' || value !== null && value !== undefined && value !== '') {
+                            data[fieldPath] = value;
+                        }
+                    }
+                }
+            });
+            
+            // Handle array checkboxes
+            const arrayFields = new Map();
+            formDiv.querySelectorAll('input[data-array-field]').forEach(checkbox => {
+                const fieldId = checkbox.getAttribute('data-array-field');
+                if (!arrayFields.has(fieldId)) {
+                    arrayFields.set(fieldId, []);
+                }
+                if (checkbox.checked) {
+                    arrayFields.get(fieldId).push(parseInt(checkbox.value));
+                }
+            });
+            
+            arrayFields.forEach((values, fieldId) => {
+                // Check if the array container has a parameter name
+                const arrayContainer = formDiv.querySelector(`#${fieldId}`);
+                const parameterName = arrayContainer?.getAttribute('data-parameter-name');
+                
+                if (parameterName) {
+                    setNestedValue(data, parameterName, values);
+                } else {
+                    // Fallback
+                    const fieldPath = fieldId.replace('field_', '');
+                    data[fieldPath] = values;
+                }
+            });
+            
+            return data;
+        }
+
+        // Get value from input based on type
+        function getInputValue(input) {
+            if (input.type === 'checkbox') {
+                return input.checked;
+            } else if (input.type === 'number') {
+                return input.value ? parseFloat(input.value) : null;
+            } else if (input.tagName === 'TEXTAREA') {
+                try {
+                    return JSON.parse(input.value || '{}');
+                } catch (e) {
+                    return input.value;
+                }
+            } else if (input.tagName === 'SELECT') {
+                // For select elements, check if the value is numeric (for enums)
+                const value = input.value;
+                if (value && !isNaN(value)) {
+                    return parseInt(value);
+                }
+                return value;
+            } else {
+                return input.value;
+            }
+        }
+
+        // Set nested value in object using path like 'config.departure_time'
+        function setNestedValue(obj, path, value) {
+            const parts = path.split('.');
+            
+            if (parts.length === 1) {
+                // Top-level field
+                obj[parts[0]] = value;
+            } else {
+                // Nested field - navigate to the parent and set the value
+                let current = obj;
+                for (let i = 0; i < parts.length - 1; i++) {
+                    if (!current[parts[i]]) {
+                        current[parts[i]] = {};
+                    }
+                    current = current[parts[i]];
+                }
+                current[parts[parts.length - 1]] = value;
+            }
+        }
+
+        // Populate form from JSON data
+        function populateForm(methodId, data) {
+            const formDiv = document.getElementById(`form-${methodId}`);
+            if (!formDiv) return;
+            
+            // Recursive function to populate fields
+            function populateFields(obj, prefix = '') {
+                Object.entries(obj).forEach(([key, value]) => {
+                    const fieldPath = prefix ? `${prefix}.${key}` : key;
+                    const fieldId = `field_${fieldPath.replace(/\./g, '_')}`;
+                    
+                    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                        // Recursively handle nested objects
+                        populateFields(value, fieldPath);
+                    } else {
+                        // Find the input element
+                        const input = formDiv.querySelector(`#${fieldId}`);
+                        if (input) {
+                            if (input.type === 'checkbox' && !input.hasAttribute('data-array-field')) {
+                                input.checked = value;
+                            } else if (input.tagName === 'SELECT') {
+                                input.value = value;
+                            } else if (Array.isArray(value)) {
+                                // Handle arrays
+                                if (input.type === 'text') {
+                                    input.value = value.join(', ');
+                                } else {
+                                    // Handle checkbox arrays
+                                    formDiv.querySelectorAll(`input[data-array-field="${fieldId}"]`).forEach(checkbox => {
+                                        checkbox.checked = value.includes(parseInt(checkbox.value));
+                                    });
+                                }
+                            } else {
+                                input.value = value;
+                            }
+                        }
+                    }
+                });
+            }
+            
+            populateFields(data);
+        }
+
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+---
+name: ifex_dispatcher
+major_version: 1
+minor_version: 0
+description: Dynamic method dispatcher for IFEX services
+
+namespaces:
+  - name: core
+    description: Core dynamic method calling functionality
+    
+    enumerations:
+      - name: call_status_t
+        datatype: uint8
+        description: Method call execution status
+        options:
+          - name: SUCCESS
+            value: 0
+            description: Method call completed successfully
+          - name: FAILED
+            value: 1
+            description: Method call failed
+          - name: TIMEOUT
+            value: 2
+            description: Method call timed out
+          - name: SERVICE_UNAVAILABLE
+            value: 3
+            description: Target service not available
+          - name: METHOD_NOT_FOUND
+            value: 4
+            description: Method not found on target service
+          - name: INVALID_PARAMETERS
+            value: 5
+            description: Parameters validation failed
+
+    structs:
+      - name: method_call_t
+        description: Method call request information
+        members:
+          - name: service_name
+            datatype: string
+            description: Target service name
+          - name: method_name
+            datatype: string
+            description: Target method name
+          - name: parameters
+            datatype: string
+            description: JSON-encoded method parameters
+          - name: timeout_ms
+            datatype: uint32
+            description: Call timeout in milliseconds
+            default: 5000
+
+      - name: call_result_t
+        description: Method call execution result
+        members:
+          - name: status
+            datatype: call_status_t
+            description: Call execution status
+          - name: response
+            datatype: string
+            description: JSON-encoded response data
+            mandatory: false
+          - name: error_message
+            datatype: string
+            description: Error details if call failed
+            mandatory: false
+          - name: duration_ms
+            datatype: uint32
+            description: Actual execution time in milliseconds
+          - name: service_endpoint
+            datatype: string
+            description: Resolved service endpoint used
+
+    methods:
+      - name: call_method
+        description: Execute a method on any IFEX service
+        input:
+          - name: call
+            datatype: method_call_t
+            description: Method call details
+            mandatory: true
+        output:
+          - name: result
+            datatype: call_result_t
+            description: Call execution result
+            mandatory: true

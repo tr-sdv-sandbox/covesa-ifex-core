@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Service Scheduler - Service Discovery Integration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #16213e;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #0f3460 0%, #e94560 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 2.2em;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.2);
+            padding: 10px 20px;
+            border-radius: 20px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4CAF50;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.offline {
+            background: #f44336;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            min-height: 600px;
+        }
+
+        .services-section {
+            padding: 30px;
+            border-right: 1px solid #333;
+        }
+
+        .schedule-section {
+            padding: 30px;
+            background: #0f3460;
+        }
+
+        .section-title {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: #e94560;
+        }
+
+        .service-discovery-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #c73650;
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .services-grid {
+            display: grid;
+            gap: 15px;
+        }
+
+        .service-card {
+            background: #0f3460;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 20px;
+            transition: all 0.2s;
+        }
+
+        .service-card:hover {
+            border-color: #e94560;
+            transform: translateY(-2px);
+        }
+
+        .service-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .service-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .service-address {
+            font-size: 0.8em;
+            color: #999;
+        }
+
+        .method-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .method-item {
+            background: #16213e;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .method-item:hover {
+            border-color: #e94560;
+            background: #1a2744;
+        }
+
+        .method-item.schedulable {
+            border-left: 3px solid #4CAF50;
+        }
+
+        .method-name {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .method-description {
+            font-size: 0.9em;
+            color: #aaa;
+            margin-top: 5px;
+        }
+
+        .schedule-form {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #e94560;
+            font-weight: bold;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            background: #0f3460;
+            border: 1px solid #333;
+            color: white;
+            border-radius: 5px;
+        }
+
+        .scheduled-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .scheduled-item {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .scheduled-time {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .scheduled-service {
+            color: #e94560;
+            margin: 5px 0;
+        }
+
+        .scheduled-params {
+            font-size: 0.8em;
+            color: #999;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+        }
+
+        .modal-content {
+            background-color: #16213e;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 15px;
+            width: 80%;
+            max-width: 600px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+            position: relative;
+            border: 1px solid #333;
+        }
+
+        .close {
+            color: #999;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #e94560;
+        }
+
+        .modal h2 {
+            color: #e94560;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .parameter-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #0f3460;
+            border-radius: 8px;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .parameter-label {
+            font-weight: bold;
+            color: #4CAF50;
+            margin-bottom: 5px;
+        }
+
+        .parameter-description {
+            font-size: 0.9em;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+
+        .parameter-input {
+            width: 100%;
+            padding: 10px;
+            background: #16213e;
+            border: 1px solid #333;
+            color: white;
+            border-radius: 5px;
+        }
+        
+        .struct-textarea {
+            min-height: 120px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            resize: vertical;
+        }
+        
+        .struct-hint {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #888;
+            font-style: italic;
+        }
+
+        .enum-selector {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .enum-option {
+            padding: 8px 15px;
+            background: #16213e;
+            border: 2px solid #333;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .enum-option:hover {
+            border-color: #e94560;
+        }
+
+        .enum-option.selected {
+            background: #e94560;
+            border-color: #e94560;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .loading-spinner {
+            border: 4px solid #333;
+            border-top: 4px solid #e94560;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #f44336;
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Live Service Scheduler</h1>
+            <div class="connection-status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="connectionStatus">Connecting...</span>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="services-section">
+                <h2 class="section-title">📡 Available Services</h2>
+                
+                <div class="service-discovery-controls">
+                    <button class="btn" onclick="discoverServices()">🔄 Refresh Services</button>
+                    <button class="btn" onclick="testConnection()">🧪 Test Connection</button>
+                </div>
+                
+                <div id="servicesContainer">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Discovering services...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="schedule-section">
+                <div class="schedule-form">
+                    <h3 class="section-title">📅 Schedule Action</h3>
+                    
+                    <div class="form-group">
+                        <label for="selectedMethod">Selected Method:</label>
+                        <input type="text" id="selectedMethod" readonly placeholder="Select a method from the left">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="scheduleDate">Date:</label>
+                        <input type="date" id="scheduleDate" value="" min="">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="scheduleTime">Time:</label>
+                        <input type="time" id="scheduleTime" value="08:00">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="recurring">Recurring:</label>
+                        <select id="recurring">
+                            <option value="once">Once</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekdays">Weekdays</option>
+                            <option value="weekly">Weekly</option>
+                        </select>
+                    </div>
+                    
+                    <button class="btn" id="scheduleBtn" onclick="scheduleAction()" disabled style="width: 100%;">
+                        Schedule Action
+                    </button>
+                </div>
+                
+                <div>
+                    <h3 class="section-title">📋 Scheduled Actions</h3>
+                    <div class="scheduled-list" id="scheduledList">
+                        <p style="color: #666; text-align: center;">No scheduled actions yet</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Parameter Configuration Modal -->
+    <div id="parameterModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeParameterModal()">&times;</span>
+            <h2 id="modalTitle">Configure Parameters</h2>
+            <div id="modalContent">
+                <!-- Modal content will be populated dynamically -->
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="closeParameterModal()">Cancel</button>
+                <button class="btn" onclick="confirmParameters()" style="flex: 2;">Confirm & Schedule</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const PROXY_API_URL = 'http://localhost:5001/api';
+        
+        // Global state
+        let discoveredServices = [];
+        let selectedService = null;
+        let selectedMethod = null;
+        let currentParameters = {};
+        let scheduledActions = [];
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set today's date as default
+            document.getElementById('scheduleDate').value = new Date().toISOString().split('T')[0];
+            
+            // Start service discovery
+            discoverServices();
+            
+            // Load scheduled jobs
+            loadScheduledJobs();
+            
+            // Check connection periodically
+            setInterval(checkConnection, 5000);
+            
+            // Reload jobs periodically
+            setInterval(loadScheduledJobs, 30000);
+        });
+
+        async function checkConnection() {
+            try {
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('connectionStatus');
+                
+                const response = await fetch(`${PROXY_API_URL}/health`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    statusDot.classList.remove('offline');
+                    statusText.textContent = `Connected (${data.status})`;
+                } else {
+                    statusDot.classList.add('offline');
+                    statusText.textContent = 'Service Discovery Offline';
+                }
+            } catch (error) {
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('connectionStatus');
+                statusDot.classList.add('offline');
+                statusText.textContent = 'Connection Failed';
+                console.error('Connection check failed:', error);
+            }
+        }
+
+        async function testConnection() {
+            const container = document.getElementById('servicesContainer');
+            container.innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Testing connection to service discovery...</p>
+                </div>
+            `;
+            
+            try {
+                const response = await fetch(`${PROXY_API_URL}/health`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    container.innerHTML = `
+                        <div style="background: #4CAF50; color: white; padding: 20px; border-radius: 10px; text-align: center;">
+                            ✅ Connection successful!<br>
+                            Service: ${data.service}<br>
+                            Status: ${data.status}
+                        </div>
+                    `;
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    container.innerHTML = `
+                        <div class="error-message">
+                            ❌ Connection failed: ${errorData.error || 'HTTP ' + response.status}
+                        </div>
+                    `;
+                }
+                
+                setTimeout(() => discoverServices(), 2000);
+            } catch (error) {
+                container.innerHTML = `
+                    <div class="error-message">
+                        ❌ Failed to connect to proxy: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        async function discoverServices() {
+            const container = document.getElementById('servicesContainer');
+            container.innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Discovering services...</p>
+                </div>
+            `;
+            
+            try {
+                console.log('🔍 Calling real service discovery API...');
+                const response = await fetch(`${PROXY_API_URL}/services`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    discoveredServices = data.services;
+                    console.log(`✅ Discovered ${data.count} services:`, discoveredServices);
+                    displayServices();
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+            } catch (error) {
+                console.error('❌ Service discovery failed:', error);
+                container.innerHTML = `
+                    <div class="error-message">
+                        ❌ Failed to discover services: ${error.message}
+                        <br><br>
+                        Make sure the service discovery proxy is running:
+                        <br><code>python3 service_discovery_proxy.py</code>
+                    </div>
+                `;
+            }
+        }
+
+        function displayServices() {
+            const container = document.getElementById('servicesContainer');
+            
+            if (discoveredServices.length === 0) {
+                container.innerHTML = '<p style="color: #666; text-align: center;">No services discovered</p>';
+                return;
+            }
+            
+            const servicesHTML = discoveredServices.map(service => `
+                <div class="service-card">
+                    <div class="service-header">
+                        <div>
+                            <div class="service-name">${service.name}</div>
+                            <div class="service-address">${service.address}</div>
+                        </div>
+                        <span style="color: #4CAF50;">v${service.version}</span>
+                    </div>
+                    <div class="method-list">
+                        ${service.namespaces.flatMap(ns => 
+                            ns.methods.map(method => `
+                                <div class="method-item ${method.x_scheduling?.enabled ? 'schedulable' : ''}" 
+                                     onclick="selectMethod('${service.name}', '${method.name}', ${method.x_scheduling?.enabled || false})">
+                                    <div class="method-name">
+                                        ${method.x_scheduling?.enabled ? '📅' : '🔧'} ${method.name}()
+                                    </div>
+                                    <div class="method-description">${method.description}</div>
+                                </div>
+                            `)
+                        ).join('')}
+                    </div>
+                </div>
+            `).join('');
+            
+            container.innerHTML = `<div class="services-grid">${servicesHTML}</div>`;
+        }
+
+        function selectMethod(serviceName, methodName, isSchedulable) {
+            if (!isSchedulable) {
+                alert('This method is not schedulable. Only methods marked with 📅 can be scheduled.');
+                return;
+            }
+            
+            selectedService = discoveredServices.find(s => s.name === serviceName);
+            selectedMethod = selectedService.namespaces
+                .flatMap(ns => ns.methods)
+                .find(m => m.name === methodName);
+            
+            document.getElementById('selectedMethod').value = `${serviceName}.${methodName}()`;
+            document.getElementById('scheduleBtn').disabled = false;
+            
+            // Show parameter configuration modal
+            showParameterModal();
+        }
+
+        function showParameterModal() {
+            const modal = document.getElementById('parameterModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalContent = document.getElementById('modalContent');
+            
+            modalTitle.textContent = `Configure ${selectedService.name}.${selectedMethod.name}()`;
+            modalContent.innerHTML = generateParameterForm();
+            modal.style.display = 'block';
+        }
+
+        function generateParameterForm() {
+            if (!selectedMethod.input_parameters || selectedMethod.input_parameters.length === 0) {
+                return '<p style="color: #666;">This method has no parameters to configure.</p>';
+            }
+            
+            return selectedMethod.input_parameters.map(param => `
+                <div class="parameter-group">
+                    <div class="parameter-label">
+                        ${param.name}
+                        ${param.is_optional ? '<span style="color: #666;"> (optional)</span>' : ''}
+                    </div>
+                    <div class="parameter-description">
+                        ${param.description}
+                        ${param.min_value !== undefined || param.max_value !== undefined ? 
+                            `<br><small style="color: #888;">Range: ${param.min_value || 'min'} - ${param.max_value || 'max'}</small>` : ''}
+                    </div>
+                    ${generateParameterInput(param)}
+                </div>
+            `).join('');
+        }
+
+        function generateParameterInput(param) {
+            // Handle STRUCT type parameters differently
+            if (param.type === 'STRUCT' && param.struct_type && selectedService.struct_definitions) {
+                const structDef = selectedService.struct_definitions[param.struct_type];
+                if (structDef) {
+                    // Generate form fields for each struct member
+                    return `
+                        <div class="struct-group" data-struct-name="${param.name}" data-struct-type="${param.struct_type}">
+                            <div style="margin-left: 20px; border-left: 3px solid #4CAF50; padding-left: 15px; margin-top: 10px;">
+                                ${structDef.members.map(member => {
+                                    const fieldId = `${param.name}_${member.name}`;
+                                    const fullParamName = `${param.name}.${member.name}`;
+                                    
+                                    // Check if this member is a struct type
+                                    const memberType = getMemberType(member.type);
+                                    const isNestedStruct = memberType === 'STRUCT' || 
+                                        (selectedService.struct_definitions && selectedService.struct_definitions[member.type]);
+                                    
+                                    if (isNestedStruct && selectedService.struct_definitions[member.type]) {
+                                        // Handle nested struct
+                                        const nestedStructDef = selectedService.struct_definitions[member.type];
+                                        return `
+                                            <div class="parameter-group" style="margin-bottom: 15px;">
+                                                <div class="parameter-label" style="font-weight: bold; color: #e94560;">
+                                                    ${member.name}
+                                                    ${!member.mandatory ? '<span style="color: #666;"> (optional)</span>' : ''}
+                                                    <span style="font-size: 0.9em; color: #999;"> (${member.type})</span>
+                                                </div>
+                                                <div class="parameter-description">${member.description || ''}</div>
+                                                <div class="struct-group" data-struct-name="${param.name}.${member.name}" 
+                                                     data-struct-type="${member.type}" style="margin-left: 20px; 
+                                                     border-left: 3px solid #e94560; padding-left: 15px; margin-top: 10px;">
+                                                    ${nestedStructDef.members.map(nestedMember => {
+                                                        const nestedFieldId = `${param.name}_${member.name}_${nestedMember.name}`;
+                                                        const nestedFullParamName = `${param.name}.${member.name}.${nestedMember.name}`;
+                                                        
+                                                        // Create param object for nested struct member
+                                                        const nestedMemberParam = {
+                                                            name: nestedFullParamName,
+                                                            type: getMemberType(nestedMember.type),
+                                                            description: nestedMember.description,
+                                                            is_optional: !nestedMember.mandatory,
+                                                            default_value: nestedMember.default,
+                                                            min_value: nestedMember.min,
+                                                            max_value: nestedMember.max,
+                                                            enum_values: getEnumValues(nestedMember.type),
+                                                            parameterName: nestedMember.name,
+                                                            structPath: `${member.name}.${nestedMember.name}`,
+                                                            parentStruct: member.name
+                                                        };
+                                                        
+                                                        return `
+                                                            <div class="parameter-group" style="margin-bottom: 10px;">
+                                                                <div class="parameter-label">
+                                                                    ${nestedMember.name}
+                                                                    ${!nestedMember.mandatory ? '<span style="color: #666;"> (optional)</span>' : ''}
+                                                                </div>
+                                                                <div class="parameter-description" style="font-size: 0.9em;">
+                                                                    ${nestedMember.description || ''}
+                                                                </div>
+                                                                ${generateMemberInput(nestedMemberParam, nestedFieldId)}
+                                                            </div>
+                                                        `;
+                                                    }).join('')}
+                                                </div>
+                                            </div>
+                                        `;
+                                    } else {
+                                        // Regular non-struct member
+                                        const memberParam = {
+                                            name: fullParamName,
+                                            type: memberType,
+                                            description: member.description,
+                                            is_optional: !member.mandatory,
+                                            default_value: member.default,
+                                            min_value: member.min,
+                                            max_value: member.max,
+                                            enum_values: getEnumValues(member.type),
+                                            parameterName: member.name
+                                        };
+                                        
+                                        return `
+                                            <div class="parameter-group" style="margin-bottom: 15px;">
+                                                <div class="parameter-label">
+                                                    ${member.name}
+                                                    ${!member.mandatory ? '<span style="color: #666;"> (optional)</span>' : ''}
+                                                </div>
+                                                <div class="parameter-description">${member.description || ''}</div>
+                                                ${generateMemberInput(memberParam, fieldId)}
+                                            </div>
+                                        `;
+                                    }
+                                }).join('')}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    // Fallback to JSON input if struct definition not found
+                    return `
+                        <div class="struct-input">
+                            <textarea class="parameter-input struct-textarea" data-param="${param.name}" 
+                                      placeholder="Enter JSON object"></textarea>
+                            <div class="struct-hint">💡 Struct type: ${param.struct_type}</div>
+                        </div>
+                    `;
+                }
+            }
+            
+            // Regular non-struct parameter handling
+            if (param.enum_values && param.enum_values.length > 0 && param.type !== 'ARRAY') {
+                // Set default value in currentParameters if not already set
+                if (param.default_value !== undefined && param.default_value !== null && 
+                    currentParameters[param.name] === undefined) {
+                    currentParameters[param.name] = param.default_value;
+                }
+                
+                return `
+                    <div class="enum-selector">
+                        ${param.enum_values.map(value => {
+                            // Extract numeric value from "NAME (value)" format
+                            const match = value.match(/\((\d+)\)$/);
+                            const enumValue = match ? parseInt(match[1]) : value;
+                            const isDefault = param.default_value !== undefined && param.default_value === enumValue;
+                            const selectedClass = isDefault ? 'selected' : '';
+                            
+                            return `
+                                <div class="enum-option ${selectedClass}" onclick="selectEnum(this, '${param.name}', '${value}')">
+                                    ${value}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            } else if (param.type === 'FLOAT' || param.type === 'UINT16' || param.type === 'UINT32') {
+                const defaultVal = param.default_value || '';
+                const minAttr = param.min_value ? `min="${param.min_value}"` : '';
+                const maxAttr = param.max_value ? `max="${param.max_value}"` : '';
+                const step = param.type === 'FLOAT' ? 'step="0.1"' : 'step="1"';
+                return `<input type="number" class="parameter-input" data-param="${param.name}" 
+                        value="${defaultVal}" ${minAttr} ${maxAttr} ${step}>`;
+            } else if (param.type === 'BOOLEAN') {
+                const defaultChecked = param.default_value === true || param.default_value === 'True' || 
+                                     param.default_value === 'true' || param.default_value === 1 ? 'checked' : '';
+                return `
+                    <label style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" data-param="${param.name}" ${defaultChecked}>
+                        <span>Enable</span>
+                    </label>
+                `;
+            } else if (param.type === 'STRING') {
+                const defaultVal = param.default_value || '';
+                return `<input type="text" class="parameter-input" data-param="${param.name}" value="${defaultVal}">`;
+            } else if (param.type === 'ARRAY') {
+                // Check if this is an array of enums
+                if (param.enum_values && param.enum_values.length > 0) {
+                    const defaultValues = Array.isArray(param.default_value) ? param.default_value : [];
+                    return `
+                        <div class="enum-array-selector">
+                            <div style="margin-bottom: 10px; font-size: 0.9em; color: #aaa;">
+                                Select multiple options (default: ${defaultValues.map(v => {
+                                    const enumOption = param.enum_values.find(e => e.includes(`(${v})`));
+                                    return enumOption ? enumOption.split(' (')[0] : v;
+                                }).join(', ')})
+                            </div>
+                            ${param.enum_values.map(value => {
+                                const match = value.match(/(.+) \((\d+)\)$/);
+                                const enumName = match ? match[1] : value;
+                                const enumValue = match ? parseInt(match[2]) : value;
+                                const isDefault = defaultValues.includes(enumValue);
+                                return `
+                                    <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                                        <input type="checkbox" data-param="${param.name}" value="${enumValue}" 
+                                               ${isDefault ? 'checked' : ''}>
+                                        <span>${enumName}</span>
+                                    </label>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                } else {
+                    // Regular array - text input
+                    const defaultVal = param.default_value || '';
+                    const placeholder = defaultVal ? `Default: ${defaultVal}` : 'Enter comma-separated values';
+                    return `<input type="text" class="parameter-input" data-param="${param.name}" 
+                            value="${defaultVal}" placeholder="${placeholder}">`;
+                }
+            } else {
+                return `<input type="text" class="parameter-input" data-param="${param.name}" 
+                        placeholder="${param.type} value">`;
+            }
+        }
+        
+        // Helper function to generate input for struct members
+        function generateMemberInput(param, fieldId) {
+            if (param.enum_values && param.enum_values.length > 0 && param.type !== 'ARRAY') {
+                return `
+                    <select id="${fieldId}" data-parameter-name="${param.parameterName}" class="parameter-input">
+                        ${param.enum_values.map(val => {
+                            const match = val.match(/(.+)\s*\((\d+)\)/);
+                            if (match) {
+                                const [, label, value] = match;
+                                const selected = param.default_value == value ? 'selected' : '';
+                                return `<option value="${value}" ${selected}>${label}</option>`;
+                            }
+                            return `<option value="${val}">${val}</option>`;
+                        }).join('')}
+                    </select>
+                `;
+            } else if (param.type === 'FLOAT' || param.type === 'UINT16' || param.type === 'UINT32') {
+                const defaultVal = param.default_value !== undefined ? param.default_value : '';
+                const minAttr = param.min_value !== undefined ? `min="${param.min_value}"` : '';
+                const maxAttr = param.max_value !== undefined ? `max="${param.max_value}"` : '';
+                const step = param.type === 'FLOAT' ? 'step="0.1"' : 'step="1"';
+                return `<input type="number" id="${fieldId}" data-parameter-name="${param.parameterName}" 
+                        class="parameter-input" value="${defaultVal}" ${minAttr} ${maxAttr} ${step}>`;
+            } else if (param.type === 'BOOLEAN') {
+                const defaultChecked = param.default_value === true ? 'checked' : '';
+                return `
+                    <label style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" id="${fieldId}" data-parameter-name="${param.parameterName}" ${defaultChecked}>
+                        <span>Enable</span>
+                    </label>
+                `;
+            } else if (param.type === 'ARRAY') {
+                // Check if this is an array of enums
+                if (param.enum_values && param.enum_values.length > 0) {
+                    const defaultValues = Array.isArray(param.default_value) ? param.default_value : [];
+                    return `
+                        <div class="enum-array-selector">
+                            <div style="margin-bottom: 8px; font-size: 0.9em; color: #aaa;">
+                                Select multiple options:
+                            </div>
+                            ${param.enum_values.map(value => {
+                                const match = value.match(/(.+)\s*\((\d+)\)/);
+                                const enumName = match ? match[1] : value;
+                                const enumValue = match ? parseInt(match[2]) : value;
+                                const isDefault = defaultValues.includes(enumValue);
+                                const fieldCheckboxId = `${fieldId}_${enumValue}`;
+                                return `
+                                    <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                                        <input type="checkbox" id="${fieldCheckboxId}" 
+                                               data-parameter-name="${param.parameterName}"
+                                               data-array-enum="true"
+                                               value="${enumValue}" 
+                                               ${isDefault ? 'checked' : ''}>
+                                        <span>${enumName}</span>
+                                    </label>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                } else {
+                    // Regular array - text input
+                    const defaultVal = Array.isArray(param.default_value) ? param.default_value.join(', ') : '';
+                    return `<input type="text" id="${fieldId}" data-parameter-name="${param.parameterName}" 
+                            class="parameter-input" value="${defaultVal}" placeholder="Comma-separated values">`;
+                }
+            } else {
+                const defaultVal = param.default_value !== undefined ? param.default_value : '';
+                return `<input type="text" id="${fieldId}" data-parameter-name="${param.parameterName}" 
+                        class="parameter-input" value="${defaultVal}">`;
+            }
+        }
+        
+        // Helper function to map IFEX types to form types
+        function getMemberType(ifexType) {
+            if (ifexType === 'float' || ifexType === 'double') return 'FLOAT';
+            if (ifexType.includes('uint')) return 'UINT32';
+            if (ifexType.includes('int')) return 'INT32';
+            if (ifexType === 'boolean') return 'BOOLEAN';
+            if (ifexType === 'string') return 'STRING';
+            if (ifexType.endsWith('[]')) return 'ARRAY';
+            if (selectedService.enum_definitions && selectedService.enum_definitions[ifexType]) return 'ENUM';
+            return 'STRING';
+        }
+        
+        // Helper function to get enum values for a type
+        function getEnumValues(ifexType) {
+            if (selectedService.enum_definitions && selectedService.enum_definitions[ifexType]) {
+                const enumDef = selectedService.enum_definitions[ifexType];
+                return enumDef.options.map(opt => `${opt.name} (${opt.value})`);
+            }
+            // Handle array of enums
+            if (ifexType.endsWith('[]')) {
+                const baseType = ifexType.slice(0, -2);
+                if (selectedService.enum_definitions && selectedService.enum_definitions[baseType]) {
+                    const enumDef = selectedService.enum_definitions[baseType];
+                    return enumDef.options.map(opt => `${opt.name} (${opt.value})`);
+                }
+            }
+            return null;
+        }
+
+        function selectEnum(element, paramName, value) {
+            // Clear other selections
+            element.parentNode.querySelectorAll('.enum-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+            
+            // Select this option
+            element.classList.add('selected');
+            
+            // Extract numeric value from enum display format "NAME (value)"
+            const match = value.match(/\((\d+)\)$/);
+            currentParameters[paramName] = match ? parseInt(match[1]) : value;
+        }
+
+        function confirmParameters() {
+            // Collect all parameter values
+            currentParameters = {};
+            
+            selectedMethod.input_parameters.forEach(param => {
+                if (param.type === 'STRUCT' && param.struct_type) {
+                    // Handle struct parameters - collect all fields within the struct
+                    const structGroup = document.querySelector(`[data-struct-name="${param.name}"]`);
+                    if (structGroup) {
+                        const structData = collectStructData(structGroup);
+                        currentParameters[param.name] = structData;
+                    }
+                } else if (param.enum_values && param.type !== 'ARRAY') {
+                    // Single enum - handled by selectEnum
+                    if (currentParameters[param.name] === undefined) {
+                        // Get from current selection or use default
+                        const enumValue = param.enum_values[0];
+                        const match = enumValue.match(/\((\d+)\)$/);
+                        currentParameters[param.name] = match ? parseInt(match[1]) : 0;
+                    }
+                } else if (param.type === 'ARRAY' && param.enum_values) {
+                    // Array of enums - collect checked checkboxes
+                    const checkboxes = document.querySelectorAll(`[data-param="${param.name}"]:checked`);
+                    const values = Array.from(checkboxes).map(cb => parseInt(cb.value));
+                    currentParameters[param.name] = values.length > 0 ? values : 
+                        (Array.isArray(param.default_value) ? param.default_value : []);
+                } else {
+                    // Regular parameters
+                    const input = document.querySelector(`[data-param="${param.name}"]`);
+                    if (input) {
+                        let value;
+                        if (input.type === 'checkbox') {
+                            value = input.checked;
+                        } else if (param.type === 'ARRAY') {
+                            value = input.value.split(',').map(v => v.trim());
+                        } else if (param.type === 'FLOAT') {
+                            value = parseFloat(input.value) || 0;
+                        } else if (param.type === 'UINT16' || param.type === 'UINT32') {
+                            value = parseInt(input.value) || 0;
+                        } else {
+                            value = input.value;
+                        }
+                        currentParameters[param.name] = value;
+                    }
+                }
+            });
+            
+            console.log('Collected parameters:', currentParameters);
+            closeParameterModal();
+            createScheduledAction();
+        }
+        
+        // Helper function to recursively collect struct data
+        function collectStructData(structGroup) {
+            const structData = {};
+            const processedFields = new Set();
+            
+            // First, handle array enum checkboxes
+            const arrayEnumGroups = {};
+            structGroup.querySelectorAll('[data-array-enum="true"]').forEach(checkbox => {
+                // Skip if inside nested struct
+                const parentStruct = checkbox.closest('[data-struct-name]');
+                if (parentStruct !== structGroup) {
+                    return;
+                }
+                
+                const fieldName = checkbox.getAttribute('data-parameter-name');
+                if (!arrayEnumGroups[fieldName]) {
+                    arrayEnumGroups[fieldName] = [];
+                }
+                if (checkbox.checked) {
+                    arrayEnumGroups[fieldName].push(parseInt(checkbox.value));
+                }
+                processedFields.add(fieldName);
+            });
+            
+            // Add array enum values to structData
+            for (const [fieldName, values] of Object.entries(arrayEnumGroups)) {
+                structData[fieldName] = values;
+            }
+            
+            // Find all direct inputs (non-nested)
+            structGroup.querySelectorAll('[data-parameter-name]').forEach(input => {
+                // Skip array enum checkboxes (already processed)
+                if (input.hasAttribute('data-array-enum')) {
+                    return;
+                }
+                
+                // Skip inputs that are inside nested struct groups
+                const parentStruct = input.closest('[data-struct-name]');
+                if (parentStruct !== structGroup) {
+                    return; // This input belongs to a nested struct
+                }
+                
+                const fieldName = input.getAttribute('data-parameter-name');
+                
+                // Skip if already processed (e.g., as array enum)
+                if (processedFields.has(fieldName)) {
+                    return;
+                }
+                
+                let value = getInputValue(input);
+                structData[fieldName] = value;
+            });
+            
+            // Find nested struct groups
+            structGroup.querySelectorAll('[data-struct-name]').forEach(nestedGroup => {
+                // Only process direct children struct groups
+                const parentGroup = nestedGroup.parentElement.closest('[data-struct-name]');
+                if (parentGroup === structGroup) {
+                    const nestedStructName = nestedGroup.getAttribute('data-struct-name');
+                    // Extract the field name from the full path (e.g., "config.coffee_config" -> "coffee_config")
+                    const parts = nestedStructName.split('.');
+                    const fieldName = parts[parts.length - 1];
+                    
+                    // Recursively collect nested struct data
+                    structData[fieldName] = collectStructData(nestedGroup);
+                }
+            });
+            
+            return structData;
+        }
+        
+        // Helper function to get value from input element
+        function getInputValue(input) {
+            if (input.type === 'checkbox' && !input.hasAttribute('data-array-enum')) {
+                return input.checked;
+            } else if (input.type === 'select-one') {
+                return parseInt(input.value) || input.value;
+            } else if (input.type === 'number') {
+                const val = parseFloat(input.value);
+                return isNaN(val) ? 0 : val;
+            } else if (input.value && input.value.includes(',')) {
+                // Handle array input
+                return input.value.split(',').map(v => {
+                    const trimmed = v.trim();
+                    const num = parseInt(trimmed);
+                    return isNaN(num) ? trimmed : num;
+                });
+            } else {
+                return input.value;
+            }
+        }
+
+        function closeParameterModal() {
+            document.getElementById('parameterModal').style.display = 'none';
+        }
+
+        async function createScheduledAction() {
+            const date = document.getElementById('scheduleDate').value;
+            const time = document.getElementById('scheduleTime').value;
+            const recurring = document.getElementById('recurring').value;
+            
+            const scheduleData = {
+                service: selectedService.name,
+                method: selectedMethod.name,
+                date: date,
+                time: time,
+                recurring: recurring,
+                parameters: {...currentParameters},
+                service_address: selectedService.address
+            };
+            
+            try {
+                console.log('📅 Sending schedule request:', scheduleData);
+                
+                const response = await fetch(`${PROXY_API_URL}/schedule`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(scheduleData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    // Add to local list with server-generated ID
+                    const action = {
+                        id: result.schedule_id,
+                        service: selectedService.name,
+                        method: selectedMethod.name,
+                        date: date,
+                        time: time,
+                        recurring: recurring,
+                        parameters: {...currentParameters}
+                    };
+                    
+                    scheduledActions.push(action);
+                    updateScheduledList();
+                    
+                    console.log(`✅ Scheduled action: ${result.schedule_id}`);
+                    alert(`✅ Scheduled ${selectedService.name}.${selectedMethod.name}() for ${date} at ${time}\nSchedule ID: ${result.schedule_id}`);
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+            } catch (error) {
+                console.error('❌ Schedule request failed:', error);
+                alert(`❌ Failed to schedule action: ${error.message}`);
+            }
+            
+            // Reset form
+            currentParameters = {};
+            document.getElementById('selectedMethod').value = '';
+            document.getElementById('scheduleBtn').disabled = true;
+        }
+
+        function updateScheduledList() {
+            const list = document.getElementById('scheduledList');
+            
+            if (scheduledActions.length === 0) {
+                list.innerHTML = '<p style="color: #666; text-align: center;">No scheduled actions yet</p>';
+                return;
+            }
+            
+            list.innerHTML = scheduledActions.map(action => `
+                <div class="scheduled-item">
+                    <div class="scheduled-time">${action.date} at ${action.time}</div>
+                    <div class="scheduled-service">${action.service}.${action.method}()</div>
+                    <div class="scheduled-params">
+                        ${Object.keys(action.parameters).length > 0 ? 
+                            Object.entries(action.parameters).map(([k, v]) => 
+                                `${k}: ${Array.isArray(v) ? v.join(', ') : 
+                                  typeof v === 'object' && v !== null ? JSON.stringify(v) : v}`
+                            ).join(' • ') : 
+                            '<span style="color: #999;">No parameters</span>'
+                        }
+                    </div>
+                    <div style="margin-top: 5px;">
+                        <span style="color: #666;">ID: ${action.id}</span> • 
+                        <span style="color: #666;">Recurring: ${action.recurring}</span>
+                        ${action.status ? ` • <span style="color: ${action.status === 'ACTIVE' ? '#4CAF50' : '#999'};">Status: ${action.status}</span>` : ''}
+                        ${action.error_message ? ` • <span style="color: #e94560;">Error: ${action.error_message}</span>` : ''}
+                        <button class="btn" onclick="deleteAction('${action.id}')" 
+                                style="float: right; padding: 5px 10px; font-size: 12px;">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function deleteAction(actionId) {
+            if (!confirm('Are you sure you want to delete this scheduled job?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${PROXY_API_URL}/jobs/${actionId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    console.log(`✅ Deleted job: ${actionId}`);
+                    // Remove from local list
+                    scheduledActions = scheduledActions.filter(a => a.id !== actionId);
+                    updateScheduledList();
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+            } catch (error) {
+                console.error('❌ Failed to delete job:', error);
+                alert(`Failed to delete job: ${error.message}`);
+            }
+        }
+        
+        async function loadScheduledJobs() {
+            try {
+                console.log('📋 Loading scheduled jobs...');
+                const response = await fetch(`${PROXY_API_URL}/jobs`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    scheduledActions = data.jobs.map(job => ({
+                        id: job.id,
+                        service: job.service,
+                        method: job.method,
+                        date: job.scheduled_time ? job.scheduled_time.split('T')[0] : '',
+                        time: job.scheduled_time ? job.scheduled_time.split('T')[1].substring(0, 5) : '',
+                        recurring: job.recurring ? 'yes' : 'once',
+                        parameters: {},  // Parameters not included in list response
+                        status: job.status,
+                        next_run: job.next_run,
+                        last_run: job.last_run,
+                        error_message: job.error_message
+                    }));
+                    
+                    console.log(`✅ Loaded ${scheduledActions.length} scheduled jobs`);
+                    updateScheduledList();
+                } else {
+                    console.error('Failed to load scheduled jobs');
+                }
+            } catch (error) {
+                console.error('❌ Error loading scheduled jobs:', error);
+            }
+        }
+
+        function scheduleAction() {
+            if (!selectedService || !selectedMethod) {
+                alert('Please select a schedulable method first');
+                return;
+            }
+            
+            // Parameters are already configured in the modal
+            // Just need to confirm the schedule
+            createScheduledAction();
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('parameterModal');
+            if (event.target === modal) {
+                closeParameterModal();
+            }
+        }
+        
+        // Initialize date picker with today's date
+        function initializeDatePicker() {
+            const dateInput = document.getElementById('scheduleDate');
+            const today = new Date();
+            const todayString = today.toISOString().split('T')[0];
+            dateInput.value = todayString;
+            dateInput.min = todayString;
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeDatePicker();
+            checkConnection();
+            setInterval(checkConnection, 5000);
+        });
+    </script>
+</body>
+</html>
