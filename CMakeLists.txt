@@ -86,6 +86,7 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     target_include_directories(ifex-proto-generated
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/proto>
+            $<INSTALL_INTERFACE:include/ifex/proto>
     )
 
     target_link_libraries(ifex-proto-generated
@@ -100,6 +101,12 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
         EXPORT ifex-core-targets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
+
+    # Install generated proto headers
+    install(DIRECTORY ${CMAKE_BINARY_DIR}/proto/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ifex/proto
+        FILES_MATCHING PATTERN "*.h"
     )
 endif()
 
