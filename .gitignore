@@ -1,8 +1,7 @@
 build
 cmake-build-*
-logs
-proto/*.proto
 proto/python
+logs
 test-logs
 .claude
 .idea
