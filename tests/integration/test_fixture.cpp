@@ -164,7 +164,7 @@ pid_t IntegrationTestFixture::start_service(const std::string& executable, const
         std::string listen_addr = "0.0.0.0:" + port_str;
 
         // Set environment variables
-        setenv("IFEX_SCHEMA_DIR", (get_build_dir() + "/ifex").c_str(), 1);
+        setenv("IFEX_SCHEMA_DIR", get_schema_dir().c_str(), 1);
         setenv("GLOG_logtostderr", "1", 1);
 
         // Redirect output to log files
@@ -301,6 +301,12 @@ std::string IntegrationTestFixture::get_build_dir() {
     // Look for CMakeCache.txt to identify build directory
     while (!current.empty() && current != current.root_path()) {
         if (fs::exists(current / "CMakeCache.txt")) {
+            // Check if we're in a parent build directory (covesa-ifex-core as subdirectory)
+            // In this case, services are in <build>/covesa-ifex-core/reference-services/
+            fs::path ifex_subdir = current / "covesa-ifex-core" / "reference-services";
+            if (fs::exists(ifex_subdir)) {
+                return (current / "covesa-ifex-core").string();
+            }
             return current.string();
         }
         current = current.parent_path();
@@ -308,4 +314,27 @@ std::string IntegrationTestFixture::get_build_dir() {
 
     // Fallback to current directory
     return ".";
+}
+
+std::string IntegrationTestFixture::get_schema_dir() {
+    // IFEX schema files are installed to <top-level-build>/ifex/
+    fs::path current = fs::current_path();
+
+    while (!current.empty() && current != current.root_path()) {
+        if (fs::exists(current / "CMakeCache.txt")) {
+            // Schemas are always at top-level build dir / ifex
+            if (fs::exists(current / "ifex")) {
+                return (current / "ifex").string();
+            }
+            // Fallback: try local ifex directory
+            std::string build_dir = get_build_dir();
+            if (fs::exists(build_dir + "/ifex")) {
+                return build_dir + "/ifex";
+            }
+            return current.string() + "/ifex";
+        }
+        current = current.parent_path();
+    }
+
+    return "./ifex";
 }

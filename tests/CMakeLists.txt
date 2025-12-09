@@ -60,10 +60,12 @@ target_include_directories(ifex-tests-integration
 add_test(NAME unit_tests COMMAND ifex-unit-tests)
 add_test(NAME integration_tests COMMAND ifex-tests-integration)
 
-# Enable test discovery for CLion
+# Enable test discovery for CLion (unit tests only)
+# Note: Integration tests must run as a suite (integration_tests) because they
+# share a global test fixture that manages service lifecycle. Individual test
+# discovery would cause each test to run in isolation without services.
 include(GoogleTest)
 gtest_discover_tests(ifex-unit-tests)
-gtest_discover_tests(ifex-tests-integration)
 
 # Custom target to run just unit tests
 add_custom_target(run-unit-tests

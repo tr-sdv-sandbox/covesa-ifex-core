@@ -58,4 +58,5 @@ private:
     static bool wait_for_service(const std::string& address, int timeout_seconds = 5);
 
     static std::string get_build_dir();
+    static std::string get_schema_dir();
 };
