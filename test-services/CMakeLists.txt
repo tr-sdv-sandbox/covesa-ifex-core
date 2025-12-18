@@ -1,7 +1,12 @@
 # Test services for IFEX Core
 # Note: This is included as a subdirectory, so packages are already found
 
-# Test service executables
+# Option to build example services (settings, beverage, climate, etc.)
+option(BUILD_EXAMPLE_SERVICES "Build example domain services" ON)
+
+# =============================================================================
+# Echo service (core test service - always built)
+# =============================================================================
 add_executable(ifex-echo-service
     echo/src/echo_server.cpp
     echo/src/main.cpp
@@ -22,36 +27,39 @@ target_link_libraries(ifex-echo-service
         nlohmann_json::nlohmann_json
 )
 
+# =============================================================================
+# Example domain services (optional)
+# =============================================================================
+if(BUILD_EXAMPLE_SERVICES)
+    # Settings service
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/settings/CMakeLists.txt)
+        add_subdirectory(settings)
+    endif()
 
-# Settings service
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/settings/CMakeLists.txt)
-    add_subdirectory(settings)
-endif()
+    # Test types service
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test-types/CMakeLists.txt)
+        add_subdirectory(test-types)
+    endif()
 
-# Test types service
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test-types/CMakeLists.txt)
-    add_subdirectory(test-types)
-endif()
+    # Beverage service
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/beverage/CMakeLists.txt)
+        add_subdirectory(beverage)
+    endif()
 
-# New services - disabled until implementation is complete
-# Beverage service
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/beverage/CMakeLists.txt)
-    add_subdirectory(beverage)
-endif()
+    # Climate comfort service
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/climate-comfort/CMakeLists.txt)
+        add_subdirectory(climate-comfort)
+    endif()
 
-# Climate comfort service
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/climate-comfort/CMakeLists.txt)
-    add_subdirectory(climate-comfort)
-endif()
+    # Defrost service
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/defrost/CMakeLists.txt)
+        add_subdirectory(defrost)
+    endif()
 
-# Defrost service  
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/defrost/CMakeLists.txt)
-    add_subdirectory(defrost)
-endif()
-
-# Departure orchestration service
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/departure-orchestration/CMakeLists.txt)
-    add_subdirectory(departure-orchestration)
+    # Departure orchestration service
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/departure-orchestration/CMakeLists.txt)
+        add_subdirectory(departure-orchestration)
+    endif()
 endif()
 
 # Copy IFEX files to build directory as resources
