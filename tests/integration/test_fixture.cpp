@@ -11,7 +11,6 @@ namespace fs = std::filesystem;
 pid_t IntegrationTestFixture::discovery_pid_ = 0;
 pid_t IntegrationTestFixture::dispatcher_pid_ = 0;
 pid_t IntegrationTestFixture::echo_pid_ = 0;
-pid_t IntegrationTestFixture::settings_pid_ = 0;
 pid_t IntegrationTestFixture::test_types_pid_ = 0;
 pid_t IntegrationTestFixture::scheduler_pid_ = 0;
 bool IntegrationTestFixture::services_started_ = false;
@@ -65,14 +64,8 @@ void IntegrationTestFixture::GlobalSetUp() {
         TEST_ECHO_PORT
     );
 
-    settings_pid_ = start_service(
-        get_build_dir() + "/test-services/settings/ifex-settings-service",
-        "settings",
-        TEST_SETTINGS_PORT
-    );
-
     test_types_pid_ = start_service(
-        get_build_dir() + "/test-services/test-types/ifex-test-types-service",
+        get_build_dir() + "/tests/test-types/ifex-test-types-service",
         "test-types",
         TEST_TYPES_PORT
     );
@@ -81,28 +74,24 @@ void IntegrationTestFixture::GlobalSetUp() {
     std::atomic<bool> dispatcher_ready{false};
     std::atomic<bool> scheduler_ready{false};
     std::atomic<bool> echo_ready{false};
-    std::atomic<bool> settings_ready{false};
     std::atomic<bool> test_types_ready{false};
 
     std::thread t1([&]() { dispatcher_ready = wait_for_service(TEST_DISPATCHER_ADDRESS); });
     std::thread t2([&]() { scheduler_ready = wait_for_service(TEST_SCHEDULER_ADDRESS); });
     std::thread t3([&]() { echo_ready = wait_for_service(TEST_ECHO_ADDRESS); });
-    std::thread t4([&]() { settings_ready = wait_for_service(TEST_SETTINGS_ADDRESS); });
-    std::thread t5([&]() { test_types_ready = wait_for_service(TEST_TYPES_ADDRESS); });
+    std::thread t4([&]() { test_types_ready = wait_for_service(TEST_TYPES_ADDRESS); });
 
     t1.join();
     t2.join();
     t3.join();
     t4.join();
-    t5.join();
 
     if (!dispatcher_ready) LOG(ERROR) << "Dispatcher service failed to start";
     if (!scheduler_ready) LOG(ERROR) << "Scheduler service failed to start";
     if (!echo_ready) LOG(ERROR) << "Echo service failed to start";
-    if (!settings_ready) LOG(ERROR) << "Settings service failed to start";
     if (!test_types_ready) LOG(ERROR) << "Test types service failed to start";
 
-    if (!dispatcher_ready || !scheduler_ready || !echo_ready || !settings_ready || !test_types_ready) {
+    if (!dispatcher_ready || !scheduler_ready || !echo_ready || !test_types_ready) {
         TearDownTestSuite();
         FAIL() << "One or more services failed to start";
     }
@@ -121,20 +110,18 @@ void IntegrationTestFixture::GlobalTearDown() {
 
 void IntegrationTestFixture::cleanup_all_services() {
     // Only log if any services are running
-    if (test_types_pid_ || settings_pid_ || echo_pid_ ||
-        scheduler_pid_ || dispatcher_pid_ || discovery_pid_) {
+    if (test_types_pid_ || echo_pid_ || scheduler_pid_ || dispatcher_pid_ || discovery_pid_) {
         LOG(INFO) << "Stopping test services...";
     }
 
     stop_service(test_types_pid_, "test-types");
-    stop_service(settings_pid_, "settings");
     stop_service(echo_pid_, "echo");
     stop_service(scheduler_pid_, "scheduler");
     stop_service(dispatcher_pid_, "dispatcher");
     stop_service(discovery_pid_, "discovery");
 
-    if (test_types_pid_ == 0 && settings_pid_ == 0 && echo_pid_ == 0 &&
-        scheduler_pid_ == 0 && dispatcher_pid_ == 0 && discovery_pid_ == 0) {
+    if (test_types_pid_ == 0 && echo_pid_ == 0 && scheduler_pid_ == 0 &&
+        dispatcher_pid_ == 0 && discovery_pid_ == 0) {
         LOG(INFO) << "All test services stopped";
     }
 }
@@ -191,19 +178,6 @@ pid_t IntegrationTestFixture::start_service(const std::string& executable, const
                   discovery_param.c_str(),
                   nullptr);
         } else if (name == "echo") {
-            std::string listen_param = "--listen=" + listen_addr;
-            std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
-            execl(executable.c_str(), executable.c_str(),
-                  listen_param.c_str(),
-                  discovery_param.c_str(),
-                  nullptr);
-        } else if (name == "settings") {
-            fs::path settings_dir = fs::path(executable).parent_path();
-            if (chdir(settings_dir.c_str()) != 0) {
-                LOG(ERROR) << "Failed to change to settings directory: " << settings_dir;
-                _exit(1);
-            }
-
             std::string listen_param = "--listen=" + listen_addr;
             std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
             execl(executable.c_str(), executable.c_str(),

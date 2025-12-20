@@ -101,8 +101,8 @@ TEST_F(FullChainIntegrationTest, DiscoveryListsRegisteredServices) {
 
     EXPECT_TRUE(registered_services.count("echo_service") > 0)
         << "echo_service should be registered";
-    EXPECT_TRUE(registered_services.count("settings_service") > 0)
-        << "settings_service should be registered";
+    EXPECT_TRUE(registered_services.count("test_types_service") > 0)
+        << "test_types_service should be registered";
 }
 
 // Test: Discovery → Dispatcher chain (dispatcher resolves services)
@@ -185,34 +185,47 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
     }
 }
 
-// Test: Full chain with settings service
-TEST_F(FullChainIntegrationTest, DispatcherCallsSettingsService) {
-    // Get current setting through dispatcher
-    json get_params = {{"key", "test_setting"}};
-    auto [success, result] = call_via_dispatcher("settings_service", "get_setting", get_params);
+// Test: Full chain with test_types service
+TEST_F(FullChainIntegrationTest, DispatcherCallsTestTypesService) {
+    // Call test_types service through dispatcher
+    json params;
+    json primitives;
+    primitives["bool_val"] = true;
+    primitives["int32_val"] = 42;
+    primitives["int64_val"] = 100LL;
+    primitives["uint32_val"] = 50U;
+    primitives["uint64_val"] = 200ULL;
+    primitives["float_val"] = 1.5f;
+    primitives["double_val"] = 2.5;
+    primitives["string_val"] = "test";
+    primitives["bytes_val"] = "dGVzdA==";
+    params["primitives"] = primitives;
 
-    // The setting might not exist, but the call should go through
-    LOG(INFO) << "Get setting result: " << result.dump();
+    auto [success, result] = call_via_dispatcher("test_types_service", "test_primitives", params);
+    EXPECT_TRUE(success) << "Call should succeed: " << result.dump();
+    LOG(INFO) << "Test types result: " << result.dump();
 }
 
-// Test: Full chain - set and get settings
-TEST_F(FullChainIntegrationTest, SettingsServiceRoundTrip) {
-    // Set a setting
-    json set_params = {
-        {"key", "test_chain_setting"},
-        {"value", "test_value_123"}
-    };
-    auto [set_success, set_result] = call_via_dispatcher("settings_service", "set_setting", set_params);
-    LOG(INFO) << "Set setting result: " << set_result.dump();
+// Test: Full chain - test_types round trip
+TEST_F(FullChainIntegrationTest, TestTypesServiceRoundTrip) {
+    // Test arrays through test_types service
+    json params;
+    params["int_array"] = {1, 2, 3, 4, 5};
+    params["string_array"] = {"hello", "world"};
+    params["point_array"] = {{{"x", 1.0}, {"y", 2.0}}};
 
-    // Get the setting back
-    json get_params = {{"key", "test_chain_setting"}};
-    auto [get_success, get_result] = call_via_dispatcher("settings_service", "get_setting", get_params);
-    LOG(INFO) << "Get setting result: " << get_result.dump();
+    auto [success, result] = call_via_dispatcher("test_types_service", "test_arrays", params);
+    LOG(INFO) << "Test arrays result: " << result.dump();
 
-    // Verify the value matches (if both calls succeeded)
-    if (get_success && get_result.contains("value")) {
-        EXPECT_EQ(get_result["value"], "test_value_123");
+    if (success && result.contains("int_sum")) {
+        // int_sum should be 1+2+3+4+5 = 15
+        int64_t sum;
+        if (result["int_sum"].is_string()) {
+            sum = std::stoll(result["int_sum"].get<std::string>());
+        } else {
+            sum = result["int_sum"].get<int64_t>();
+        }
+        EXPECT_EQ(sum, 15);
     }
 }
 
@@ -223,11 +236,21 @@ TEST_F(FullChainIntegrationTest, DispatcherRoutesToMultipleServices) {
     auto [echo_success, echo_result] = call_via_dispatcher("echo_service", "echo", echo_params);
     EXPECT_TRUE(echo_success) << "Echo failed: " << echo_result.dump();
 
-    // Call settings service
-    json settings_params = {{"key", "some_key"}};
-    auto [settings_success, settings_result] = call_via_dispatcher("settings_service", "get_setting", settings_params);
-    // Just verify no RPC error
-    LOG(INFO) << "Settings result: " << settings_result.dump();
+    // Call test_types service
+    json test_params;
+    json primitives;
+    primitives["bool_val"] = false;
+    primitives["int32_val"] = 123;
+    primitives["int64_val"] = 456LL;
+    primitives["uint32_val"] = 789U;
+    primitives["uint64_val"] = 101112ULL;
+    primitives["float_val"] = 1.0f;
+    primitives["double_val"] = 2.0;
+    primitives["string_val"] = "multi";
+    primitives["bytes_val"] = "dGVzdA==";
+    test_params["primitives"] = primitives;
+    auto [test_success, test_result] = call_via_dispatcher("test_types_service", "test_primitives", test_params);
+    EXPECT_TRUE(test_success) << "Test types failed: " << test_result.dump();
 
     // Both calls went through dispatcher, which resolved them via discovery
 }

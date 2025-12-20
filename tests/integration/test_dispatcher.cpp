@@ -148,41 +148,41 @@ TEST_F(DispatcherIntegrationTest, CallWithInvalidParameters) {
 // TEST_F(DispatcherIntegrationTest, GetExampleParameters) {
 // }
 
-TEST_F(DispatcherIntegrationTest, CallSettingsServiceGetPresets) {
+TEST_F(DispatcherIntegrationTest, CallTestTypesService) {
     auto stub = swdv::ifex_dispatcher::call_method_service::NewStub(dispatcher_channel_);
-    
+
     swdv::ifex_dispatcher::call_method_request request;
     auto* call = request.mutable_call();
-    
-    call->set_service_name("settings_service");
-    call->set_method_name("get_presets");
-    
+
+    call->set_service_name("test_types_service");
+    call->set_method_name("test_primitives");
+
     json params;
-    json service_method;
-    service_method["service_name"] = "climate_control_service";
-    service_method["namespace_name"] = "climate";
-    service_method["method_name"] = "set_temperature";
-    params["service_method"] = service_method;
-    
+    json primitives;
+    primitives["bool_val"] = true;
+    primitives["int32_val"] = 42;
+    primitives["int64_val"] = 1234567890LL;
+    primitives["uint32_val"] = 100U;
+    primitives["uint64_val"] = 200ULL;
+    primitives["float_val"] = 3.14f;
+    primitives["double_val"] = 2.718;
+    primitives["string_val"] = "test";
+    primitives["bytes_val"] = "dGVzdA==";
+    params["primitives"] = primitives;
+
     call->set_parameters(params.dump());
     call->set_timeout_ms(5000);
-    
+
     swdv::ifex_dispatcher::call_method_response response;
     grpc::ClientContext context;
-    
+
     auto status = stub->call_method(&context, request, &response);
     ASSERT_TRUE(status.ok()) << "RPC call should succeed, got: " << status.error_message();
-    
+
     const auto& result = response.result();
-    EXPECT_EQ(result.status(), swdv::ifex_dispatcher::call_status_t::SUCCESS) 
+    EXPECT_EQ(result.status(), swdv::ifex_dispatcher::call_status_t::SUCCESS)
         << "Call should succeed, got error: " << result.error_message();
-    EXPECT_FALSE(result.response().empty()) << "Should return preset data";
-    
-    // Verify we can parse the response
-    if (!result.response().empty()) {
-        json response_json = json::parse(result.response());
-        EXPECT_TRUE(response_json.contains("presets"));
-    }
+    EXPECT_FALSE(result.response().empty()) << "Should return response data";
 }
 
 TEST_F(DispatcherIntegrationTest, ConcurrentCalls) {

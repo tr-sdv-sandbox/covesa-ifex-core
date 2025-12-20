@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
+# =============================================================================
+# Test service binaries (required for integration tests)
+# =============================================================================
+add_subdirectory(test-types)
+
 # Unit tests
 add_executable(ifex-unit-tests
     unit/test_main.cpp

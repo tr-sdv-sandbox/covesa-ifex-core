@@ -14,14 +14,12 @@ protected:
     static constexpr int TEST_DISCOVERY_PORT = 50099;
     static constexpr int TEST_DISPATCHER_PORT = 50098;
     static constexpr int TEST_ECHO_PORT = 50097;
-    static constexpr int TEST_SETTINGS_PORT = 50096;
     static constexpr int TEST_TYPES_PORT = 50095;
     static constexpr int TEST_SCHEDULER_PORT = 50094;
 
     static constexpr const char* TEST_DISCOVERY_ADDRESS = "localhost:50099";
     static constexpr const char* TEST_DISPATCHER_ADDRESS = "localhost:50098";
     static constexpr const char* TEST_ECHO_ADDRESS = "localhost:50097";
-    static constexpr const char* TEST_SETTINGS_ADDRESS = "localhost:50096";
     static constexpr const char* TEST_TYPES_ADDRESS = "localhost:50095";
     static constexpr const char* TEST_SCHEDULER_ADDRESS = "localhost:50094";
 
@@ -29,7 +27,6 @@ protected:
     static pid_t discovery_pid_;
     static pid_t dispatcher_pid_;
     static pid_t echo_pid_;
-    static pid_t settings_pid_;
     static pid_t test_types_pid_;
     static pid_t scheduler_pid_;
 

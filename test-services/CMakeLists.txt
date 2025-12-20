@@ -36,11 +36,6 @@ if(BUILD_EXAMPLE_SERVICES)
         add_subdirectory(settings)
     endif()
 
-    # Test types service
-    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test-types/CMakeLists.txt)
-        add_subdirectory(test-types)
-    endif()
-
     # Beverage service
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/beverage/CMakeLists.txt)
         add_subdirectory(beverage)
