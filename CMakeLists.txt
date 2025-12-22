@@ -22,6 +22,11 @@ option(BUILD_TEST_SERVICES "Build test services" ON)
 option(BUILD_INTEGRATION_TESTS "Build integration tests" ON)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
+# Enable testing early so tests in subdirectories can register
+if(BUILD_TESTS OR BUILD_INTEGRATION_TESTS)
+    enable_testing()
+endif()
+
 # Export compile commands for IDEs
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

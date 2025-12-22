@@ -467,8 +467,21 @@ Or use the helper script:
 
 ---
 
+## Reference Services
+
+Beyond the core infrastructure, the platform includes reference implementations:
+
+| Service | Purpose | Documentation |
+|---------|---------|---------------|
+| **Backend Transport** | Vehicle-to-cloud communication (MQTT) | [README](../reference-services/backend-transport/README.md) |
+
+These services demonstrate best practices and can be used as-is or adapted for specific deployments.
+
+---
+
 ## Related Documentation
 
 - [Orchestrator Service Design](orchestrator-service-design.md) - Full workflow engine specification
 - [IFEX Service Architecture](ifex-service-architecture.md) - How to design services
 - [VSS and IFEX Relationship](vss-ifex-relationship.md) - When to use each
+- [Backend Transport Service](../reference-services/backend-transport/README.md) - Cloud connectivity

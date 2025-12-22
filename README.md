@@ -104,11 +104,12 @@ cd ..
 
 ### Service Ports
 
-| Service | Port |
-|---------|------|
-| Discovery | 50051 |
-| Dispatcher | 50052 |
-| Scheduler | 50053 |
+| Service | Port | Description |
+|---------|------|-------------|
+| Discovery | 50051 | Service registry |
+| Dispatcher | 50052 | Dynamic routing |
+| Scheduler | 50053 | Time/event triggers |
+| Backend Transport | 50060 | Vehicle-to-cloud (MQTT) |
 
 ### Run Tests
 
@@ -161,8 +162,17 @@ Upload YAML. Done. No code changes, no recompilation.
 ```
 covesa-ifex-core/
 ├── core/                    # Shared library (parser, discovery client)
-├── reference-services/      # Infrastructure (discovery, dispatcher, scheduler)
-├── test-services/           # Example services (climate, defrost, beverage)
+├── reference-services/      # Infrastructure services
+│   ├── discovery/           # Service registry (50051)
+│   ├── dispatcher/          # Dynamic routing (50052)
+│   ├── scheduler/           # Time triggers (50053)
+│   ├── backend-transport/   # Cloud connectivity (50060)
+│   └── ifex/                # IFEX schema definitions
+├── test-services/           # Example domain services
+│   ├── climate-comfort/     # Cabin comfort (50062)
+│   ├── defrost/             # Window defrost (50063)
+│   ├── beverage/            # Beverage prep (50061)
+│   └── settings/            # User preferences (50055)
 ├── proto/                   # Generated protobuf from IFEX
 ├── tests/                   # Unit and integration tests
 └── docs/                    # Detailed documentation
@@ -177,6 +187,7 @@ covesa-ifex-core/
 | [docs/core-services-spec.md](docs/core-services-spec.md) | Infrastructure service specification |
 | [docs/orchestrator-service-design.md](docs/orchestrator-service-design.md) | Workflow engine design |
 | [docs/ifex-service-architecture.md](docs/ifex-service-architecture.md) | How to build services |
+| [reference-services/backend-transport/README.md](reference-services/backend-transport/README.md) | Cloud connectivity service |
 
 ## Design Principles
 

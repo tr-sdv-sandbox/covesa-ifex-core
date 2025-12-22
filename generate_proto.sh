@@ -20,23 +20,27 @@ if ! docker images | grep -q "ifex-tools"; then
     exit 1
 fi
 
+# Template directory (local override of ifex-tools built-in templates)
+TEMPLATE_DIR="${SCRIPT_DIR}/templates"
+
 # Function to process IFEX file
 process_ifex_file() {
     local yaml_file="$1"
     local relative_path="$2"
     local output_name="$3"
-    
+
     proto_file="${PROTO_DIR}/${output_name}.proto"
-    
+
     echo "Processing ${yaml_file}..."
-    
-    # Use the IFEX tool via Docker
+
+    # Use the IFEX tool via Docker with local template override
     docker run --rm \
         -v "${SCRIPT_DIR}:/workspace" \
+        -v "${TEMPLATE_DIR}:/templates:ro" \
         -w /workspace \
         ifex-tools:latest \
-        ifexgen -d protobuf "${relative_path}" > "${proto_file}"
-    
+        ifexgen -d /templates/protobuf "${relative_path}" > "${proto_file}"
+
     echo "Generated ${proto_file}"
 }
 

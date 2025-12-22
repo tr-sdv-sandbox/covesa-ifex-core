@@ -1,0 +1,209 @@
+---
+name: backend_transport_service
+major_version: 1
+minor_version: 0
+description: >
+  Bidirectional backend transport service for vehicle-to-cloud communication.
+  Provides a common gRPC interface for IFEX services to send/receive data
+  without knowing the underlying transport (MQTT, SOME/IP, etc.).
+
+namespaces:
+  - name: transport
+    description: Backend transport operations
+
+    enumerations:
+      - name: connection_state_t
+        datatype: uint8
+        description: Transport connection state
+        options:
+          - name: UNKNOWN
+            value: 0
+          - name: CONNECTED
+            value: 1
+          - name: DISCONNECTED
+            value: 2
+          - name: CONNECTING
+            value: 3
+          - name: RECONNECTING
+            value: 4
+
+      - name: publish_status_t
+        datatype: uint8
+        description: Result of publish operation
+        options:
+          - name: OK
+            value: 0
+          - name: BUFFER_FULL
+            value: 1
+            description: Backpressure - queue at capacity
+          - name: MESSAGE_TOO_LONG
+            value: 2
+          - name: NOT_CONNECTED
+            value: 3
+          - name: TIMEOUT
+            value: 4
+          - name: ERROR
+            value: 255
+
+      - name: persistence_t
+        datatype: uint8
+        description: Message persistence level
+        options:
+          - name: NONE
+            value: 0
+            description: Fire and forget
+          - name: UNTIL_DELIVERED
+            value: 1
+            description: Retry until ack
+          - name: UNTIL_RESTART
+            value: 2
+            description: Cleared on restart
+          - name: PERSISTENT
+            value: 3
+            description: Survives power cycles
+
+    structs:
+      - name: publish_request_t
+        description: Request to publish data to cloud
+        members:
+          - name: content_id
+            datatype: uint32
+            description: Application content identifier
+          - name: payload
+            datatype: bytes
+            description: Binary payload (opaque - caller handles encoding)
+          - name: persistence
+            datatype: persistence_t
+            default: 0
+
+      - name: publish_response_t
+        description: Result of publish operation
+        members:
+          - name: sequence
+            datatype: uint64
+            description: Assigned sequence number for tracking delivery
+          - name: status
+            datatype: publish_status_t
+
+      - name: delivery_ack_t
+        description: Delivery confirmation
+        members:
+          - name: content_id
+            datatype: uint32
+          - name: sequence
+            datatype: uint64
+
+      - name: connection_status_t
+        description: Current connection status
+        members:
+          - name: state
+            datatype: connection_state_t
+          - name: reason
+            datatype: string
+            description: Human-readable reason
+          - name: timestamp_ns
+            datatype: int64
+
+      - name: queue_status_t
+        description: Outbound queue status for backpressure
+        members:
+          - name: is_full
+            datatype: boolean
+          - name: queue_size
+            datatype: uint32
+          - name: queue_capacity
+            datatype: uint32
+
+      - name: transport_stats_t
+        description: Transport statistics
+        members:
+          - name: messages_sent
+            datatype: uint64
+          - name: messages_failed
+            datatype: uint64
+          - name: bytes_sent
+            datatype: uint64
+          - name: messages_received
+            datatype: uint64
+          - name: bytes_received
+            datatype: uint64
+          - name: last_send_timestamp_ns
+            datatype: int64
+          - name: last_receive_timestamp_ns
+            datatype: int64
+
+      - name: content_message_t
+        description: Incoming message from cloud (c2v)
+        members:
+          - name: content_id
+            datatype: uint32
+          - name: payload
+            datatype: bytes
+
+    methods:
+      - name: publish
+        description: Queue message for cloud delivery (v2c)
+        input:
+          - name: request
+            datatype: publish_request_t
+            mandatory: true
+        output:
+          - name: result
+            datatype: publish_response_t
+
+      - name: get_connection_status
+        description: Get current connection status
+        output:
+          - name: status
+            datatype: connection_status_t
+
+      - name: get_queue_status
+        description: Get outbound queue status
+        output:
+          - name: status
+            datatype: queue_status_t
+
+      - name: get_stats
+        description: Get transport statistics
+        output:
+          - name: stats
+            datatype: transport_stats_t
+
+      - name: healthy
+        description: Check if transport is ready
+        output:
+          - name: is_healthy
+            datatype: boolean
+
+    events:
+      - name: on_content
+        description: Incoming content from cloud (c2v)
+        input:
+          - name: filter_content_ids
+            datatype: uint32[]
+            description: Content IDs to subscribe to (required)
+          - name: message
+            datatype: content_message_t
+            description: The received message (streamed)
+
+      - name: on_ack
+        description: Delivery confirmation stream (gaps indicate dropped messages)
+        input:
+          - name: filter_content_ids
+            datatype: uint32[]
+            description: Content IDs to receive acks for (required)
+          - name: ack
+            datatype: delivery_ack_t
+            description: Delivery confirmation with sequence number
+
+      - name: on_connection_changed
+        description: Connection status changed
+        input:
+          - name: status
+            datatype: connection_status_t
+
+      - name: on_queue_status_changed
+        description: Backpressure signal
+        input:
+          - name: status
+            datatype: queue_status_t

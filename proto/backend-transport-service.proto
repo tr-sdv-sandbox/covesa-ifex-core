@@ -1,0 +1,213 @@
+// Generated from backend_transport_service.ifex by covesa-ifex-core
+// DO NOT EDIT - regenerate with: ./generate_proto.sh
+syntax = "proto3";
+
+
+
+package swdv.backend_transport_service;
+
+// Namespace: transport
+// Backend transport operations
+
+// Transport connection state
+enum connection_state_t {
+  UNKNOWN = 0;
+  CONNECTED = 1;
+  DISCONNECTED = 2;
+  CONNECTING = 3;
+  RECONNECTING = 4;
+}
+
+// Result of publish operation
+enum publish_status_t {
+  OK = 0;
+  BUFFER_FULL = 1;
+  MESSAGE_TOO_LONG = 2;
+  NOT_CONNECTED = 3;
+  TIMEOUT = 4;
+  ERROR = 255;
+}
+
+// Message persistence level
+enum persistence_t {
+  NONE = 0;
+  UNTIL_DELIVERED = 1;
+  UNTIL_RESTART = 2;
+  PERSISTENT = 3;
+}
+
+// Request to publish data to cloud
+message publish_request_t {
+  uint32 content_id = 1;
+  bytes payload = 2;
+  persistence_t persistence = 3;
+}
+
+// Result of publish operation
+message publish_response_t {
+  uint64 sequence = 1;
+  publish_status_t status = 2;
+}
+
+// Delivery confirmation
+message delivery_ack_t {
+  uint32 content_id = 1;
+  uint64 sequence = 2;
+}
+
+// Current connection status
+message connection_status_t {
+  connection_state_t state = 1;
+  string reason = 2;
+  sint64 timestamp_ns = 3;
+}
+
+// Outbound queue status for backpressure
+message queue_status_t {
+  bool is_full = 1;
+  uint32 queue_size = 2;
+  uint32 queue_capacity = 3;
+}
+
+// Transport statistics
+message transport_stats_t {
+  uint64 messages_sent = 1;
+  uint64 messages_failed = 2;
+  uint64 bytes_sent = 3;
+  uint64 messages_received = 4;
+  uint64 bytes_received = 5;
+  sint64 last_send_timestamp_ns = 6;
+  sint64 last_receive_timestamp_ns = 7;
+}
+
+// Incoming message from cloud (c2v)
+message content_message_t {
+  uint32 content_id = 1;
+  bytes payload = 2;
+}
+
+// Method: publish
+// Queue message for cloud delivery (v2c)
+message publish_request {
+  publish_request_t request = 1;
+}
+
+message publish_response {
+  publish_response_t result = 1;
+}
+
+service publish_service {
+  rpc publish(publish_request) returns (publish_response);
+}
+
+// Method: get_connection_status
+// Get current connection status
+message get_connection_status_request {
+}
+
+message get_connection_status_response {
+  connection_status_t status = 1;
+}
+
+service get_connection_status_service {
+  rpc get_connection_status(get_connection_status_request) returns (get_connection_status_response);
+}
+
+// Method: get_queue_status
+// Get outbound queue status
+message get_queue_status_request {
+}
+
+message get_queue_status_response {
+  queue_status_t status = 1;
+}
+
+service get_queue_status_service {
+  rpc get_queue_status(get_queue_status_request) returns (get_queue_status_response);
+}
+
+// Method: get_stats
+// Get transport statistics
+message get_stats_request {
+}
+
+message get_stats_response {
+  transport_stats_t stats = 1;
+}
+
+service get_stats_service {
+  rpc get_stats(get_stats_request) returns (get_stats_response);
+}
+
+// Method: healthy
+// Check if transport is ready
+message healthy_request {
+}
+
+message healthy_response {
+  bool is_healthy = 1;
+}
+
+service healthy_service {
+  rpc healthy(healthy_request) returns (healthy_response);
+}
+
+// Event: on_content
+// Incoming content from cloud (c2v)
+message on_content {
+  content_message_t message = 1;
+}
+
+message on_content_subscribe_request {
+  repeated uint32 content_ids = 1;
+}
+
+service on_content_service {
+  // Server-streaming RPC for event subscription
+  rpc subscribe(on_content_subscribe_request) returns (stream on_content);
+}
+
+// Event: on_ack
+// Delivery confirmation stream (gaps indicate dropped messages)
+message on_ack {
+  delivery_ack_t ack = 1;
+}
+
+message on_ack_subscribe_request {
+  repeated uint32 content_ids = 1;
+}
+
+service on_ack_service {
+  // Server-streaming RPC for event subscription
+  rpc subscribe(on_ack_subscribe_request) returns (stream on_ack);
+}
+
+// Event: on_connection_changed
+// Connection status changed
+message on_connection_changed {
+  connection_status_t status = 1;
+}
+
+message on_connection_changed_subscribe_request {
+}
+
+service on_connection_changed_service {
+  // Server-streaming RPC for event subscription
+  rpc subscribe(on_connection_changed_subscribe_request) returns (stream on_connection_changed);
+}
+
+// Event: on_queue_status_changed
+// Backpressure signal
+message on_queue_status_changed {
+  queue_status_t status = 1;
+}
+
+message on_queue_status_changed_subscribe_request {
+}
+
+service on_queue_status_changed_service {
+  // Server-streaming RPC for event subscription
+  rpc subscribe(on_queue_status_changed_subscribe_request) returns (stream on_queue_status_changed);
+}
+
+
