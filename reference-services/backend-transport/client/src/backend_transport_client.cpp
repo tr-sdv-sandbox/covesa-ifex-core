@@ -91,6 +91,9 @@ ConnectionStatus from_proto(const pb::connection_status_t& s) {
 // Implementation class (PIMPL)
 // =============================================================================
 
+// Metadata key for channel-bound content_id
+static constexpr const char* kContentIdMetadataKey = "x-content-id";
+
 class BackendTransportClient::Impl {
 public:
     Impl(std::shared_ptr<grpc::Channel> channel, uint32_t content_id)
@@ -101,9 +104,16 @@ public:
         , connection_status_stub_(pb::get_connection_status_service::NewStub(channel_))
         , queue_status_stub_(pb::get_queue_status_service::NewStub(channel_))
         , stats_stub_(pb::get_stats_service::NewStub(channel_))
+        , content_id_stub_(pb::get_content_id_service::NewStub(channel_))
         , content_stub_(pb::on_content_service::NewStub(channel_))
         , ack_stub_(pb::on_ack_service::NewStub(channel_))
-        , connection_changed_stub_(pb::on_connection_changed_service::NewStub(channel_)) {
+        , connection_changed_stub_(pb::on_connection_changed_service::NewStub(channel_))
+        , queue_status_changed_stub_(pb::on_queue_status_changed_service::NewStub(channel_)) {
+    }
+
+    // Add content_id metadata to context for channel binding
+    void AddContentIdMetadata(grpc::ClientContext* context) {
+        context->AddMetadata(kContentIdMetadataKey, std::to_string(content_id_));
     }
 
     ~Impl() {
@@ -114,11 +124,12 @@ public:
 
     PublishResult publish(const std::vector<uint8_t>& payload, Persistence persistence) {
         grpc::ClientContext context;
+        AddContentIdMetadata(&context);  // Channel binding via metadata
+
         pb::publish_request request;
         pb::publish_response response;
 
         auto* req = request.mutable_request();
-        // content_id is implicit in the channel - not sent in request
         req->set_payload(payload.data(), payload.size());
         req->set_persistence(to_proto(persistence));
 
@@ -247,13 +258,13 @@ private:
     void content_subscription_loop() {
         while (content_running_) {
             auto context = std::make_unique<grpc::ClientContext>();
+            AddContentIdMetadata(context.get());  // Channel binding via metadata
             {
                 std::lock_guard<std::mutex> lock(context_mutex_);
                 content_context_ = context.get();
             }
 
             pb::on_content_subscribe_request request;
-            // content_id is implicit in the channel - no filter needed
 
             auto reader = content_stub_->subscribe(context.get(), request);
 
@@ -282,13 +293,13 @@ private:
     void ack_subscription_loop() {
         while (ack_running_) {
             auto context = std::make_unique<grpc::ClientContext>();
+            AddContentIdMetadata(context.get());  // Channel binding via metadata
             {
                 std::lock_guard<std::mutex> lock(context_mutex_);
                 ack_context_ = context.get();
             }
 
             pb::on_ack_subscribe_request request;
-            // content_id is implicit in the channel - no filter needed
 
             auto reader = ack_stub_->subscribe(context.get(), request);
 
@@ -395,9 +406,11 @@ private:
     std::unique_ptr<pb::get_connection_status_service::Stub> connection_status_stub_;
     std::unique_ptr<pb::get_queue_status_service::Stub> queue_status_stub_;
     std::unique_ptr<pb::get_stats_service::Stub> stats_stub_;
+    std::unique_ptr<pb::get_content_id_service::Stub> content_id_stub_;
     std::unique_ptr<pb::on_content_service::Stub> content_stub_;
     std::unique_ptr<pb::on_ack_service::Stub> ack_stub_;
     std::unique_ptr<pb::on_connection_changed_service::Stub> connection_changed_stub_;
+    std::unique_ptr<pb::on_queue_status_changed_service::Stub> queue_status_changed_stub_;
 
     // Subscription state
     std::mutex subscriptions_mutex_;

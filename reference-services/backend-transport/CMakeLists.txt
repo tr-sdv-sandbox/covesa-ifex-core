@@ -96,6 +96,80 @@ install(DIRECTORY client/include/
 if(BUILD_INTEGRATION_TESTS)
     find_package(GTest REQUIRED)
 
+    # =========================================================================
+    # Client Library Tests (C++ client-specific tests)
+    # =========================================================================
+
+    add_executable(ifex-backend-transport-client-test
+        tests/backend_transport_client_test.cpp
+    )
+
+    target_include_directories(ifex-backend-transport-client-test
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/client/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+
+    target_link_libraries(ifex-backend-transport-client-test
+        PRIVATE
+            ifex-backend-transport-server
+            ifex-backend-transport-client
+            GTest::gtest
+            glog::glog
+            gRPC::grpc++
+            ${MOSQUITTO_LIB}
+            Threads::Threads
+    )
+
+    add_test(NAME backend_transport_client_test
+        COMMAND ifex-backend-transport-client-test
+    )
+
+    set_tests_properties(backend_transport_client_test PROPERTIES
+        TIMEOUT 120
+        LABELS "integration;docker;client"
+    )
+
+    # =========================================================================
+    # Conformance Tests (black-box gRPC API tests)
+    # =========================================================================
+
+    add_executable(ifex-backend-transport-conformance-test
+        tests/backend_transport_conformance_test.cpp
+    )
+
+    target_include_directories(ifex-backend-transport-conformance-test
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/client/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+
+    target_link_libraries(ifex-backend-transport-conformance-test
+        PRIVATE
+            ifex-backend-transport-server
+            ifex-backend-transport-client
+            GTest::gtest
+            glog::glog
+            gRPC::grpc++
+            ${MOSQUITTO_LIB}
+            Threads::Threads
+    )
+
+    add_test(NAME backend_transport_conformance_test
+        COMMAND ifex-backend-transport-conformance-test
+    )
+
+    set_tests_properties(backend_transport_conformance_test PROPERTIES
+        TIMEOUT 120
+        LABELS "integration;docker;conformance"
+    )
+
+    # =========================================================================
+    # Integration Tests (MQTT-specific, end-to-end)
+    # =========================================================================
+
     add_executable(ifex-backend-transport-integration-test
         tests/backend_transport_integration_test.cpp
     )
@@ -112,23 +186,25 @@ if(BUILD_INTEGRATION_TESTS)
             ifex-backend-transport-server
             ifex-backend-transport-client
             GTest::gtest
-            GTest::gtest_main
             glog::glog
             gRPC::grpc++
+            ${MOSQUITTO_LIB}
             Threads::Threads
     )
 
-    # Register test with Docker label
     add_test(NAME backend_transport_integration_test
         COMMAND ifex-backend-transport-integration-test
     )
 
     set_tests_properties(backend_transport_integration_test PROPERTIES
         TIMEOUT 120
-        LABELS "integration;docker"
+        LABELS "integration;docker;mqtt"
     )
 
-    # Resilience tests (broker up/down, persistence)
+    # =========================================================================
+    # Resilience Tests (broker up/down, persistence)
+    # =========================================================================
+
     add_executable(ifex-backend-transport-resilience-test
         tests/backend_transport_resilience_test.cpp
     )
@@ -145,9 +221,9 @@ if(BUILD_INTEGRATION_TESTS)
             ifex-backend-transport-server
             ifex-backend-transport-client
             GTest::gtest
-            GTest::gtest_main
             glog::glog
             gRPC::grpc++
+            ${MOSQUITTO_LIB}
             Threads::Threads
     )
 

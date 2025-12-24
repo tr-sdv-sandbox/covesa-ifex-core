@@ -123,6 +123,7 @@ class MessageQueueManager {
 public:
     using SendCallback = std::function<bool(uint32_t content_id, const std::vector<uint8_t>& payload)>;
     using ConnectionCallback = std::function<bool()>;  // Returns true if connected
+    using AckCallback = std::function<void(uint32_t content_id, uint64_t sequence)>;  // Called when message delivered
 
     struct Config {
         size_t default_queue_size = 1000;
@@ -135,7 +136,7 @@ public:
     ~MessageQueueManager();
 
     /// Start the sender thread
-    void Start(SendCallback send_cb, ConnectionCallback conn_cb);
+    void Start(SendCallback send_cb, ConnectionCallback conn_cb, AckCallback ack_cb = nullptr);
 
     /// Stop the sender thread and persist messages
     void Stop();
@@ -178,9 +179,13 @@ public:
 private:
     void SenderThread();
 
+    /// Internal helper - assumes queues_mutex_ is already held
+    QueueLevel GetLevelLocked() const;
+
     Config config_;
     SendCallback send_cb_;
     ConnectionCallback conn_cb_;
+    AckCallback ack_cb_;
 
     mutable std::mutex queues_mutex_;
     std::unordered_map<uint32_t, std::unique_ptr<ContentQueue>> queues_;

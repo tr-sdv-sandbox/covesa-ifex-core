@@ -33,6 +33,7 @@ class BackendTransportServer final
       public swdv::backend_transport_service::get_queue_status_service::Service,
       public swdv::backend_transport_service::get_stats_service::Service,
       public swdv::backend_transport_service::healthy_service::Service,
+      public swdv::backend_transport_service::get_content_id_service::Service,
       public swdv::backend_transport_service::on_content_service::Service,
       public swdv::backend_transport_service::on_ack_service::Service,
       public swdv::backend_transport_service::on_connection_changed_service::Service,
@@ -104,6 +105,12 @@ public:
         const swdv::backend_transport_service::healthy_request* request,
         swdv::backend_transport_service::healthy_response* response) override;
 
+    // get_content_id_service - returns content_id bound to this channel
+    grpc::Status get_content_id(
+        grpc::ServerContext* context,
+        const swdv::backend_transport_service::get_content_id_request* request,
+        swdv::backend_transport_service::get_content_id_response* response) override;
+
     // =========================================================================
     // gRPC Streaming Event Implementations
     // =========================================================================
@@ -146,9 +153,9 @@ private:
     std::string C2vSubscribePattern() const;
     uint32_t ExtractContentIdFromTopic(const std::string& topic) const;
 
-    // Stream management
+    // Stream management (channel-bound: each stream bound to single content_id)
     void AddContentStream(grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer,
-                          const std::unordered_set<uint32_t>& content_ids);
+                          uint32_t content_id);
     void RemoveContentStream(grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer);
     void BroadcastContent(uint32_t content_id, const std::vector<uint8_t>& payload);
 
@@ -160,15 +167,19 @@ private:
     void RemoveQueueStream(grpc::ServerWriter<swdv::backend_transport_service::on_queue_status_changed>* writer);
     void BroadcastQueueStatus();
 
-    // Ack stream management
+    // Ack stream management (channel-bound: each stream bound to single content_id)
     void AddAckStream(grpc::ServerWriter<swdv::backend_transport_service::on_ack>* writer,
-                      const std::unordered_set<uint32_t>& content_ids);
+                      uint32_t content_id);
     void RemoveAckStream(grpc::ServerWriter<swdv::backend_transport_service::on_ack>* writer);
     void BroadcastAck(uint32_t content_id, uint64_t sequence);
 
     // Helpers
     int64_t NowNs() const;
     swdv::backend_transport_service::connection_state_t CurrentConnectionState() const;
+
+    /// Extract content_id from gRPC metadata (channel-bound model)
+    /// Returns 0 if metadata not present or invalid
+    static uint32_t ExtractContentIdFromMetadata(grpc::ServerContext* context);
 
     Config config_;
     std::unique_ptr<MqttClient> mqtt_client_;
@@ -194,10 +205,10 @@ private:
     std::unordered_set<uint32_t> subscribed_content_ids_;
 
     // Stream subscribers (gRPC clients listening for events)
-    // Each content stream has an associated set of content_ids it's interested in
+    // Channel-bound model: each stream is bound to exactly one content_id
     struct ContentStreamSubscription {
         grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer;
-        std::unordered_set<uint32_t> content_ids;
+        uint32_t content_id;
     };
     std::shared_mutex content_streams_mutex_;
     std::vector<ContentStreamSubscription> content_streams_;
@@ -208,10 +219,10 @@ private:
     std::shared_mutex queue_streams_mutex_;
     std::vector<grpc::ServerWriter<swdv::backend_transport_service::on_queue_status_changed>*> queue_streams_;
 
-    // Ack stream subscribers
+    // Ack stream subscribers (channel-bound: single content_id per stream)
     struct AckStreamSubscription {
         grpc::ServerWriter<swdv::backend_transport_service::on_ack>* writer;
-        std::unordered_set<uint32_t> content_ids;
+        uint32_t content_id;
     };
     std::shared_mutex ack_streams_mutex_;
     std::vector<AckStreamSubscription> ack_streams_;

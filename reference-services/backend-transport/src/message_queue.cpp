@@ -274,9 +274,10 @@ MessageQueueManager::~MessageQueueManager() {
     Stop();
 }
 
-void MessageQueueManager::Start(SendCallback send_cb, ConnectionCallback conn_cb) {
+void MessageQueueManager::Start(SendCallback send_cb, ConnectionCallback conn_cb, AckCallback ack_cb) {
     send_cb_ = std::move(send_cb);
     conn_cb_ = std::move(conn_cb);
+    ack_cb_ = std::move(ack_cb);
 
     // Load any persisted messages
     LoadAll();
@@ -358,12 +359,17 @@ MessageQueueManager::Stats MessageQueueManager::GetStats() const {
         stats.total_capacity += config_.default_queue_size;
     }
 
-    stats.level = GetLevel();
+    stats.level = GetLevelLocked();
     return stats;
 }
 
 QueueLevel MessageQueueManager::GetLevel() const {
     std::lock_guard<std::mutex> lock(queues_mutex_);
+    return GetLevelLocked();
+}
+
+QueueLevel MessageQueueManager::GetLevelLocked() const {
+    // Assumes queues_mutex_ is already held by caller
 
     if (queues_.empty()) {
         return QueueLevel::Empty;
@@ -472,16 +478,24 @@ void MessageQueueManager::SenderThread() {
 
         if (!msg || !source_queue) continue;
 
+        // Save info for ack callback before sending
+        uint32_t content_id = msg->content_id;
+        uint64_t sequence = msg->sequence;
+
         // Try to send
-        bool success = send_cb_ && send_cb_(msg->content_id, msg->payload);
+        bool success = send_cb_ && send_cb_(content_id, msg->payload);
 
         if (success) {
             source_queue->AckInFlight();
+            // Notify listeners of successful delivery
+            if (ack_cb_) {
+                ack_cb_(content_id, sequence);
+            }
         } else {
             // Check retry count
             if (msg->retry_count >= config_.max_retries) {
                 LOG(WARNING) << "Message exceeded max retries, dropping (content_id="
-                             << msg->content_id << ")";
+                             << content_id << ")";
                 source_queue->AckInFlight();  // Remove from queue
             } else {
                 source_queue->NackInFlight();

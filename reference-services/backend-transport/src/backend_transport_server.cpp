@@ -8,6 +8,22 @@
 
 namespace ifex::reference {
 
+// Metadata key for channel-bound content_id (must match client)
+static constexpr const char* kContentIdMetadataKey = "x-content-id";
+
+uint32_t BackendTransportServer::ExtractContentIdFromMetadata(grpc::ServerContext* context) {
+    const auto& metadata = context->client_metadata();
+    auto it = metadata.find(kContentIdMetadataKey);
+    if (it == metadata.end()) {
+        return 0;
+    }
+    try {
+        return std::stoul(std::string(it->second.data(), it->second.size()));
+    } catch (...) {
+        return 0;
+    }
+}
+
 BackendTransportServer::BackendTransportServer(const Config& config) : config_(config) {
     // Initialize MQTT client
     MqttClient::Config mqtt_config;
@@ -52,7 +68,10 @@ bool BackendTransportServer::Start() {
         [this](uint32_t content_id, const std::vector<uint8_t>& payload) {
             return SendToMqtt(content_id, payload);
         },
-        [this]() { return mqtt_client_->IsConnected(); }
+        [this]() { return mqtt_client_->IsConnected(); },
+        [this](uint32_t content_id, uint64_t sequence) {
+            BroadcastAck(content_id, sequence);
+        }
     );
 
     LOG(INFO) << "Backend Transport Service started";
@@ -90,8 +109,14 @@ grpc::Status BackendTransportServer::publish(
     const swdv::backend_transport_service::publish_request* request,
     swdv::backend_transport_service::publish_response* response) {
 
+    // Extract content_id from metadata (channel-bound model)
+    uint32_t content_id = ExtractContentIdFromMetadata(context);
+    if (content_id == 0) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "Missing or invalid x-content-id metadata");
+    }
+
     const auto& req = request->request();
-    uint32_t content_id = req.content_id();
     const std::string& payload_str = req.payload();
     std::vector<uint8_t> payload(payload_str.begin(), payload_str.end());
 
@@ -174,6 +199,22 @@ grpc::Status BackendTransportServer::healthy(
     return grpc::Status::OK;
 }
 
+grpc::Status BackendTransportServer::get_content_id(
+    grpc::ServerContext* context,
+    const swdv::backend_transport_service::get_content_id_request* request,
+    swdv::backend_transport_service::get_content_id_response* response) {
+
+    // Extract content_id from metadata (channel-bound model)
+    uint32_t content_id = ExtractContentIdFromMetadata(context);
+    if (content_id == 0) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "Missing or invalid x-content-id metadata");
+    }
+
+    response->set_content_id(content_id);
+    return grpc::Status::OK;
+}
+
 // =============================================================================
 // gRPC Streaming Event Implementations
 // =============================================================================
@@ -183,36 +224,30 @@ grpc::Status BackendTransportServer::subscribe(
     const swdv::backend_transport_service::on_content_subscribe_request* request,
     grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer) {
 
-    // Extract content_ids from request
-    std::unordered_set<uint32_t> content_ids;
-    for (int i = 0; i < request->content_ids_size(); ++i) {
-        content_ids.insert(request->content_ids(i));
-    }
-
-    if (content_ids.empty()) {
-        LOG(WARNING) << "Client tried to subscribe with empty content_ids";
+    // Extract content_id from metadata (channel-bound model)
+    uint32_t content_id = ExtractContentIdFromMetadata(context);
+    if (content_id == 0) {
+        LOG(WARNING) << "Client tried to subscribe without valid x-content-id metadata";
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                           "content_ids must not be empty");
+                           "Missing or invalid x-content-id metadata");
     }
 
-    LOG(INFO) << "Client subscribed to content stream for " << content_ids.size() << " content_id(s)";
+    LOG(INFO) << "Client subscribed to content stream for content_id=" << content_id;
 
-    // Subscribe to MQTT topics for each content_id
-    for (uint32_t content_id : content_ids) {
-        std::string topic = config_.c2v_prefix + "/" + config_.vehicle_id + "/" + std::to_string(content_id);
+    // Subscribe to MQTT topic for this content_id
+    std::string topic = config_.c2v_prefix + "/" + config_.vehicle_id + "/" + std::to_string(content_id);
 
-        // Track global subscriptions
-        {
-            std::unique_lock<std::shared_mutex> lock(subscriptions_mutex_);
-            subscribed_content_ids_.insert(content_id);
-        }
-
-        // Subscribe on MQTT if not already subscribed
-        mqtt_client_->Subscribe(topic);
-        LOG(INFO) << "Subscribed to MQTT topic: " << topic;
+    // Track global subscriptions
+    {
+        std::unique_lock<std::shared_mutex> lock(subscriptions_mutex_);
+        subscribed_content_ids_.insert(content_id);
     }
 
-    AddContentStream(writer, content_ids);
+    // Subscribe on MQTT if not already subscribed
+    mqtt_client_->Subscribe(topic);
+    LOG(INFO) << "Subscribed to MQTT topic: " << topic;
+
+    AddContentStream(writer, content_id);
 
     // Keep stream open until client disconnects
     while (!context->IsCancelled()) {
@@ -221,7 +256,7 @@ grpc::Status BackendTransportServer::subscribe(
 
     RemoveContentStream(writer);
 
-    LOG(INFO) << "Client unsubscribed from content stream";
+    LOG(INFO) << "Client unsubscribed from content stream (content_id=" << content_id << ")";
     return grpc::Status::OK;
 }
 
@@ -230,21 +265,17 @@ grpc::Status BackendTransportServer::subscribe(
     const swdv::backend_transport_service::on_ack_subscribe_request* request,
     grpc::ServerWriter<swdv::backend_transport_service::on_ack>* writer) {
 
-    // Extract content_ids from request
-    std::unordered_set<uint32_t> content_ids;
-    for (int i = 0; i < request->content_ids_size(); ++i) {
-        content_ids.insert(request->content_ids(i));
-    }
-
-    if (content_ids.empty()) {
-        LOG(WARNING) << "Client tried to subscribe to acks with empty content_ids";
+    // Extract content_id from metadata (channel-bound model)
+    uint32_t content_id = ExtractContentIdFromMetadata(context);
+    if (content_id == 0) {
+        LOG(WARNING) << "Client tried to subscribe to acks without valid x-content-id metadata";
         return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
-                           "content_ids must not be empty");
+                           "Missing or invalid x-content-id metadata");
     }
 
-    LOG(INFO) << "Client subscribed to ack stream for " << content_ids.size() << " content_id(s)";
+    LOG(INFO) << "Client subscribed to ack stream for content_id=" << content_id;
 
-    AddAckStream(writer, content_ids);
+    AddAckStream(writer, content_id);
 
     // Keep stream open until client disconnects
     while (!context->IsCancelled()) {
@@ -253,7 +284,7 @@ grpc::Status BackendTransportServer::subscribe(
 
     RemoveAckStream(writer);
 
-    LOG(INFO) << "Client unsubscribed from ack stream";
+    LOG(INFO) << "Client unsubscribed from ack stream (content_id=" << content_id << ")";
     return grpc::Status::OK;
 }
 
@@ -404,9 +435,9 @@ uint32_t BackendTransportServer::ExtractContentIdFromTopic(const std::string& to
 
 void BackendTransportServer::AddContentStream(
     grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer,
-    const std::unordered_set<uint32_t>& content_ids) {
+    uint32_t content_id) {
     std::unique_lock<std::shared_mutex> lock(content_streams_mutex_);
-    content_streams_.push_back({writer, content_ids});
+    content_streams_.push_back({writer, content_id});
 }
 
 void BackendTransportServer::RemoveContentStream(
@@ -428,9 +459,8 @@ void BackendTransportServer::BroadcastContent(uint32_t content_id, const std::ve
 
     std::shared_lock<std::shared_mutex> lock(content_streams_mutex_);
     for (const auto& sub : content_streams_) {
-        // Only send to streams that subscribed to this content_id
-        // TODO: In channel-bound model, each stream would be bound to one content_id
-        if (sub.content_ids.count(content_id) > 0) {
+        // Only send to streams bound to this content_id
+        if (sub.content_id == content_id) {
             sub.writer->Write(event);
         }
     }
@@ -513,9 +543,9 @@ swdv::backend_transport_service::connection_state_t BackendTransportServer::Curr
 
 void BackendTransportServer::AddAckStream(
     grpc::ServerWriter<swdv::backend_transport_service::on_ack>* writer,
-    const std::unordered_set<uint32_t>& content_ids) {
+    uint32_t content_id) {
     std::unique_lock<std::shared_mutex> lock(ack_streams_mutex_);
-    ack_streams_.push_back({writer, content_ids});
+    ack_streams_.push_back({writer, content_id});
 }
 
 void BackendTransportServer::RemoveAckStream(
@@ -537,9 +567,8 @@ void BackendTransportServer::BroadcastAck(uint32_t content_id, uint64_t sequence
 
     std::shared_lock<std::shared_mutex> lock(ack_streams_mutex_);
     for (const auto& sub : ack_streams_) {
-        // Only send to streams that subscribed to this content_id
-        // TODO: In channel-bound model, each stream would be bound to one content_id
-        if (sub.content_ids.count(content_id) > 0) {
+        // Only send to streams bound to this content_id
+        if (sub.content_id == content_id) {
             sub.writer->Write(event);
         }
     }
