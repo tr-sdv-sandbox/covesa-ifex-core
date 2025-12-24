@@ -165,9 +165,9 @@ TEST_F(BackendTransportIntegrationTest, DifferentContentIdsHaveSeparateSequences
 TEST_F(BackendTransportIntegrationTest, PublishWithDifferentPersistence) {
     auto client = createClient(300);
 
-    auto r1 = client.publish({0x01}, Persistence::None);
-    auto r2 = client.publish({0x02}, Persistence::UntilDelivered);
-    auto r3 = client.publish({0x03}, Persistence::Persistent);
+    auto r1 = client.publish({0x01}, Persistence::BestEffort);
+    auto r2 = client.publish({0x02}, Persistence::Volatile);
+    auto r3 = client.publish({0x03}, Persistence::Durable);
 
     EXPECT_TRUE(r1.ok());
     EXPECT_TRUE(r2.ok());
@@ -202,7 +202,7 @@ TEST_F(BackendTransportIntegrationTest, QueueStatusShowsCapacity) {
     auto client = createClient(1);
     auto status = client.queue_status();
 
-    EXPECT_FALSE(status.is_full);
+    EXPECT_NE(status.level, QueueLevel::Full);
     EXPECT_EQ(status.queue_capacity, 100);  // From config
 }
 

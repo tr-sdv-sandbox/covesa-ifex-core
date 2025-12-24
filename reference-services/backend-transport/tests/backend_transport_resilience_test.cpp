@@ -353,7 +353,7 @@ TEST_F(BackendTransportResilienceTest, MessagesQueueWhileDisconnected) {
     // Publish messages while disconnected - they should queue
     std::vector<uint64_t> sequences;
     for (int i = 0; i < 5; ++i) {
-        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::UntilDelivered);
+        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
         ASSERT_TRUE(result.ok()) << "Publish should succeed (queued) even when disconnected";
         sequences.push_back(result.sequence);
     }
@@ -377,7 +377,7 @@ TEST_F(BackendTransportResilienceTest, QueuedMessagesDeliveredWhenBrokerReturns)
     // Publish messages while disconnected
     LOG(INFO) << "=== Publishing while disconnected ===";
     for (int i = 0; i < 3; ++i) {
-        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::UntilDelivered);
+        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
         ASSERT_TRUE(result.ok());
     }
 
@@ -396,53 +396,53 @@ TEST_F(BackendTransportResilienceTest, QueuedMessagesDeliveredWhenBrokerReturns)
     EXPECT_GE(final_stats.messages_sent, 3) << "Queued messages should be delivered after reconnect";
 }
 
-TEST_F(BackendTransportResilienceTest, FireAndForgetDroppedWhenQueueFull) {
+TEST_F(BackendTransportResilienceTest, BestEffortDroppedWhenQueueFull) {
     // Start service without broker, with small queue
     ASSERT_TRUE(StartService(5));  // Queue size of 5
 
     auto client = createClient(300);
 
-    // Fill queue with persistent messages
-    LOG(INFO) << "=== Filling queue with persistent messages ===";
+    // Fill queue with volatile messages
+    LOG(INFO) << "=== Filling queue with volatile messages ===";
     for (int i = 0; i < 5; ++i) {
-        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::UntilDelivered);
-        ASSERT_TRUE(result.ok()) << "Should accept persistent message " << i;
+        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
+        ASSERT_TRUE(result.ok()) << "Should accept volatile message " << i;
     }
 
     auto status = client.queue_status();
-    EXPECT_TRUE(status.is_full) << "Queue should be full";
+    EXPECT_EQ(status.level, QueueLevel::Full) << "Queue should be full";
 
-    // Fire-and-forget should be dropped when queue is full
-    LOG(INFO) << "=== Trying to add fire-and-forget to full queue ===";
-    auto result = client.publish({0xFF}, Persistence::None);
-    EXPECT_FALSE(result.ok()) << "Fire-and-forget should be rejected when queue is full";
+    // BestEffort should be dropped when queue is full
+    LOG(INFO) << "=== Trying to add best-effort to full queue ===";
+    auto result = client.publish({0xFF}, Persistence::BestEffort);
+    EXPECT_FALSE(result.ok()) << "BestEffort should be rejected when queue is full";
     EXPECT_EQ(result.sequence, 0);
 }
 
-TEST_F(BackendTransportResilienceTest, PersistentMessageDisplacesFireAndForget) {
+TEST_F(BackendTransportResilienceTest, VolatileMessageDisplacesBestEffort) {
     // Start service without broker, with small queue
     ASSERT_TRUE(StartService(5));
 
     auto client = createClient(400);
 
-    // Fill queue with fire-and-forget messages
-    LOG(INFO) << "=== Filling queue with fire-and-forget ===";
+    // Fill queue with best-effort messages
+    LOG(INFO) << "=== Filling queue with best-effort ===";
     for (int i = 0; i < 5; ++i) {
-        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::None);
+        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::BestEffort);
         ASSERT_TRUE(result.ok());
     }
 
     auto status = client.queue_status();
-    EXPECT_TRUE(status.is_full);
+    EXPECT_EQ(status.level, QueueLevel::Full);
 
-    // Persistent message should displace a fire-and-forget
-    LOG(INFO) << "=== Adding persistent message to full queue ===";
-    auto result = client.publish({0xFF}, Persistence::UntilDelivered);
-    EXPECT_TRUE(result.ok()) << "Persistent message should displace fire-and-forget";
+    // Volatile message should displace a best-effort
+    LOG(INFO) << "=== Adding volatile message to full queue ===";
+    auto result = client.publish({0xFF}, Persistence::Volatile);
+    EXPECT_TRUE(result.ok()) << "Volatile message should displace best-effort";
 
     // Queue should still be full (one was dropped, one was added)
     status = client.queue_status();
-    EXPECT_TRUE(status.is_full);
+    EXPECT_EQ(status.level, QueueLevel::Full);
 }
 
 // =============================================================================
@@ -459,7 +459,7 @@ TEST_F(BackendTransportResilienceTest, PublishDuringReconnection) {
 
     // Send some messages
     for (int i = 0; i < 3; ++i) {
-        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::UntilDelivered);
+        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
         ASSERT_TRUE(result.ok());
     }
 
@@ -474,7 +474,7 @@ TEST_F(BackendTransportResilienceTest, PublishDuringReconnection) {
     // Publish more messages during disconnection
     LOG(INFO) << "=== Publishing while disconnected ===";
     for (int i = 10; i < 15; ++i) {
-        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::UntilDelivered);
+        auto result = client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
         ASSERT_TRUE(result.ok()) << "Should accept messages while disconnected (queued)";
     }
 
@@ -504,7 +504,7 @@ TEST_F(BackendTransportResilienceTest, StatsAccumulateAcrossReconnections) {
 
     // Send messages
     for (int i = 0; i < 5; ++i) {
-        client.publish({static_cast<uint8_t>(i)}, Persistence::UntilDelivered);
+        client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
     }
 
     std::this_thread::sleep_for(1s);
@@ -519,7 +519,7 @@ TEST_F(BackendTransportResilienceTest, StatsAccumulateAcrossReconnections) {
 
     // Send more messages
     for (int i = 0; i < 5; ++i) {
-        client.publish({static_cast<uint8_t>(i + 10)}, Persistence::UntilDelivered);
+        client.publish({static_cast<uint8_t>(i + 10)}, Persistence::Volatile);
     }
 
     std::this_thread::sleep_for(1s);
