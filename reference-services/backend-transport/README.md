@@ -60,25 +60,29 @@ description: >
 | Type | Values | Description |
 |------|--------|-------------|
 | `connection_state_t` | UNKNOWN, CONNECTED, DISCONNECTED, CONNECTING, RECONNECTING | Transport state |
-| `publish_status_t` | OK, BUFFER_FULL, MESSAGE_TOO_LONG, NOT_CONNECTED, TIMEOUT, ERROR | Publish result |
-| `persistence_t` | NONE, UNTIL_DELIVERED, UNTIL_RESTART, PERSISTENT | Message durability |
+| `disconnect_reason_t` | NONE, REQUESTED, NETWORK_ERROR, BROKER_UNAVAILABLE, AUTHENTICATION_FAILED, PROTOCOL_ERROR, TLS_ERROR | Why disconnected |
+| `publish_status_t` | OK, QUEUE_FULL, MESSAGE_TOO_LONG, INVALID_REQUEST | Queue acceptance result |
+| `queue_level_t` | EMPTY, LOW, NORMAL, HIGH, CRITICAL, FULL | Queue fill level for throttling |
+| `persistence_t` | NONE, VOLATILE, DURABLE | Message persistence level |
 
 #### Structures
 
 | Type | Fields | Description |
 |------|--------|-------------|
-| `publish_request_t` | content_id, payload, persistence | Outbound message |
-| `publish_response_t` | sequence, status | Assigned sequence for tracking |
-| `connection_status_t` | state, reason, timestamp_ns | Connection state |
-| `queue_status_t` | is_full, queue_size, queue_capacity | Backpressure info |
+| `publish_request_t` | payload, persistence | Outbound message (content_id implicit in channel) |
+| `publish_response_t` | sequence, status, queue_level | Assigned sequence + queue feedback |
+| `delivery_ack_t` | sequence | Successful delivery confirmation |
+| `connection_status_t` | state, reason, timestamp_ns | Connection state (reason is enum) |
+| `queue_status_t` | level, queue_size, queue_capacity | Queue level for throttling |
 | `transport_stats_t` | messages_sent/failed, bytes_sent/received, timestamps | Statistics |
-| `content_message_t` | content_id, payload | Incoming c2v message |
+| `content_message_t` | payload | Incoming c2v message (content_id implicit in channel) |
 
 ### Methods (Request-Response)
 
 | Method | Input | Output | Description |
 |--------|-------|--------|-------------|
 | `publish` | `publish_request_t` | `publish_response_t` | Queue message for cloud delivery |
+| `get_content_id` | - | `uint32` | Get the content ID this channel is bound to |
 | `get_connection_status` | - | `connection_status_t` | Current connection state |
 | `get_queue_status` | - | `queue_status_t` | Outbound queue status |
 | `get_stats` | - | `transport_stats_t` | Transport statistics |
@@ -105,10 +109,9 @@ The API exposes **persistence levels** rather than transport-specific QoS settin
 
 | Persistence | Semantic Intent | Typical Transport Mapping |
 |-------------|-----------------|---------------------------|
-| `NONE` | Best-effort, acceptable to lose | QoS 0 / fire-and-forget |
-| `UNTIL_DELIVERED` | Must reach broker, retry on failure | QoS 1 / at-least-once |
-| `UNTIL_RESTART` | Survive temporary disconnects | QoS 1 + memory queue |
-| `PERSISTENT` | Survive power cycles | QoS 1 + disk persistence |
+| `NONE` | Best-effort, acceptable to lose | QoS 0 / fire-and-forget, no queue |
+| `VOLATILE` | Must reach broker, retry on failure | QoS 1 / at-least-once, memory queue |
+| `DURABLE` | Must survive restart/crash | QoS 1 / at-least-once, disk queue |
 
 **Rationale:** Clients specify *what they need* (durability guarantees), not *how to achieve it* (protocol-specific QoS). This allows implementations to choose appropriate transport settings.
 
@@ -125,7 +128,7 @@ Alternative implementations may internally map sequences to transport-specific I
 
 ### Acknowledgments Indicate Success Only
 
-The `on_ack` event stream delivers `delivery_ack_t` messages containing only `content_id` and `sequence`. There is no status field.
+The `on_ack` event stream delivers `delivery_ack_t` messages containing only `sequence`. There is no status field (content_id is implicit in the channel).
 
 **Rationale:**
 - **Acks mean success** - An ack is only sent when the message was successfully delivered to the broker.
@@ -153,14 +156,17 @@ The API treats `payload` as opaque bytes. It does not interpret, validate, or tr
 - **Flexibility** - Supports any serialization format (Protobuf, JSON, CBOR, custom binary).
 - **No double-encoding** - Avoids nested encoding when payloads are already serialized.
 
-### Content ID Filtering
+### Channel-Bound Content ID
 
-Event subscriptions (`on_content`, `on_ack`) require a `filter_content_ids[]` parameter specifying which content IDs to receive.
+Each service instance (handle/channel) is bound to a single content ID. Apps receive a pre-configured handle from the platform and cannot specify content_id in requests.
 
 **Rationale:**
-- **Explicit subscription** - Clients only receive events they're interested in, reducing noise.
-- **Scalability** - With many content streams, filtering at the server reduces client-side processing.
-- **Security boundary** - Implementations can enforce access control per content_id.
+- **No accidental cross-topic writes** - Apps cannot publish to wrong MQTT topic by mistake.
+- **Simplified API** - No content_id parameter in publish, ack, or content messages.
+- **Platform control** - Content ID assignment is a platform concern, not app concern.
+- **Security boundary** - Apps can only access their assigned content stream.
+
+Use `get_content_id()` to query which content ID the handle is bound to.
 
 ---
 
@@ -247,14 +253,13 @@ Resilient MQTT connectivity with automatic reconnection:
 
 | Level | Behavior |
 |-------|----------|
-| `NONE` | Fire-and-forget. Dropped if queue full. |
-| `UNTIL_DELIVERED` | Retried until MQTT ack. Lost on restart. |
-| `UNTIL_RESTART` | Kept in memory. Persisted on graceful shutdown. |
-| `PERSISTENT` | Written to disk immediately. Survives power cycles. |
+| `NONE` | Fire-and-forget. No retry, no queue. Dropped if send fails. |
+| `VOLATILE` | Retried until delivered. Kept in memory, lost on restart/crash. |
+| `DURABLE` | Retried until delivered. Written to disk, survives restart/crash. |
 
 When queue is full:
-- `NONE` messages are rejected immediately
-- `UNTIL_DELIVERED`+ messages can displace `NONE` messages
+- `NONE` messages are rejected immediately (not queued)
+- `VOLATILE`/`DURABLE` messages can displace `NONE` messages
 
 ---
 
@@ -304,17 +309,21 @@ A C++ client library simplifies integration:
 
 using namespace ifex::client;
 
-// Create client for a specific content_id
+// Client is bound to a content_id at construction (typically provided by platform)
 auto channel = grpc::CreateChannel("localhost:50060",
                                    grpc::InsecureChannelCredentials());
-BackendTransportClient client(channel, 42);  // content_id=42
+BackendTransportClient client(channel, 42);  // bound to content_id=42
 
-// Publish data
+// Query the bound content_id if needed
+uint32_t my_content_id = client.content_id();
+
+// Publish data (no content_id parameter - channel is already bound)
 std::vector<uint8_t> payload = {0x01, 0x02, 0x03};
 auto result = client.publish(payload, Persistence::UntilDelivered);
 
 if (result.ok()) {
-    std::cout << "Sent with sequence " << result.sequence << "\n";
+    std::cout << "Sent with sequence " << result.sequence
+              << ", queue level: " << static_cast<int>(result.queue_level) << "\n";
 }
 ```
 
@@ -354,10 +363,10 @@ bool healthy = client.healthy();
 auto conn = client.connection_status();
 std::cout << "State: " << static_cast<int>(conn.state) << "\n";
 
-// Queue status (backpressure)
+// Queue status (adaptive throttling)
 auto queue = client.queue_status();
-if (queue.is_full) {
-    std::cout << "Queue full! Slow down.\n";
+if (queue.level >= QueueLevel::High) {
+    std::cout << "Queue filling up, consider throttling.\n";
 }
 
 // Statistics
@@ -409,24 +418,29 @@ grpcurl -d '{
 }' localhost:50052 swdv.ifex_dispatcher.call_method_service/call_method
 ```
 
-### Multiple Content IDs
+### Multiple Content Streams
 
-Different data streams use different content_ids:
+Different services receive separate handles from the platform:
 
 ```cpp
-// Telemetry: content_id=1
-BackendTransportClient telemetry(channel, 1);
+// Platform provides pre-configured handles to each service
+class TelemetryService {
+    BackendTransportHandle* transport_;  // bound to content_id=1
+};
 
-// Diagnostics: content_id=2
-BackendTransportClient diagnostics(channel, 2);
+class DiagnosticsService {
+    BackendTransportHandle* transport_;  // bound to content_id=2
+};
 
-// Events: content_id=3
-BackendTransportClient events(channel, 3);
+class EventsService {
+    BackendTransportHandle* transport_;  // bound to content_id=3
+};
 
-// Each has independent:
+// Each handle has independent:
 // - Sequence numbering
 // - Queue with ordering guarantees
 // - MQTT topic (v2c/{vehicle}/1, v2c/{vehicle}/2, ...)
+// Services cannot accidentally cross-publish
 ```
 
 ---
