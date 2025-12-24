@@ -95,6 +95,75 @@ description: >
 
 ---
 
+## API Design Decisions
+
+The IFEX Backend Transport API is designed as a **transport-agnostic abstraction**. This reference implementation uses MQTT directly, but alternative implementations may use different underlying transports (SOME/IP gateways, proprietary protocols, etc.) while exposing the same gRPC interface.
+
+### Persistence Instead of QoS
+
+The API exposes **persistence levels** rather than transport-specific QoS settings:
+
+| Persistence | Semantic Intent | Typical Transport Mapping |
+|-------------|-----------------|---------------------------|
+| `NONE` | Best-effort, acceptable to lose | QoS 0 / fire-and-forget |
+| `UNTIL_DELIVERED` | Must reach broker, retry on failure | QoS 1 / at-least-once |
+| `UNTIL_RESTART` | Survive temporary disconnects | QoS 1 + memory queue |
+| `PERSISTENT` | Survive power cycles | QoS 1 + disk persistence |
+
+**Rationale:** Clients specify *what they need* (durability guarantees), not *how to achieve it* (protocol-specific QoS). This allows implementations to choose appropriate transport settings.
+
+### Server-Assigned Sequence Numbers
+
+The `publish()` method returns a server-assigned `sequence` number rather than accepting a client-provided message ID.
+
+**Rationale:**
+- **Non-blocking design** - The gRPC API is designed to never block. Sequence assignment is atomic and immediate.
+- **Monotonic ordering** - Server guarantees strictly increasing sequences per content_id, enabling gap detection.
+- **Simpler client logic** - Clients don't need to generate unique IDs or handle ID collisions.
+
+Alternative implementations may internally map sequences to transport-specific IDs as needed.
+
+### Acknowledgments Indicate Success Only
+
+The `on_ack` event stream delivers `delivery_ack_t` messages containing only `content_id` and `sequence`. There is no status field.
+
+**Rationale:**
+- **Acks mean success** - An ack is only sent when the message was successfully delivered to the broker.
+- **FIFO ordering** - Messages are sent in strict order per content_id. Receiving an ack for sequence N confirms all prior sequences have completed.
+- **Gaps indicate failure** - If sequence 5 is acked but sequence 4 was not, message 4 failed.
+- **Simpler streaming** - No need to distinguish success/failure variants in the stream.
+
+No timeout tracking is needed. The FIFO guarantee means that once a higher sequence is acked, the fate of all lower sequences is determined.
+
+### Timestamps Without Source Information
+
+The API uses simple `timestamp_ns` (nanoseconds since epoch) rather than structured timestamps with source information (GPS, NTP, system clock, etc.).
+
+**Rationale:**
+- **Abstraction level** - Timestamp source is often a transport or envelope concern, not an application concern.
+- **Payload responsibility** - Applications requiring precise time correlation should include timestamps in their payload encoding.
+- **Implementation flexibility** - Transport implementations may add source metadata at the envelope layer without changing the API.
+
+### Opaque Payloads
+
+The API treats `payload` as opaque bytes. It does not interpret, validate, or transform payload contents.
+
+**Rationale:**
+- **Separation of concerns** - The transport layer moves bytes; encoding/decoding is the application's responsibility.
+- **Flexibility** - Supports any serialization format (Protobuf, JSON, CBOR, custom binary).
+- **No double-encoding** - Avoids nested encoding when payloads are already serialized.
+
+### Content ID Filtering
+
+Event subscriptions (`on_content`, `on_ack`) require a `filter_content_ids[]` parameter specifying which content IDs to receive.
+
+**Rationale:**
+- **Explicit subscription** - Clients only receive events they're interested in, reducing noise.
+- **Scalability** - With many content streams, filtering at the server reduces client-side processing.
+- **Security boundary** - Implementations can enforce access control per content_id.
+
+---
+
 ## Architecture
 
 ### Components

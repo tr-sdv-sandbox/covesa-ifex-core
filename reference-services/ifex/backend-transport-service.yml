@@ -4,8 +4,15 @@ major_version: 1
 minor_version: 0
 description: >
   Bidirectional backend transport service for vehicle-to-cloud communication.
-  Provides a common gRPC interface for IFEX services to send/receive data
-  without knowing the underlying transport (MQTT, SOME/IP, etc.).
+  Provides a transport-agnostic gRPC interface for IFEX services to send/receive
+  data without knowing the underlying protocol (MQTT, SOME/IP gateways, etc.).
+
+  Design principles:
+  - Persistence levels abstract transport QoS (clients specify intent, not mechanism)
+  - Server-assigned sequences enable non-blocking publish and gap-based failure detection
+  - Acks indicate success only; gaps in sequence numbers indicate failed deliveries
+  - Payloads are opaque bytes; encoding/decoding is the caller's responsibility
+  - Timestamps at this layer are simple epoch values; source metadata belongs in envelope/payload
 
 namespaces:
   - name: transport
@@ -77,21 +84,26 @@ namespaces:
             default: 0
 
       - name: publish_response_t
-        description: Result of publish operation
+        description: Result of publish operation (returned immediately, non-blocking)
         members:
           - name: sequence
             datatype: uint64
-            description: Assigned sequence number for tracking delivery
+            description: >
+              Server-assigned sequence number for this content_id. Monotonically
+              increasing. Use to correlate with on_ack events; gaps indicate failures.
           - name: status
             datatype: publish_status_t
 
       - name: delivery_ack_t
-        description: Delivery confirmation
+        description: >
+          Delivery confirmation for a successfully sent message. Only emitted for
+          successful deliveries; gaps in sequence numbers indicate failures.
         members:
           - name: content_id
             datatype: uint32
           - name: sequence
             datatype: uint64
+            description: The sequence number from publish_response_t
 
       - name: connection_status_t
         description: Current connection status
@@ -187,14 +199,18 @@ namespaces:
             description: The received message (streamed)
 
       - name: on_ack
-        description: Delivery confirmation stream (gaps indicate dropped messages)
+        description: >
+          Delivery confirmation stream. Only successful deliveries generate acks.
+          Messages are sent in FIFO order per content_id, so receiving an ack for
+          sequence N confirms that all prior sequences have completed. Gaps in
+          acked sequence numbers indicate messages that failed to deliver.
         input:
           - name: filter_content_ids
             datatype: uint32[]
             description: Content IDs to receive acks for (required)
           - name: ack
             datatype: delivery_ack_t
-            description: Delivery confirmation with sequence number
+            description: Delivery confirmation with sequence number (success only)
 
       - name: on_connection_changed
         description: Connection status changed
