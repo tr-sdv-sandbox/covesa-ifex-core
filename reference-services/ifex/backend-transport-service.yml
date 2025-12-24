@@ -112,17 +112,23 @@ namespaces:
 
       - name: persistence_t
         datatype: uint8
-        description: Message persistence level
+        description: Message persistence level (all levels preserve ordering)
         options:
-          - name: NONE
+          - name: BEST_EFFORT
             value: 0
-            description: Best effort, no retry. Message sent once and forgotten.
+            description: >
+              Queued for ordering, but pruned if stale. No retry on send failure.
+              Implementation may drop after TTL expires during disconnect.
           - name: VOLATILE
             value: 1
-            description: Retry until delivered. Kept in memory, lost on restart/crash.
+            description: >
+              Retry until delivered. Kept in memory queue, lost on any shutdown.
           - name: DURABLE
             value: 2
-            description: Retry until delivered. Disk-backed, survives restart/crash.
+            description: >
+              Retry until delivered. Persisted on graceful shutdown (signal handler),
+              survives controlled restart. NOT crash-safe - protects embedded flash
+              from constant writes.
 
     structs:
       - name: publish_request_t

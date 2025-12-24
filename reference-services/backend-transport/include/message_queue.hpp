@@ -15,12 +15,24 @@
 
 namespace ifex::reference {
 
-/// Persistence level for messages
+/// Persistence level for messages (internal representation)
+/// Maps to proto persistence_t at gRPC boundary.
+/// All levels preserve ordering - messages are always queued for FIFO.
 enum class Persistence : uint8_t {
-    None = 0,           ///< Fire and forget - can be dropped if queue full
-    UntilDelivered = 1, ///< Retry until ack, drop on restart
-    UntilRestart = 2,   ///< Keep in memory, persist on graceful shutdown
-    Persistent = 3      ///< Persist immediately, survives power cycles
+    BestEffort = 0,  ///< Queued for ordering, pruned if stale. No retry on failure.
+    Volatile = 1,    ///< Retry until delivered. Memory queue, lost on any shutdown.
+    Durable = 2      ///< Retry until delivered. Persisted on graceful shutdown only.
+};
+
+/// Queue fill level for adaptive throttling (internal representation)
+/// Maps to proto queue_level_t at gRPC boundary.
+enum class QueueLevel : uint8_t {
+    Empty = 0,     ///< 0%
+    Low = 1,       ///< < 25%
+    Normal = 2,    ///< 25-50%
+    High = 3,      ///< 50-75% - consider throttling
+    Critical = 4,  ///< 75-95% - throttle low-priority
+    Full = 5       ///< > 95%
 };
 
 /// Message waiting to be sent
@@ -49,6 +61,7 @@ public:
         size_t max_buffer_size = 1000;      ///< Max messages in buffer
         size_t high_watermark = 800;        ///< Start applying backpressure
         size_t low_watermark = 200;         ///< Resume normal operation
+        std::chrono::seconds best_effort_ttl{30};  ///< TTL for BestEffort messages
     };
 
     explicit ContentQueue(const Config& config);
@@ -73,6 +86,11 @@ public:
     bool IsEmpty() const;
     bool IsHighWatermark() const;
     bool IsFull() const;
+    QueueLevel GetLevel() const;
+
+    /// Prune stale BestEffort messages (called during disconnect)
+    /// @return sequences of pruned messages (for gap detection)
+    std::vector<uint64_t> PruneStale();
 
     /// Persist all messages to disk (for graceful shutdown)
     /// @return number of messages persisted
@@ -136,13 +154,17 @@ public:
     struct Stats {
         size_t total_queued = 0;
         size_t total_in_flight = 0;
-        size_t queues_at_high_watermark = 0;
-        size_t queues_full = 0;
+        size_t total_capacity = 0;
+        QueueLevel level = QueueLevel::Empty;
     };
     Stats GetStats() const;
 
-    /// Check if any queue is at high watermark (backpressure signal)
-    bool IsBackpressured() const;
+    /// Get aggregate queue level across all queues
+    QueueLevel GetLevel() const;
+
+    /// Prune stale BestEffort messages from all queues
+    /// @return map of content_id -> pruned sequences
+    std::unordered_map<uint32_t, std::vector<uint64_t>> PruneAllStale();
 
     /// Check if all queues are empty
     bool IsEmpty() const;

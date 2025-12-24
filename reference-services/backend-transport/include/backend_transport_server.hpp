@@ -176,7 +176,8 @@ private:
 
     // Connection state
     std::atomic<bool> connected_{false};
-    std::string disconnect_reason_;
+    swdv::backend_transport_service::disconnect_reason_t disconnect_reason_ =
+        swdv::backend_transport_service::NONE;
     std::atomic<int64_t> last_status_change_ns_{0};
 
     // Statistics
@@ -215,8 +216,9 @@ private:
     std::shared_mutex ack_streams_mutex_;
     std::vector<AckStreamSubscription> ack_streams_;
 
-    // Track last queue status to detect changes
-    bool last_queue_full_ = false;
+    // Track last queue level to detect changes for broadcasts
+    swdv::backend_transport_service::queue_level_t last_queue_level_ =
+        swdv::backend_transport_service::EMPTY;
 };
 
 }  // namespace ifex::reference

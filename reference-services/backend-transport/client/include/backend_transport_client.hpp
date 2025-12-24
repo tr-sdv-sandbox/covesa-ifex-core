@@ -22,25 +22,32 @@ class Channel;
 
 namespace ifex::client {
 
-/// Message persistence level
+/// Message persistence level (maps to proto persistence_t)
 enum class Persistence : uint8_t {
-    None = 0,           ///< Fire and forget - can be dropped
-    UntilDelivered = 1, ///< Retry until ack
-    UntilRestart = 2,   ///< Keep until service restart
-    Persistent = 3      ///< Survives power cycles
+    BestEffort = 0,  ///< Queued for ordering, pruned if stale. No retry on failure.
+    Volatile = 1,    ///< Retry until delivered. Memory queue, lost on any shutdown.
+    Durable = 2      ///< Retry until delivered. Persisted on graceful shutdown only.
 };
 
-/// Publish operation result
+/// Publish operation result (maps to proto publish_status_t)
 enum class PublishStatus : uint8_t {
     Ok = 0,
-    BufferFull = 1,
+    QueueFull = 1,
     MessageTooLong = 2,
-    NotConnected = 3,
-    Timeout = 4,
-    Error = 255
+    InvalidRequest = 3
 };
 
-/// Connection state
+/// Queue fill level for adaptive throttling (maps to proto queue_level_t)
+enum class QueueLevel : uint8_t {
+    Empty = 0,     ///< 0%
+    Low = 1,       ///< < 25%
+    Normal = 2,    ///< 25-50%
+    High = 3,      ///< 50-75% - consider throttling
+    Critical = 4,  ///< 75-95% - throttle low-priority
+    Full = 5       ///< > 95%
+};
+
+/// Connection state (maps to proto connection_state_t)
 enum class ConnectionState : uint8_t {
     Unknown = 0,
     Connected = 1,
@@ -49,16 +56,27 @@ enum class ConnectionState : uint8_t {
     Reconnecting = 4
 };
 
+/// Disconnect reason (maps to proto disconnect_reason_t)
+enum class DisconnectReason : uint8_t {
+    None = 0,                  ///< No disconnect (connected)
+    Requested = 1,             ///< Client or service requested disconnect
+    NetworkError = 2,          ///< Network failure
+    BrokerUnavailable = 3,     ///< Cannot reach broker
+    AuthenticationFailed = 4,  ///< Credentials rejected
+    ProtocolError = 5,         ///< Protocol violation
+    TlsError = 6               ///< TLS handshake failure
+};
+
 /// Connection status
 struct ConnectionStatus {
     ConnectionState state = ConnectionState::Unknown;
-    std::string reason;
+    DisconnectReason reason = DisconnectReason::None;
     int64_t timestamp_ns = 0;
 };
 
-/// Queue status
+/// Queue status for adaptive throttling
 struct QueueStatus {
-    bool is_full = false;
+    QueueLevel level = QueueLevel::Empty;
     uint32_t queue_size = 0;
     uint32_t queue_capacity = 0;
 };
@@ -77,7 +95,8 @@ struct TransportStats {
 /// Result of a publish operation
 struct PublishResult {
     uint64_t sequence = 0;      ///< Assigned sequence (0 on failure)
-    PublishStatus status = PublishStatus::Error;
+    PublishStatus status = PublishStatus::InvalidRequest;
+    QueueLevel queue_level = QueueLevel::Empty;  ///< Current queue level for throttling
 
     bool ok() const { return status == PublishStatus::Ok; }
     operator bool() const { return ok(); }
@@ -157,16 +176,16 @@ public:
      * @brief Publish data to the cloud
      * @param payload Binary data to send
      * @param persistence Delivery guarantee level
-     * @return Result with assigned sequence number, or error status
+     * @return Result with assigned sequence number + queue level, or error status
      */
     PublishResult publish(const std::vector<uint8_t>& payload,
-                         Persistence persistence = Persistence::None);
+                         Persistence persistence = Persistence::BestEffort);
 
     /**
      * @brief Publish data to the cloud (move version)
      */
     PublishResult publish(std::vector<uint8_t>&& payload,
-                         Persistence persistence = Persistence::None);
+                         Persistence persistence = Persistence::BestEffort);
 
     // =========================================================================
     // Subscriptions (streaming)

@@ -25,22 +25,32 @@ namespace {
 
 pb::persistence_t to_proto(Persistence p) {
     switch (p) {
-        case Persistence::None: return pb::NONE;
-        case Persistence::UntilDelivered: return pb::UNTIL_DELIVERED;
-        case Persistence::UntilRestart: return pb::UNTIL_RESTART;
-        case Persistence::Persistent: return pb::PERSISTENT;
+        case Persistence::BestEffort: return pb::BEST_EFFORT;
+        case Persistence::Volatile: return pb::VOLATILE;
+        case Persistence::Durable: return pb::DURABLE;
     }
-    return pb::NONE;
+    return pb::BEST_EFFORT;
 }
 
 PublishStatus from_proto(pb::publish_status_t s) {
     switch (s) {
         case pb::OK: return PublishStatus::Ok;
-        case pb::BUFFER_FULL: return PublishStatus::BufferFull;
+        case pb::QUEUE_FULL: return PublishStatus::QueueFull;
         case pb::MESSAGE_TOO_LONG: return PublishStatus::MessageTooLong;
-        case pb::NOT_CONNECTED: return PublishStatus::NotConnected;
-        case pb::TIMEOUT: return PublishStatus::Timeout;
-        default: return PublishStatus::Error;
+        case pb::INVALID_REQUEST: return PublishStatus::InvalidRequest;
+        default: return PublishStatus::InvalidRequest;
+    }
+}
+
+QueueLevel from_proto(pb::queue_level_t l) {
+    switch (l) {
+        case pb::EMPTY: return QueueLevel::Empty;
+        case pb::LOW: return QueueLevel::Low;
+        case pb::NORMAL: return QueueLevel::Normal;
+        case pb::HIGH: return QueueLevel::High;
+        case pb::CRITICAL: return QueueLevel::Critical;
+        case pb::FULL: return QueueLevel::Full;
+        default: return QueueLevel::Empty;
     }
 }
 
@@ -54,10 +64,23 @@ ConnectionState from_proto(pb::connection_state_t s) {
     }
 }
 
+DisconnectReason from_proto(pb::disconnect_reason_t r) {
+    switch (r) {
+        case pb::NONE: return DisconnectReason::None;
+        case pb::REQUESTED: return DisconnectReason::Requested;
+        case pb::NETWORK_ERROR: return DisconnectReason::NetworkError;
+        case pb::BROKER_UNAVAILABLE: return DisconnectReason::BrokerUnavailable;
+        case pb::AUTHENTICATION_FAILED: return DisconnectReason::AuthenticationFailed;
+        case pb::PROTOCOL_ERROR: return DisconnectReason::ProtocolError;
+        case pb::TLS_ERROR: return DisconnectReason::TlsError;
+        default: return DisconnectReason::None;
+    }
+}
+
 ConnectionStatus from_proto(const pb::connection_status_t& s) {
     ConnectionStatus result;
     result.state = from_proto(s.state());
-    result.reason = s.reason();
+    result.reason = from_proto(s.reason());
     result.timestamp_ns = s.timestamp_ns();
     return result;
 }
@@ -95,7 +118,7 @@ public:
         pb::publish_response response;
 
         auto* req = request.mutable_request();
-        req->set_content_id(content_id_);
+        // content_id is implicit in the channel - not sent in request
         req->set_payload(payload.data(), payload.size());
         req->set_persistence(to_proto(persistence));
 
@@ -104,12 +127,13 @@ public:
         PublishResult result;
         if (!status.ok()) {
             LOG(ERROR) << "Publish RPC failed: " << status.error_message();
-            result.status = PublishStatus::Error;
+            result.status = PublishStatus::InvalidRequest;
             return result;
         }
 
         result.sequence = response.result().sequence();
         result.status = from_proto(response.result().status());
+        result.queue_level = from_proto(response.result().queue_level());
         return result;
     }
 
@@ -176,7 +200,7 @@ public:
 
         auto status = connection_status_stub_->get_connection_status(&context, request, &response);
         if (!status.ok()) {
-            return ConnectionStatus{ConnectionState::Unknown, status.error_message(), 0};
+            return ConnectionStatus{ConnectionState::Unknown, DisconnectReason::NetworkError, 0};
         }
         return from_proto(response.status());
     }
@@ -192,7 +216,7 @@ public:
         }
 
         QueueStatus result;
-        result.is_full = response.status().is_full();
+        result.level = from_proto(response.status().level());
         result.queue_size = response.status().queue_size();
         result.queue_capacity = response.status().queue_capacity();
         return result;
@@ -229,7 +253,7 @@ private:
             }
 
             pb::on_content_subscribe_request request;
-            request.add_content_ids(content_id_);
+            // content_id is implicit in the channel - no filter needed
 
             auto reader = content_stub_->subscribe(context.get(), request);
 
@@ -264,13 +288,14 @@ private:
             }
 
             pb::on_ack_subscribe_request request;
-            request.add_content_ids(content_id_);
+            // content_id is implicit in the channel - no filter needed
 
             auto reader = ack_stub_->subscribe(context.get(), request);
 
             pb::on_ack event;
             while (ack_running_ && reader->Read(&event)) {
-                if (ack_callback_ && event.ack().content_id() == content_id_) {
+                if (ack_callback_) {
+                    // No content_id check needed - channel is already bound
                     ack_callback_(event.ack().sequence());
                 }
             }

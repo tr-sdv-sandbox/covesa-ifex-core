@@ -18,53 +18,75 @@ enum connection_state_t {
   RECONNECTING = 4;
 }
 
-// Result of publish operation
+// Result of publish operation. Since publish is non-blocking and messages queue during disconnect, only queue acceptance errors are reported here. Delivery failures are indicated by gaps in on_ack sequences.
+
 enum publish_status_t {
   OK = 0;
-  BUFFER_FULL = 1;
+  QUEUE_FULL = 1;
   MESSAGE_TOO_LONG = 2;
-  NOT_CONNECTED = 3;
-  TIMEOUT = 4;
-  ERROR = 255;
+  INVALID_REQUEST = 3;
 }
 
-// Message persistence level
-enum persistence_t {
+// Queue fill level for adaptive throttling. Returned in publish response and broadcast via on_queue_status_changed for bidirectional feedback.
+
+enum queue_level_t {
+  EMPTY = 0;
+  LOW = 1;
+  NORMAL = 2;
+  HIGH = 3;
+  CRITICAL = 4;
+  FULL = 5;
+}
+
+// Reason for connection state change
+enum disconnect_reason_t {
   NONE = 0;
-  UNTIL_DELIVERED = 1;
-  UNTIL_RESTART = 2;
-  PERSISTENT = 3;
+  REQUESTED = 1;
+  NETWORK_ERROR = 2;
+  BROKER_UNAVAILABLE = 3;
+  AUTHENTICATION_FAILED = 4;
+  PROTOCOL_ERROR = 5;
+  TLS_ERROR = 6;
 }
 
-// Request to publish data to cloud
+// Message persistence level (all levels preserve ordering)
+enum persistence_t {
+  BEST_EFFORT = 0;
+  VOLATILE = 1;
+  DURABLE = 2;
+}
+
+// Request to publish data to cloud. Content ID is implicit in the channel/handle - apps cannot accidentally publish to wrong topic.
+
 message publish_request_t {
-  uint32 content_id = 1;
-  bytes payload = 2;
-  persistence_t persistence = 3;
+  bytes payload = 1;
+  persistence_t persistence = 2;
 }
 
-// Result of publish operation
+// Result of publish operation (returned immediately, non-blocking)
 message publish_response_t {
   uint64 sequence = 1;
   publish_status_t status = 2;
+  queue_level_t queue_level = 3;
 }
 
-// Delivery confirmation
+// Delivery confirmation for a successfully sent message. Only emitted for successful deliveries; gaps in sequence numbers indicate failures.
+
 message delivery_ack_t {
-  uint32 content_id = 1;
-  uint64 sequence = 2;
+  uint64 sequence = 1;
 }
 
 // Current connection status
 message connection_status_t {
   connection_state_t state = 1;
-  string reason = 2;
+  disconnect_reason_t reason = 2;
   sint64 timestamp_ns = 3;
 }
 
-// Outbound queue status for backpressure
+// Outbound queue status for adaptive throttling. Broadcast via on_queue_status_changed when level changes, enabling clients to resume sending after queue drains.
+
 message queue_status_t {
-  bool is_full = 1;
+  queue_level_t level = 1;
   uint32 queue_size = 2;
   uint32 queue_capacity = 3;
 }
@@ -80,10 +102,10 @@ message transport_stats_t {
   sint64 last_receive_timestamp_ns = 7;
 }
 
-// Incoming message from cloud (c2v)
+// Incoming message from cloud (c2v). Content ID is implicit in the channel/handle this message arrives on.
+
 message content_message_t {
-  uint32 content_id = 1;
-  bytes payload = 2;
+  bytes payload = 1;
 }
 
 // Method: publish
@@ -152,14 +174,28 @@ service healthy_service {
   rpc healthy(healthy_request) returns (healthy_response);
 }
 
+// Method: get_content_id
+// Get the content ID this channel is bound to. Useful for logging or when the app needs to know its assigned content ID.
+
+message get_content_id_request {
+}
+
+message get_content_id_response {
+  uint32 content_id = 1;
+}
+
+service get_content_id_service {
+  rpc get_content_id(get_content_id_request) returns (get_content_id_response);
+}
+
 // Event: on_content
-// Incoming content from cloud (c2v)
+// Incoming content from cloud (c2v) for this channel's content ID.
+
 message on_content {
   content_message_t message = 1;
 }
 
 message on_content_subscribe_request {
-  repeated uint32 content_ids = 1;
 }
 
 service on_content_service {
@@ -168,13 +204,13 @@ service on_content_service {
 }
 
 // Event: on_ack
-// Delivery confirmation stream (gaps indicate dropped messages)
+// Delivery confirmation stream for this channel. Only successful deliveries generate acks. Messages are sent in FIFO order, so receiving an ack for sequence N confirms that all prior sequences have completed. Gaps in acked sequence numbers indicate messages that failed to deliver.
+
 message on_ack {
   delivery_ack_t ack = 1;
 }
 
 message on_ack_subscribe_request {
-  repeated uint32 content_ids = 1;
 }
 
 service on_ack_service {
@@ -197,7 +233,8 @@ service on_connection_changed_service {
 }
 
 // Event: on_queue_status_changed
-// Backpressure signal
+// Queue level changed. Subscribe to receive feedback when queue drains, enabling adaptive throttling. Example: pause logs when level >= HIGH, resume when level drops to LOW.
+
 message on_queue_status_changed {
   queue_status_t status = 1;
 }

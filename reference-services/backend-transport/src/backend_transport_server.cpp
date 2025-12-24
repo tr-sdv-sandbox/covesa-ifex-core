@@ -103,13 +103,17 @@ grpc::Status BackendTransportServer::publish(
     // Enqueue message - sequence is assigned atomically inside
     uint64_t sequence = queue_manager_->Enqueue(content_id, std::move(payload), persistence);
 
+    // Get queue level for response
+    auto queue_stats = queue_manager_->GetStats();
+    result->set_queue_level(static_cast<swdv::backend_transport_service::queue_level_t>(queue_stats.level));
+
     if (sequence > 0) {
         result->set_sequence(sequence);
         result->set_status(swdv::backend_transport_service::OK);
         // Stats (messages_sent_, bytes_sent_) are updated when actually sent over MQTT
     } else {
         result->set_sequence(0);
-        result->set_status(swdv::backend_transport_service::BUFFER_FULL);
+        result->set_status(swdv::backend_transport_service::QUEUE_FULL);
         messages_failed_++;
     }
 
@@ -137,9 +141,9 @@ grpc::Status BackendTransportServer::get_queue_status(
     auto stats = queue_manager_->GetStats();
 
     auto* status = response->mutable_status();
-    status->set_is_full(stats.queues_full > 0);
+    status->set_level(static_cast<swdv::backend_transport_service::queue_level_t>(stats.level));
     status->set_queue_size(static_cast<uint32_t>(stats.total_queued));
-    status->set_queue_capacity(static_cast<uint32_t>(config_.queue_size_per_content_id));
+    status->set_queue_capacity(static_cast<uint32_t>(stats.total_capacity));
 
     return grpc::Status::OK;
 }
@@ -266,7 +270,7 @@ grpc::Status BackendTransportServer::subscribe(
     swdv::backend_transport_service::on_connection_changed event;
     auto* status = event.mutable_status();
     status->set_state(CurrentConnectionState());
-    status->set_reason(disconnect_reason_);
+    status->set_reason(disconnect_reason_);  // Now using enum
     status->set_timestamp_ns(last_status_change_ns_.load());
     writer->Write(event);
 
@@ -309,7 +313,7 @@ void BackendTransportServer::OnMqttConnected() {
     LOG(INFO) << "MQTT connected";
 
     connected_ = true;
-    disconnect_reason_.clear();
+    disconnect_reason_ = swdv::backend_transport_service::NONE;
     last_status_change_ns_ = NowNs();
 
     // Resubscribe to all c2v topics
@@ -328,7 +332,22 @@ void BackendTransportServer::OnMqttDisconnected(int reason) {
     LOG(WARNING) << "MQTT disconnected (reason=" << reason << ")";
 
     connected_ = false;
-    disconnect_reason_ = "Disconnected (code " + std::to_string(reason) + ")";
+    // Map MQTT disconnect code to our enum
+    // Common mosquitto codes: 0=requested, 1=protocol error, 5=auth failed
+    switch (reason) {
+        case 0:
+            disconnect_reason_ = swdv::backend_transport_service::REQUESTED;
+            break;
+        case 1:
+            disconnect_reason_ = swdv::backend_transport_service::PROTOCOL_ERROR;
+            break;
+        case 5:
+            disconnect_reason_ = swdv::backend_transport_service::AUTHENTICATION_FAILED;
+            break;
+        default:
+            disconnect_reason_ = swdv::backend_transport_service::NETWORK_ERROR;
+            break;
+    }
     last_status_change_ns_ = NowNs();
 
     BroadcastConnectionStatus();
@@ -404,12 +423,13 @@ void BackendTransportServer::RemoveContentStream(
 void BackendTransportServer::BroadcastContent(uint32_t content_id, const std::vector<uint8_t>& payload) {
     swdv::backend_transport_service::on_content event;
     auto* msg = event.mutable_message();
-    msg->set_content_id(content_id);
+    // content_id is implicit in the channel - not set in message
     msg->set_payload(std::string(payload.begin(), payload.end()));
 
     std::shared_lock<std::shared_mutex> lock(content_streams_mutex_);
     for (const auto& sub : content_streams_) {
         // Only send to streams that subscribed to this content_id
+        // TODO: In channel-bound model, each stream would be bound to one content_id
         if (sub.content_ids.count(content_id) > 0) {
             sub.writer->Write(event);
         }
@@ -434,7 +454,7 @@ void BackendTransportServer::BroadcastConnectionStatus() {
     swdv::backend_transport_service::on_connection_changed event;
     auto* status = event.mutable_status();
     status->set_state(CurrentConnectionState());
-    status->set_reason(disconnect_reason_);
+    status->set_reason(disconnect_reason_);  // Now using enum
     status->set_timestamp_ns(last_status_change_ns_.load());
 
     std::shared_lock<std::shared_mutex> lock(connection_streams_mutex_);
@@ -459,19 +479,19 @@ void BackendTransportServer::RemoveQueueStream(
 
 void BackendTransportServer::BroadcastQueueStatus() {
     auto stats = queue_manager_->GetStats();
-    bool is_full = stats.queues_full > 0;
+    auto level = static_cast<swdv::backend_transport_service::queue_level_t>(stats.level);
 
-    // Only broadcast on change
-    if (is_full == last_queue_full_) {
+    // Only broadcast on level change
+    if (level == last_queue_level_) {
         return;
     }
-    last_queue_full_ = is_full;
+    last_queue_level_ = level;
 
     swdv::backend_transport_service::on_queue_status_changed event;
     auto* status = event.mutable_status();
-    status->set_is_full(is_full);
+    status->set_level(level);
     status->set_queue_size(static_cast<uint32_t>(stats.total_queued));
-    status->set_queue_capacity(static_cast<uint32_t>(config_.queue_size_per_content_id));
+    status->set_queue_capacity(static_cast<uint32_t>(stats.total_capacity));
 
     std::shared_lock<std::shared_mutex> lock(queue_streams_mutex_);
     for (auto* writer : queue_streams_) {
@@ -512,12 +532,13 @@ void BackendTransportServer::RemoveAckStream(
 void BackendTransportServer::BroadcastAck(uint32_t content_id, uint64_t sequence) {
     swdv::backend_transport_service::on_ack event;
     auto* ack = event.mutable_ack();
-    ack->set_content_id(content_id);
+    // content_id is implicit in the channel - not set in message
     ack->set_sequence(sequence);
 
     std::shared_lock<std::shared_mutex> lock(ack_streams_mutex_);
     for (const auto& sub : ack_streams_) {
         // Only send to streams that subscribed to this content_id
+        // TODO: In channel-bound model, each stream would be bound to one content_id
         if (sub.content_ids.count(content_id) > 0) {
             sub.writer->Write(event);
         }

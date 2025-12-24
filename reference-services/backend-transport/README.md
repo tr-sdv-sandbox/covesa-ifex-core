@@ -63,7 +63,7 @@ description: >
 | `disconnect_reason_t` | NONE, REQUESTED, NETWORK_ERROR, BROKER_UNAVAILABLE, AUTHENTICATION_FAILED, PROTOCOL_ERROR, TLS_ERROR | Why disconnected |
 | `publish_status_t` | OK, QUEUE_FULL, MESSAGE_TOO_LONG, INVALID_REQUEST | Queue acceptance result |
 | `queue_level_t` | EMPTY, LOW, NORMAL, HIGH, CRITICAL, FULL | Queue fill level for throttling |
-| `persistence_t` | NONE, VOLATILE, DURABLE | Message persistence level |
+| `persistence_t` | BEST_EFFORT, VOLATILE, DURABLE | Message persistence level |
 
 #### Structures
 
@@ -109,9 +109,9 @@ The API exposes **persistence levels** rather than transport-specific QoS settin
 
 | Persistence | Semantic Intent | Typical Transport Mapping |
 |-------------|-----------------|---------------------------|
-| `NONE` | Best-effort, acceptable to lose | QoS 0 / fire-and-forget, no queue |
+| `BEST_EFFORT` | Acceptable to lose, but preserve ordering | QoS 0, queued with TTL, pruned if stale |
 | `VOLATILE` | Must reach broker, retry on failure | QoS 1 / at-least-once, memory queue |
-| `DURABLE` | Must survive restart/crash | QoS 1 / at-least-once, disk queue |
+| `DURABLE` | Must survive controlled restart | QoS 1, persisted on graceful shutdown only |
 
 **Rationale:** Clients specify *what they need* (durability guarantees), not *how to achieve it* (protocol-specific QoS). This allows implementations to choose appropriate transport settings.
 
@@ -253,13 +253,19 @@ Resilient MQTT connectivity with automatic reconnection:
 
 | Level | Behavior |
 |-------|----------|
-| `NONE` | Fire-and-forget. No retry, no queue. Dropped if send fails. |
-| `VOLATILE` | Retried until delivered. Kept in memory, lost on restart/crash. |
-| `DURABLE` | Retried until delivered. Written to disk, survives restart/crash. |
+| `BEST_EFFORT` | Queued for ordering, but pruned if stale. No retry on send failure. |
+| `VOLATILE` | Retried until delivered. Kept in memory, lost on any shutdown. |
+| `DURABLE` | Retried until delivered. Persisted on graceful shutdown, survives controlled restart. |
 
-When queue is full:
-- `NONE` messages are rejected immediately (not queued)
-- `VOLATILE`/`DURABLE` messages can displace `NONE` messages
+**All levels preserve ordering** - messages are always queued to maintain FIFO order per content_id.
+
+**BEST_EFFORT TTL behavior:**
+- Messages are queued and get sequence numbers
+- During disconnect, stale BEST_EFFORT messages are pruned (implementation-specific TTL)
+- Pruned messages create gaps in ack sequences, signaling failure to clients
+- No retry on send failure - one delivery attempt only
+
+**DURABLE is NOT crash-safe** - messages are only persisted during graceful shutdown (signal handler). This protects embedded flash from constant writes. Crashes will lose DURABLE messages just like VOLATILE.
 
 ---
 

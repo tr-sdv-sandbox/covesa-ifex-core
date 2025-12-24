@@ -21,23 +21,23 @@ uint64_t ContentQueue::Enqueue(std::vector<uint8_t> payload, Persistence persist
 
     // Check if queue is full
     if (queue_.size() >= config_.max_buffer_size) {
-        // If persistence is None, we can drop the message
-        if (persistence == Persistence::None) {
+        // If persistence is BestEffort, we can drop the message
+        if (persistence == Persistence::BestEffort) {
             messages_dropped_++;
-            VLOG(1) << "Queue " << config_.content_id << " full, dropping fire-and-forget message";
+            VLOG(1) << "Queue " << config_.content_id << " full, dropping best-effort message";
             return 0;
         }
 
-        // For persistent messages, we need to drop the oldest non-persistent message
+        // For persistent messages, we need to drop the oldest BestEffort message
         // or reject if all messages are persistent
         auto it = std::find_if(queue_.begin(), queue_.end(), [](const auto& msg) {
-            return msg->persistence == Persistence::None;
+            return msg->persistence == Persistence::BestEffort;
         });
 
         if (it != queue_.end()) {
             queue_.erase(it);
             messages_dropped_++;
-            VLOG(1) << "Queue " << config_.content_id << " full, dropped oldest fire-and-forget to make room";
+            VLOG(1) << "Queue " << config_.content_id << " full, dropped oldest best-effort to make room";
         } else {
             // All messages are persistent, reject new message
             LOG(WARNING) << "Queue " << config_.content_id << " full with all persistent messages, rejecting";
@@ -131,18 +131,61 @@ bool ContentQueue::IsFull() const {
     return queue_.size() >= config_.max_buffer_size;
 }
 
+QueueLevel ContentQueue::GetLevel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (queue_.empty() && !in_flight_) {
+        return QueueLevel::Empty;
+    }
+
+    size_t size = queue_.size() + (in_flight_ ? 1 : 0);
+    size_t capacity = config_.max_buffer_size;
+    double pct = static_cast<double>(size) / capacity * 100.0;
+
+    if (pct > 95.0) return QueueLevel::Full;
+    if (pct > 75.0) return QueueLevel::Critical;
+    if (pct > 50.0) return QueueLevel::High;
+    if (pct > 25.0) return QueueLevel::Normal;
+    return QueueLevel::Low;
+}
+
+std::vector<uint64_t> ContentQueue::PruneStale() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<uint64_t> pruned;
+
+    auto now = std::chrono::steady_clock::now();
+
+    // Prune stale BestEffort messages from queue
+    auto it = queue_.begin();
+    while (it != queue_.end()) {
+        auto& msg = *it;
+        if (msg->persistence == Persistence::BestEffort) {
+            auto age = std::chrono::duration_cast<std::chrono::seconds>(now - msg->enqueue_time);
+            if (age >= config_.best_effort_ttl) {
+                pruned.push_back(msg->sequence);
+                VLOG(1) << "Pruning stale BestEffort message seq=" << msg->sequence
+                        << " (age=" << age.count() << "s)";
+                it = queue_.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+
+    return pruned;
+}
+
 size_t ContentQueue::PersistToDisk(const std::string& path) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Only persist messages with persistence >= UntilRestart
+    // Only persist messages with Durable persistence
     std::vector<QueuedMessage*> to_persist;
 
-    if (in_flight_ && in_flight_->persistence >= Persistence::UntilRestart) {
+    if (in_flight_ && in_flight_->persistence == Persistence::Durable) {
         to_persist.push_back(in_flight_.get());
     }
 
     for (const auto& msg : queue_) {
-        if (msg->persistence >= Persistence::UntilRestart) {
+        if (msg->persistence == Persistence::Durable) {
             to_persist.push_back(msg.get());
         }
     }
@@ -312,26 +355,42 @@ MessageQueueManager::Stats MessageQueueManager::GetStats() const {
     Stats stats;
     for (const auto& [id, queue] : queues_) {
         stats.total_queued += queue->Size();
-        if (queue->IsHighWatermark()) {
-            stats.queues_at_high_watermark++;
-        }
-        if (queue->IsFull()) {
-            stats.queues_full++;
-        }
+        stats.total_capacity += config_.default_queue_size;
     }
 
+    stats.level = GetLevel();
     return stats;
 }
 
-bool MessageQueueManager::IsBackpressured() const {
+QueueLevel MessageQueueManager::GetLevel() const {
     std::lock_guard<std::mutex> lock(queues_mutex_);
 
+    if (queues_.empty()) {
+        return QueueLevel::Empty;
+    }
+
+    // Use worst (highest) level across all queues
+    QueueLevel worst = QueueLevel::Empty;
     for (const auto& [id, queue] : queues_) {
-        if (queue->IsHighWatermark()) {
-            return true;
+        QueueLevel level = queue->GetLevel();
+        if (static_cast<uint8_t>(level) > static_cast<uint8_t>(worst)) {
+            worst = level;
         }
     }
-    return false;
+    return worst;
+}
+
+std::unordered_map<uint32_t, std::vector<uint64_t>> MessageQueueManager::PruneAllStale() {
+    std::lock_guard<std::mutex> lock(queues_mutex_);
+
+    std::unordered_map<uint32_t, std::vector<uint64_t>> result;
+    for (auto& [id, queue] : queues_) {
+        auto pruned = queue->PruneStale();
+        if (!pruned.empty()) {
+            result[id] = std::move(pruned);
+        }
+    }
+    return result;
 }
 
 void MessageQueueManager::PersistAll() {
