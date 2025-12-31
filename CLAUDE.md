@@ -14,12 +14,18 @@ Dynamic vehicle orchestration platform using COVESA IFEX. The core idea: **separ
 ./generate_proto.sh
 
 # Build (from project root)
+./build.sh                    # Release build
+./build.sh --debug            # Debug build
+./build.sh --clean            # Clean rebuild
+./build.sh --debug --test     # Debug build + run tests
+
+# Manual build alternative
 mkdir -p build && cd build
-cmake ..
+cmake -DCMAKE_BUILD_TYPE=Debug ..
 make -j$(nproc)
 
 # Run tests (from build directory)
-ctest --output-on-failure              # All tests
+ctest --output-on-failure                                        # All tests
 ./tests/ifex-unit-tests --gtest_filter=ParserTest.BasicParsing   # Single unit test
 ./tests/ifex-tests-integration --gtest_filter=DiscoveryTest.*    # Single integration test
 ```
@@ -32,9 +38,9 @@ ctest --output-on-failure              # All tests
 ./stop_services.sh
 
 # Manual (must be in order - Discovery first)
-./build/reference-services/discovery/ifex-discovery-service --port 50051
-./build/reference-services/dispatcher/ifex-dispatcher-service --discovery localhost:50051
-./build/reference-services/scheduler/ifex-scheduler-service --discovery localhost:50051
+./build/reference-services/discovery/ifex-discovery-service --listen=0.0.0.0:50051
+./build/reference-services/dispatcher/ifex-dispatcher-service --listen=0.0.0.0:50052 --discovery=localhost:50051
+./build/reference-services/scheduler/ifex-scheduler-service --port=50053 --discovery=localhost:50051
 ```
 
 Integration tests spawn their own service instances (via `test_fixture.cpp`) - no need to start services manually before running tests.
@@ -52,8 +58,8 @@ Scheduler → Orchestrator → Dispatcher → Discovery → Target Service
 |---------|------|---------|
 | Discovery | 50051 | Service registry with IFEX schema |
 | Dispatcher | 50052 | Dynamic routing, JSON↔Protobuf translation |
-| Echo (test) | 50053 | Simple echo for testing |
-| Settings (test) | 50055 | User preferences and presets |
+| Scheduler | 50053 | Time/event triggers |
+| Backend Transport | 50060 | Vehicle-to-cloud (MQTT) |
 | Beverage (test) | 50061 | In-vehicle beverage prep |
 | Climate Comfort (test) | 50062 | Cabin comfort control |
 | Defrost (test) | 50063 | Windshield defrost |
@@ -71,14 +77,14 @@ Services are defined in YAML (`*.ifex.yml`):
 - `reference-services/ifex/` - Core infrastructure service schemas
 - `test-services/<service>/` - Domain service schemas
 
-Run `./generate_proto.sh` to regenerate proto files from IFEX YAML. The proto generation happens in CMake during build; the script generates the `.proto` files from IFEX YAML.
+Run `./generate_proto.sh` to regenerate proto files from IFEX YAML. Requires `ifex-tools` Docker image (installed via `install_deps.sh`). The script generates `.proto` files in `proto/`; CMake then compiles these to C++ during build.
 
 ### Core Library (`core/`)
 
-The shared library provides:
-- `parser.hpp` / `parser_impl.cpp` - IFEX YAML parsing
-- `discovery.hpp` / `discovery_client_impl.cpp` - gRPC client for Discovery service
-- `types.hpp` - Core type definitions (ServiceInfo, ServiceEndpoint, etc.)
+The shared library (`ifex-core`) provides:
+- `types.hpp` - Core type definitions (ServiceInfo, ServiceEndpoint, MethodSignature, etc.)
+- `parser.hpp` - IFEX YAML parsing
+- `discovery.hpp` - gRPC client for Discovery service
 
 Services link against `ifex-core` and `ifex-proto-generated`.
 
@@ -90,8 +96,26 @@ Services link against `ifex-core` and `ifex-proto-generated`.
 4. Register with Discovery at startup using `DiscoveryClient::register_service()`
 5. Add CMakeLists.txt linking `ifex-core` and `ifex-proto-generated`
 
+### Backend Transport Service
+
+The `reference-services/backend-transport/` provides vehicle-to-cloud communication:
+- gRPC interface for IFEX services to publish/subscribe
+- Single MQTT connection shared across all clients
+- Per-content-id message queues with ordering guarantees
+- Persistence levels: BEST_EFFORT, VOLATILE, DURABLE
+
+See `reference-services/backend-transport/README.md` for full API documentation.
+
+## Code Conventions
+
+- **C++ Standard:** C++17
+- **Logging:** glog (`LOG(INFO)`, `LOG(ERROR)`, `VLOG(1)`)
+- **CLI flags:** gflags for command-line parsing
+- **Config/Schema files:** YAML via yaml-cpp, JSON via nlohmann_json
+- **Proto generation:** IFEX YAML → .proto via Docker-based ifexgen tool
+
 ## Key Files
 
-- `generate_proto.sh` - Converts IFEX YAML → .proto files
+- `generate_proto.sh` - Converts IFEX YAML → .proto files (requires ifex-tools Docker image)
 - `start-all-bg.sh` / `stop_services.sh` - Service lifecycle management
-- `tests/integration/test_fixture.cpp` - Test fixture managing service lifecycle
+- `tests/integration/test_fixture.cpp` - Test fixture managing service lifecycle (spawns/kills services automatically)

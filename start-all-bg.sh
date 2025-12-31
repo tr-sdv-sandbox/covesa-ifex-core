@@ -79,6 +79,57 @@ if ! check_service $DISPATCHER_PID "Dispatcher Service"; then
     exit 1
 fi
 
+# Start Backend Transport Service (optional - only if MQTT available)
+echo ""
+echo -e "${BLUE}2.5️⃣  Starting Backend Transport Service...${NC}"
+if [ -f "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-service" ]; then
+    MQTT_HOST="${MQTT_HOST:-localhost}"
+    MQTT_PORT="${MQTT_PORT:-1883}"
+    VEHICLE_ID="${VEHICLE_ID:-vehicle-001}"
+
+    # Check if MQTT broker is available
+    if nc -z "$MQTT_HOST" "$MQTT_PORT" 2>/dev/null; then
+        GLOG_v=2 GLOG_logtostderr=1 \
+        MQTT_HOST="$MQTT_HOST" MQTT_PORT="$MQTT_PORT" VEHICLE_ID="$VEHICLE_ID" \
+        "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-service" \
+            --port=50060 \
+            > "$LOG_DIR/backend-transport.log" 2>&1 &
+        BACKEND_TRANSPORT_PID=$!
+        sleep 2
+        if check_service $BACKEND_TRANSPORT_PID "Backend Transport"; then
+            echo -e "    ${GREEN}✓${NC} Started on port 50060 (MQTT: $MQTT_HOST:$MQTT_PORT)"
+
+            # Start Dispatcher Bridge (only if Backend Transport is running)
+            echo ""
+            echo -e "${BLUE}2.6️⃣  Starting Dispatcher Bridge...${NC}"
+            if [ -f "$BUILD_DIR/reference-services/dispatcher-bridge/ifex-dispatcher-bridge" ]; then
+                GLOG_v=2 GLOG_logtostderr=1 \
+                "$BUILD_DIR/reference-services/dispatcher-bridge/ifex-dispatcher-bridge" \
+                    --dispatcher=localhost:50052 \
+                    --backend-transport=localhost:50060 \
+                    > "$LOG_DIR/dispatcher-bridge.log" 2>&1 &
+                DISPATCHER_BRIDGE_PID=$!
+                sleep 1
+                if check_service $DISPATCHER_BRIDGE_PID "Dispatcher Bridge"; then
+                    echo -e "    ${GREEN}✓${NC} Started (RPC forwarding enabled)"
+                else
+                    echo -e "    ${RED}✗${NC} Failed to start - cloud RPC will not work"
+                fi
+            else
+                echo -e "${YELLOW}⚠️  Dispatcher Bridge not built, skipping${NC}"
+            fi
+        else
+            echo -e "    ${RED}✗${NC} Failed to start - check $LOG_DIR/backend-transport.log"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  MQTT broker not available at $MQTT_HOST:$MQTT_PORT${NC}"
+        echo -e "    Start MQTT broker and restart to enable cloud connectivity"
+        echo -e "    Example: docker run -d -p 1883:1883 eclipse-mosquitto"
+    fi
+else
+    echo -e "${YELLOW}⚠️  Backend Transport not built, skipping${NC}"
+fi
+
 # Start test services
 echo ""
 echo -e "${BLUE}3️⃣  Starting Test Services...${NC}"
@@ -355,6 +406,12 @@ echo -e "${BLUE}📋 System Status:${NC}"
 echo "================================="
 echo -e "  ${GREEN}✅${NC} Discovery Service: localhost:50051"
 echo -e "  ${GREEN}✅${NC} Dispatcher Service: localhost:50052"
+if [ -n "$BACKEND_TRANSPORT_PID" ] && ps -p $BACKEND_TRANSPORT_PID > /dev/null 2>&1; then
+    echo -e "  ${GREEN}✅${NC} Backend Transport: localhost:50060"
+fi
+if [ -n "$DISPATCHER_BRIDGE_PID" ] && ps -p $DISPATCHER_BRIDGE_PID > /dev/null 2>&1; then
+    echo -e "  ${GREEN}✅${NC} Dispatcher Bridge: Cloud RPC enabled"
+fi
 echo -e "  ${GREEN}✅${NC} MCP Bridge: localhost:8080"
 echo ""
 echo -e "${BLUE}📊 Service Endpoints:${NC}"

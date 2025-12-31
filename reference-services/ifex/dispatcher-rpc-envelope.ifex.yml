@@ -1,0 +1,107 @@
+---
+name: dispatcher_rpc_envelope
+major_version: 1
+minor_version: 0
+description: >
+  RPC envelope for remote Dispatcher calls over Backend Transport.
+  Cloud sends rpc_request_t via c2v/{vehicle_id}/{content_id},
+  vehicle responds with rpc_response_t via v2c/{vehicle_id}/{content_id}.
+
+  This schema defines only the envelope types - not service methods.
+  The envelope wraps Dispatcher call_method requests for transport over MQTT.
+
+namespaces:
+  - name: envelope
+    description: RPC envelope types for cloud-to-vehicle service invocation
+
+    enumerations:
+      - name: rpc_status_t
+        datatype: uint8
+        description: RPC execution status (mirrors Dispatcher call_status_t with transport errors)
+        options:
+          - name: SUCCESS
+            value: 0
+            description: Method call completed successfully
+          - name: FAILED
+            value: 1
+            description: Method call failed
+          - name: TIMEOUT
+            value: 2
+            description: Method call timed out
+          - name: SERVICE_UNAVAILABLE
+            value: 3
+            description: Target service not available
+          - name: METHOD_NOT_FOUND
+            value: 4
+            description: Method not found on target service
+          - name: INVALID_PARAMETERS
+            value: 5
+            description: Parameters validation failed
+          - name: TRANSPORT_ERROR
+            value: 6
+            description: Backend Transport failure (not Dispatcher)
+          - name: DUPLICATE_REQUEST
+            value: 7
+            description: Request with same correlation_id already pending
+
+    structs:
+      - name: rpc_request_t
+        description: Request from cloud to invoke onboard service method
+        members:
+          - name: correlation_id
+            datatype: string
+            description: >
+              Unique identifier to correlate response with request.
+              Cloud-generated (UUID recommended), returned unchanged in response.
+          - name: service_name
+            datatype: string
+            description: Target IFEX service name (e.g., "climate-comfort")
+          - name: method_name
+            datatype: string
+            description: Method to invoke (e.g., "set_temperature")
+          - name: parameters_json
+            datatype: string
+            description: JSON-encoded method parameters
+          - name: timeout_ms
+            datatype: uint32
+            description: >
+              Request timeout in milliseconds. Vehicle SHOULD complete
+              or fail the request within this time.
+            default: 30000
+          - name: request_timestamp_ns
+            datatype: int64
+            description: >
+              Cloud timestamp when request was sent (nanoseconds since Unix epoch).
+              Used for latency measurement and stale request detection.
+
+      - name: rpc_response_t
+        description: Response from vehicle to cloud
+        members:
+          - name: correlation_id
+            datatype: string
+            description: >
+              Echoed from request - cloud uses this to match response
+              with pending request.
+          - name: status
+            datatype: rpc_status_t
+            description: Execution status
+          - name: result_json
+            datatype: string
+            description: >
+              JSON-encoded result from service method.
+              Empty on failure.
+            mandatory: false
+          - name: error_message
+            datatype: string
+            description: Error details when status != SUCCESS
+            mandatory: false
+          - name: duration_ms
+            datatype: uint32
+            description: Time spent executing the method (vehicle-side)
+          - name: service_endpoint
+            datatype: string
+            description: Resolved onboard endpoint (for debugging)
+            mandatory: false
+          - name: response_timestamp_ns
+            datatype: int64
+            description: Vehicle timestamp when response was sent (nanoseconds since Unix epoch)
