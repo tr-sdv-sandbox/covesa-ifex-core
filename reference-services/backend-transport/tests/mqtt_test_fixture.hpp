@@ -100,23 +100,25 @@ private:
 
         // Wait for container to be ready
         LOG(INFO) << "Waiting for MQTT broker to be ready...";
-        for (int i = 0; i < 30; ++i) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+        for (int i = 0; i < 100; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-            // Check if container is running
-            std::string check_running = "docker ps -q -f name=" + std::string(CONTAINER_NAME) + " | grep -q .";
-            if (std::system(check_running.c_str()) != 0) {
-                LOG(ERROR) << "Container stopped unexpectedly";
-                [[maybe_unused]] int log_result = std::system(("docker logs " + std::string(CONTAINER_NAME) + " 2>&1 | tail -20").c_str());
-                return false;
-            }
-
-            // Check if port is open
+            // Check if port is open first (faster check)
             std::string check_port = "nc -z localhost " + std::string(MQTT_PORT) + " 2>/dev/null";
             if (std::system(check_port.c_str()) == 0) {
                 LOG(INFO) << "MQTT broker is ready!";
                 container_started = true;
                 return true;
+            }
+
+            // Every 10 iterations, verify container is still running
+            if (i % 10 == 9) {
+                std::string check_running = "docker ps -q -f name=" + std::string(CONTAINER_NAME) + " | grep -q .";
+                if (std::system(check_running.c_str()) != 0) {
+                    LOG(ERROR) << "Container stopped unexpectedly";
+                    [[maybe_unused]] int log_result = std::system(("docker logs " + std::string(CONTAINER_NAME) + " 2>&1 | tail -20").c_str());
+                    return false;
+                }
             }
         }
 

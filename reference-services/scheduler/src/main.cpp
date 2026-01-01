@@ -59,9 +59,9 @@ std::string LoadIFEXDefinition() {
     }
 }
 
-void RunServer(int port, const std::string& service_discovery_endpoint) {
+void RunServer(const std::string& listen_address, const std::string& service_discovery_endpoint) {
     LOG(INFO) << "IFEX Scheduler Service (C++)";
-    LOG(INFO) << "  - Port: " << (port == 0 ? "auto-assigned" : std::to_string(port));
+    LOG(INFO) << "  - Listen: " << listen_address;
     LOG(INFO) << "  - Service discovery: " << service_discovery_endpoint;
     LOG(INFO) << "  - Calendar-style scheduler for IFEX services";
     LOG(INFO) << "  - CRUD operations, cron expressions, calendar views";
@@ -82,7 +82,7 @@ void RunServer(int port, const std::string& service_discovery_endpoint) {
 
     // Listen on the given address without authentication
     int actual_port;
-    builder.AddListeningPort("0.0.0.0:" + std::to_string(port),
+    builder.AddListeningPort(listen_address,
                             grpc::InsecureServerCredentials(),
                             &actual_port);
 
@@ -148,21 +148,21 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, SignalHandler);
 
     // Configuration
-    int port = 0;  // Let OS assign port by default
+    std::string listen_address = "0.0.0.0:0";  // Random port by default (auto-discovered)
     std::string service_discovery_endpoint;
 
     // Parse command line arguments (supports --key=value format)
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg.rfind("--port=", 0) == 0) {
-            port = std::stoi(arg.substr(7));
+        if (arg.rfind("--listen=", 0) == 0) {
+            listen_address = arg.substr(9);
         } else if (arg.rfind("--discovery=", 0) == 0) {
             service_discovery_endpoint = arg.substr(12);
         } else if (arg == "--help") {
             std::cout << "IFEX Scheduler Service\n"
                       << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
-                      << "  --port=<port>        Server port (default: auto-assigned)\n"
+                      << "  --listen=<addr>      Listen address (default: 0.0.0.0:0 for auto-assigned port)\n"
                       << "  --discovery=<addr>   Service discovery endpoint (overrides SERVICE_DISCOVERY_ENDPOINT env var)\n"
                       << "  --help               Show this help message\n"
                       << "\n"
@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
     LOG(INFO) << "Using service discovery endpoint: " << service_discovery_endpoint;
 
     try {
-        RunServer(port, service_discovery_endpoint);
+        RunServer(listen_address, service_discovery_endpoint);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Server failed: " << e.what();
         return 1;

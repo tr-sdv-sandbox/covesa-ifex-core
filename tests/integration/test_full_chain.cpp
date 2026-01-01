@@ -129,7 +129,7 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
 
     json params = {{"message", "scheduled execution test"}};
     job->set_parameters(params.dump());
-    job->set_scheduled_time(get_future_time(2));
+    job->set_scheduled_time(get_future_time(1));  // 1 second from now
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -140,10 +140,10 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
 
     std::string job_id = create_response.job_id();
     created_job_ids_.push_back(job_id);
-    LOG(INFO) << "Created job " << job_id << " scheduled for 2 seconds from now";
+    LOG(INFO) << "Created job " << job_id << " scheduled for 1 second from now";
 
-    // Wait for job to execute (4 seconds should be enough)
-    std::this_thread::sleep_for(std::chrono::seconds(4));
+    // Wait for job to execute (2.5 seconds should be enough)
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
 
     // Check job status - should be COMPLETED or RUNNING
     auto get_stub = swdv::ifex_scheduler::get_job_service::NewStub(scheduler_channel_);
@@ -294,7 +294,7 @@ TEST_F(FullChainIntegrationTest, MultipleJobsExecuteInOrder) {
 
         json params = {{"message", "job " + std::to_string(i)}};
         job->set_parameters(params.dump());
-        job->set_scheduled_time(get_future_time(2 + i));  // 2, 3, 4 seconds
+        job->set_scheduled_time(get_future_time(1 + i));  // 1, 2, 3 seconds
 
         swdv::ifex_scheduler::create_job_response response;
         grpc::ClientContext context;
@@ -306,8 +306,8 @@ TEST_F(FullChainIntegrationTest, MultipleJobsExecuteInOrder) {
         created_job_ids_.push_back(response.job_id());
     }
 
-    // Wait for all jobs to complete
-    std::this_thread::sleep_for(std::chrono::seconds(7));
+    // Wait for all jobs to complete (last job at 3s + 1.5s buffer)
+    std::this_thread::sleep_for(std::chrono::milliseconds(4500));
 
     // Verify all jobs completed
     auto get_stub = swdv::ifex_scheduler::get_job_service::NewStub(scheduler_channel_);

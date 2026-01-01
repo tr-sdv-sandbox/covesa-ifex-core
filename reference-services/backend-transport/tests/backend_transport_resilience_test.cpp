@@ -52,8 +52,8 @@ public:
         }
 
         // Wait for port to be ready
-        for (int i = 0; i < 30; ++i) {
-            std::this_thread::sleep_for(500ms);
+        for (int i = 0; i < 50; ++i) {
+            std::this_thread::sleep_for(100ms);
             std::string check = "nc -z localhost " + std::to_string(MQTT_PORT) + " 2>/dev/null";
             if (std::system(check.c_str()) == 0) {
                 LOG(INFO) << "MQTT broker started";
@@ -70,7 +70,7 @@ public:
         LOG(INFO) << "Stopping MQTT broker...";
         [[maybe_unused]] int r1 = std::system(("docker stop " + std::string(CONTAINER_NAME) + " 2>/dev/null").c_str());
         [[maybe_unused]] int r2 = std::system(("docker rm -f " + std::string(CONTAINER_NAME) + " 2>/dev/null").c_str());
-        std::this_thread::sleep_for(500ms);
+        std::this_thread::sleep_for(100ms);
     }
 
     static bool IsRunning() {
@@ -391,7 +391,7 @@ TEST_F(BackendTransportResilienceTest, QueuedMessagesDeliveredWhenBrokerReturns)
     ASSERT_TRUE(waitForConnectionState(client, ConnectionState::Connected));
 
     // Wait for messages to be sent
-    std::this_thread::sleep_for(2s);
+    std::this_thread::sleep_for(200ms);
 
     auto final_stats = client.stats();
     EXPECT_GE(final_stats.messages_sent, 3) << "Queued messages should be delivered after reconnect";
@@ -485,7 +485,7 @@ TEST_F(BackendTransportResilienceTest, PublishDuringReconnection) {
     ASSERT_TRUE(waitForConnectionState(client, ConnectionState::Connected, 15s));
 
     // Wait for messages to be delivered
-    std::this_thread::sleep_for(3s);
+    std::this_thread::sleep_for(200ms);
 
     auto stats_after = client.stats();
     EXPECT_GT(stats_after.messages_sent, sent_before)
@@ -508,7 +508,7 @@ TEST_F(BackendTransportResilienceTest, StatsAccumulateAcrossReconnections) {
         client.publish({static_cast<uint8_t>(i)}, Persistence::Volatile);
     }
 
-    std::this_thread::sleep_for(1s);
+    std::this_thread::sleep_for(300ms);
     auto stats1 = client.stats();
 
     // Reconnect cycle
@@ -523,7 +523,7 @@ TEST_F(BackendTransportResilienceTest, StatsAccumulateAcrossReconnections) {
         client.publish({static_cast<uint8_t>(i + 10)}, Persistence::Volatile);
     }
 
-    std::this_thread::sleep_for(1s);
+    std::this_thread::sleep_for(300ms);
     auto stats2 = client.stats();
 
     EXPECT_GT(stats2.messages_sent, stats1.messages_sent)
@@ -568,7 +568,7 @@ TEST_F(BackendTransportResilienceTest, DurableMessagesSurviveGracefulShutdown) {
     ASSERT_TRUE(waitForConnectionState(client2, ConnectionState::Connected));
 
     // Wait for persisted messages to be delivered
-    std::this_thread::sleep_for(3s);
+    std::this_thread::sleep_for(300ms);
 
     auto stats = client2.stats();
     EXPECT_GE(stats.messages_sent, 5)
@@ -601,7 +601,7 @@ TEST_F(BackendTransportResilienceTest, VolatileMessagesLostOnShutdown) {
     ASSERT_TRUE(waitForConnectionState(client2, ConnectionState::Connected));
 
     // Wait
-    std::this_thread::sleep_for(2s);
+    std::this_thread::sleep_for(200ms);
 
     // Queue should be empty (VOLATILE messages were lost)
     auto status2 = client2.queue_status();
@@ -720,7 +720,7 @@ TEST_F(BackendTransportResilienceTest, DurableMessagesDeliveredWithAcksAfterRest
     ASSERT_TRUE(waitForConnectionState(client2, ConnectionState::Connected));
 
     // Wait for delivery (messages are sent immediately after load)
-    std::this_thread::sleep_for(3s);
+    std::this_thread::sleep_for(300ms);
 
     // Verify stats show messages sent
     // Note: Acks may have already been sent before we could subscribe,
@@ -756,7 +756,7 @@ TEST_F(BackendTransportResilienceTest, PersistenceFileRemovedAfterDelivery) {
     ASSERT_TRUE(waitForConnectionState(client2, ConnectionState::Connected));
 
     // Wait for delivery
-    std::this_thread::sleep_for(3s);
+    std::this_thread::sleep_for(300ms);
 
     // Shutdown again (should not re-persist already-sent messages)
     ShutdownService();
@@ -770,7 +770,7 @@ TEST_F(BackendTransportResilienceTest, PersistenceFileRemovedAfterDelivery) {
     auto client3 = createClient(752);
     ASSERT_TRUE(waitForConnectionState(client3, ConnectionState::Connected));
 
-    std::this_thread::sleep_for(2s);
+    std::this_thread::sleep_for(200ms);
 
     // Check stats - should not have sent more messages than original 3
     auto stats = client3.stats();
@@ -833,7 +833,7 @@ TEST_F(BackendTransportResilienceTest, MixedPersistenceOnlyDurablePersisted) {
     ASSERT_TRUE(waitForConnectionState(client2, ConnectionState::Connected));
 
     // Wait for delivery (messages are sent immediately after load)
-    std::this_thread::sleep_for(3s);
+    std::this_thread::sleep_for(300ms);
 
     // Verify via stats - only DURABLE messages should have been persisted and sent
     // Note: We can't use acks here because messages are sent before we can subscribe

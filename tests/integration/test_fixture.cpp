@@ -171,10 +171,10 @@ pid_t IntegrationTestFixture::start_service(const std::string& executable, const
                   discovery_param.c_str(),
                   nullptr);
         } else if (name == "scheduler") {
-            std::string port_param = "--port=" + port_str;
+            std::string listen_param = "--listen=" + listen_addr;
             std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
             execl(executable.c_str(), executable.c_str(),
-                  port_param.c_str(),
+                  listen_param.c_str(),
                   discovery_param.c_str(),
                   nullptr);
         } else if (name == "echo") {

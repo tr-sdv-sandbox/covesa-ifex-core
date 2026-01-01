@@ -92,7 +92,9 @@ protected:
         channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
 
         LOG(INFO) << "Conformance test service listening on " << server_address;
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        // Wait for MQTT connection to stabilize (broker just started)
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
     static void TearDownTestSuite() {
@@ -271,7 +273,7 @@ TEST_F(BackendTransportConformanceTest, StatsTrackMessages) {
     }
 
     // Wait for delivery
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(200ms);
 
     auto after = client.stats();
     EXPECT_GE(after.messages_sent, initial_sent + 5);
@@ -423,7 +425,11 @@ protected:
             return;
         }
 
-        std::this_thread::sleep_for(2s);
+        // Wait for port to be ready
+        for (int i = 0; i < 50; ++i) {
+            std::this_thread::sleep_for(100ms);
+            if (std::system("nc -z localhost 21883 2>/dev/null") == 0) break;
+        }
 
         // Create service with small queue (20 messages)
         reference::BackendTransportServer::Config config;
@@ -460,7 +466,8 @@ protected:
         std::string server_address = "localhost:" + std::to_string(grpc_port_);
         channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
 
-        std::this_thread::sleep_for(2s);
+        // Wait for MQTT connection to stabilize
+        std::this_thread::sleep_for(500ms);
     }
 
     static void TearDownTestSuite() {
@@ -495,7 +502,7 @@ int QueueLevelConformanceTest::grpc_port_ = 0;
 TEST_F(QueueLevelConformanceTest, QueueLevelTransitionsAsQueueFills) {
     // Stop the MQTT broker to prevent queue draining
     std::system("docker stop ifex-mqtt-queue-test 2>/dev/null");
-    std::this_thread::sleep_for(1s);
+    std::this_thread::sleep_for(300ms);
 
     auto client = createClient(2001);
 
@@ -526,7 +533,7 @@ TEST_F(QueueLevelConformanceTest, QueueLevelTransitionsAsQueueFills) {
 TEST_F(QueueLevelConformanceTest, QueueFullRejectsNewMessages) {
     // Keep broker stopped
     std::system("docker stop ifex-mqtt-queue-test 2>/dev/null");
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(200ms);
 
     auto client = createClient(2002);
 
@@ -548,7 +555,7 @@ TEST_F(QueueLevelConformanceTest, QueueFullRejectsNewMessages) {
 TEST_F(QueueLevelConformanceTest, VolatileDisplacesBestEffortWhenFull) {
     // Keep broker stopped
     std::system("docker stop ifex-mqtt-queue-test 2>/dev/null");
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(200ms);
 
     auto client = createClient(2003);
 
@@ -570,7 +577,7 @@ TEST_F(QueueLevelConformanceTest, VolatileDisplacesBestEffortWhenFull) {
 TEST_F(QueueLevelConformanceTest, BestEffortRejectedWhenFull) {
     // Keep broker stopped
     std::system("docker stop ifex-mqtt-queue-test 2>/dev/null");
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(200ms);
 
     auto client = createClient(2004);
 
@@ -646,7 +653,7 @@ TEST_F(BackendTransportConformanceTest, StatsTimestampsUpdateAfterSend) {
     ASSERT_TRUE(result.ok());
 
     // Wait for delivery
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(200ms);
 
     auto after = client.stats();
 
@@ -674,7 +681,7 @@ TEST_F(BackendTransportConformanceTest, StatsBytesTrackPayloadSize) {
     client.publish(payload2, Persistence::Volatile);
 
     // Wait for delivery
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(200ms);
 
     auto after = client.stats();
 
