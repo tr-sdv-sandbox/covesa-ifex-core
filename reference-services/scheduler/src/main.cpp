@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 std::unique_ptr<grpc::Server> server;
 std::atomic<bool> shutdown_requested{false};
@@ -59,10 +60,14 @@ std::string LoadIFEXDefinition() {
     }
 }
 
-void RunServer(const std::string& listen_address, const std::string& service_discovery_endpoint) {
+void RunServer(const std::string& listen_address, const std::string& service_discovery_endpoint,
+               const std::string& persistence_dir) {
     LOG(INFO) << "IFEX Scheduler Service (C++)";
     LOG(INFO) << "  - Listen: " << listen_address;
     LOG(INFO) << "  - Service discovery: " << service_discovery_endpoint;
+    if (!persistence_dir.empty()) {
+        LOG(INFO) << "  - Persistence: " << persistence_dir;
+    }
     LOG(INFO) << "  - Calendar-style scheduler for IFEX services";
     LOG(INFO) << "  - CRUD operations, cron expressions, calendar views";
     LOG(INFO) << "  - Press Ctrl+C to stop";
@@ -71,8 +76,11 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
     // Load IFEX definition
     std::string ifex_schema = LoadIFEXDefinition();
 
-    // Create service with discovery endpoint
-    auto service = std::make_unique<ifex::reference::SchedulerServer>(service_discovery_endpoint);
+    // Create service with config
+    ifex::reference::SchedulerServer::Config config;
+    config.discovery_endpoint = service_discovery_endpoint;
+    config.persistence_dir = persistence_dir;
+    auto service = std::make_unique<ifex::reference::SchedulerServer>(config);
 
     // Enable gRPC reflection
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
@@ -132,8 +140,9 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
         server->Shutdown();
     }
 
-    // Cleanup
+    // Cleanup - persist jobs before stopping
     service->StopExecutor();
+    service->PersistJobs();
     LOG(INFO) << "IFEX Scheduler Service stopped";
 }
 
@@ -143,13 +152,14 @@ int main(int argc, char** argv) {
     FLAGS_logtostderr = true;
     FLAGS_colorlogtostderr = true;
 
-    // Set up signal handler
+    // Set up signal handlers
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler);
 
     // Configuration
     std::string listen_address = "0.0.0.0:0";  // Random port by default (auto-discovered)
     std::string service_discovery_endpoint;
+    std::string persistence_dir;
 
     // Parse command line arguments (supports --key=value format)
     for (int i = 1; i < argc; i++) {
@@ -158,17 +168,29 @@ int main(int argc, char** argv) {
             listen_address = arg.substr(9);
         } else if (arg.rfind("--discovery=", 0) == 0) {
             service_discovery_endpoint = arg.substr(12);
+        } else if (arg.rfind("--persistence-dir=", 0) == 0) {
+            persistence_dir = arg.substr(18);
         } else if (arg == "--help") {
             std::cout << "IFEX Scheduler Service\n"
                       << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
-                      << "  --listen=<addr>      Listen address (default: 0.0.0.0:0 for auto-assigned port)\n"
-                      << "  --discovery=<addr>   Service discovery endpoint (overrides SERVICE_DISCOVERY_ENDPOINT env var)\n"
-                      << "  --help               Show this help message\n"
+                      << "  --listen=<addr>         Listen address (default: 0.0.0.0:0 for auto-assigned port)\n"
+                      << "  --discovery=<addr>      Service discovery endpoint (overrides SERVICE_DISCOVERY_ENDPOINT env var)\n"
+                      << "  --persistence-dir=<dir> Directory for job persistence (default: none)\n"
+                      << "  --help                  Show this help message\n"
                       << "\n"
                       << "Environment variables:\n"
-                      << "  SERVICE_DISCOVERY_ENDPOINT   Service discovery address (required if --discovery not provided)\n";
+                      << "  SERVICE_DISCOVERY_ENDPOINT   Service discovery address (required if --discovery not provided)\n"
+                      << "  SCHEDULER_PERSISTENCE_DIR    Persistence directory (overridden by --persistence-dir)\n";
             return 0;
+        }
+    }
+
+    // Get persistence dir from environment if not set
+    if (persistence_dir.empty()) {
+        const char* persist_env = std::getenv("SCHEDULER_PERSISTENCE_DIR");
+        if (persist_env) {
+            persistence_dir = persist_env;
         }
     }
 
@@ -189,9 +211,12 @@ int main(int argc, char** argv) {
     }
 
     LOG(INFO) << "Using service discovery endpoint: " << service_discovery_endpoint;
+    if (!persistence_dir.empty()) {
+        LOG(INFO) << "Using persistence directory: " << persistence_dir;
+    }
 
     try {
-        RunServer(listen_address, service_discovery_endpoint);
+        RunServer(listen_address, service_discovery_endpoint, persistence_dir);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Server failed: " << e.what();
         return 1;

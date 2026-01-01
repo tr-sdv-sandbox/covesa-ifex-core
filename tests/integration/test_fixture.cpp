@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <atomic>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -173,9 +174,11 @@ pid_t IntegrationTestFixture::start_service(const std::string& executable, const
         } else if (name == "scheduler") {
             std::string listen_param = "--listen=" + listen_addr;
             std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
+            std::string persist_param = "--persistence-dir=/tmp/ifex-scheduler-test-persist";
             execl(executable.c_str(), executable.c_str(),
                   listen_param.c_str(),
                   discovery_param.c_str(),
+                  persist_param.c_str(),
                   nullptr);
         } else if (name == "echo") {
             std::string listen_param = "--listen=" + listen_addr;
@@ -311,4 +314,35 @@ std::string IntegrationTestFixture::get_schema_dir() {
     }
 
     return "./ifex";
+}
+
+bool IntegrationTestFixture::RestartScheduler() {
+    LOG(INFO) << "=== Restarting scheduler service ===";
+
+    // Stop current scheduler
+    stop_service(scheduler_pid_, "scheduler");
+
+    // Brief delay to ensure scheduler has fully stopped
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Start scheduler again
+    scheduler_pid_ = start_service(
+        get_build_dir() + "/reference-services/scheduler/ifex-scheduler-service",
+        "scheduler",
+        TEST_SCHEDULER_PORT
+    );
+
+    if (scheduler_pid_ == 0) {
+        LOG(ERROR) << "Failed to restart scheduler";
+        return false;
+    }
+
+    // Wait for scheduler to be ready
+    if (!wait_for_service(TEST_SCHEDULER_ADDRESS)) {
+        LOG(ERROR) << "Scheduler failed to become ready after restart";
+        return false;
+    }
+
+    LOG(INFO) << "Scheduler restarted successfully";
+    return true;
 }

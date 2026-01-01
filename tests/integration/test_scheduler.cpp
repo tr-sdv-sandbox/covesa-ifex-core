@@ -355,3 +355,91 @@ TEST_F(SchedulerIntegrationTest, CreateRecurringJob) {
 
     EXPECT_EQ(get_response.job().recurrence_rule(), "daily");
 }
+
+/**
+ * @test Jobs should survive scheduler restart (persistence test)
+ *
+ * This test will FAIL until persistence is implemented in the scheduler.
+ * Once persistence is added, jobs created before shutdown should be
+ * available after restart.
+ */
+TEST_F(SchedulerIntegrationTest, JobsSurviveRestart) {
+    auto create_stub = swdv::ifex_scheduler::create_job_service::NewStub(scheduler_channel_);
+
+    // Create several jobs
+    std::vector<std::string> job_ids;
+    for (int i = 0; i < 3; i++) {
+        swdv::ifex_scheduler::create_job_request request;
+        auto* job = request.mutable_job();
+
+        job->set_title("Persistence Test Job " + std::to_string(i));
+        job->set_service("echo_service");
+        job->set_method("echo");
+        job->set_parameters(R"({"message": "persist me"})");
+        job->set_scheduled_time(get_future_time(3600));  // Far future
+
+        swdv::ifex_scheduler::create_job_response response;
+        grpc::ClientContext context;
+
+        auto status = create_stub->create_job(&context, request, &response);
+        ASSERT_TRUE(status.ok()) << "Failed to create job: " << status.error_message();
+        ASSERT_TRUE(response.success()) << "Job creation failed: " << response.message();
+
+        job_ids.push_back(response.job_id());
+        // Don't add to cleanup list - we want to check if they persist
+        LOG(INFO) << "Created job for persistence test: " << response.job_id();
+    }
+
+    // Verify jobs exist before restart
+    {
+        auto get_stub = swdv::ifex_scheduler::get_jobs_service::NewStub(scheduler_channel_);
+        swdv::ifex_scheduler::get_jobs_request request;
+        swdv::ifex_scheduler::get_jobs_response response;
+        grpc::ClientContext context;
+
+        auto status = get_stub->get_jobs(&context, request, &response);
+        ASSERT_TRUE(status.ok());
+
+        int found = 0;
+        for (const auto& job : response.jobs()) {
+            if (job.title().find("Persistence Test Job") != std::string::npos) {
+                found++;
+            }
+        }
+        EXPECT_EQ(found, 3) << "Should have 3 persistence test jobs before restart";
+    }
+
+    // Restart the scheduler (this will lose all jobs until persistence is implemented)
+    LOG(INFO) << "=== Restarting scheduler to test persistence ===";
+    ASSERT_TRUE(RestartScheduler()) << "Failed to restart scheduler";
+
+    // Reconnect to scheduler
+    scheduler_channel_ = grpc::CreateChannel(TEST_SCHEDULER_ADDRESS, grpc::InsecureChannelCredentials());
+
+    // Verify jobs still exist after restart
+    // THIS WILL FAIL UNTIL PERSISTENCE IS IMPLEMENTED
+    {
+        auto get_stub = swdv::ifex_scheduler::get_jobs_service::NewStub(scheduler_channel_);
+        swdv::ifex_scheduler::get_jobs_request request;
+        swdv::ifex_scheduler::get_jobs_response response;
+        grpc::ClientContext context;
+
+        auto status = get_stub->get_jobs(&context, request, &response);
+        ASSERT_TRUE(status.ok());
+
+        int found = 0;
+        for (const auto& job : response.jobs()) {
+            if (job.title().find("Persistence Test Job") != std::string::npos) {
+                found++;
+            }
+        }
+        EXPECT_EQ(found, 3)
+            << "Jobs should survive scheduler restart. Found " << found << " jobs, expected 3. "
+            << "This test fails until persistence is implemented.";
+    }
+
+    // Clean up (delete jobs if they exist)
+    for (const auto& job_id : job_ids) {
+        delete_job(job_id);
+    }
+}

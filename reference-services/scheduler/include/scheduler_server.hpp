@@ -53,6 +53,10 @@ struct Job {
 
     // Create from protobuf message
     static std::unique_ptr<Job> FromProto(const swdv::ifex_scheduler::job_create_t& proto);
+
+    // JSON serialization for persistence
+    json ToJson() const;
+    static std::unique_ptr<Job> FromJson(const json& j);
 };
 
 class SchedulerServer final : public swdv::ifex_scheduler::create_job_service::Service,
@@ -62,7 +66,13 @@ class SchedulerServer final : public swdv::ifex_scheduler::create_job_service::S
                               public swdv::ifex_scheduler::delete_job_service::Service,
                               public swdv::ifex_scheduler::get_calendar_view_service::Service {
 public:
+    struct Config {
+        std::string discovery_endpoint;
+        std::string persistence_dir;  // Empty = no persistence
+    };
+
     explicit SchedulerServer(const std::string& service_discovery_endpoint);
+    explicit SchedulerServer(const Config& config);
     ~SchedulerServer();
 
     // gRPC service methods - CRUD operations
@@ -95,6 +105,9 @@ public:
     void StopExecutor();
     bool RegisterWithDiscovery(int port, const std::string& ifex_schema);
 
+    // Persistence - call during graceful shutdown
+    void PersistJobs();
+
     // Check if running
     bool is_running() const { return running_; }
 
@@ -117,6 +130,12 @@ private:
     // Registration info
     std::string registration_id_;
     std::string discovery_endpoint_;
+
+    // Persistence
+    std::string persistence_dir_;
+    std::string GetPersistenceFilePath() const;
+    void SaveJobs();
+    void LoadJobs();
 
     // Generate unique job ID
     std::string GenerateJobId();

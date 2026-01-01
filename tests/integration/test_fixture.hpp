@@ -49,6 +49,9 @@ public:
     // Track if services are already running
     static bool services_started_;
 
+    // Restart individual services (for persistence testing)
+    static bool RestartScheduler();
+
 private:
     static pid_t start_service(const std::string& executable, const std::string& name, int port);
     static void stop_service(pid_t& pid, const std::string& name);

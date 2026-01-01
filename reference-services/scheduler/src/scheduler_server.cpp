@@ -5,6 +5,8 @@
 #include <ctime>
 #include <regex>
 #include <cstdlib>
+#include <fstream>
+#include <filesystem>
 
 namespace ifex::reference {
 
@@ -114,9 +116,81 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
     return job;
 }
 
+json Job::ToJson() const {
+    json j;
+    j["id"] = id;
+    j["title"] = title;
+    j["service_name"] = service_name;
+    j["method_name"] = method_name;
+    j["parameters"] = parameters;
+    j["service_address"] = service_address;
+    j["scheduled_time"] = TimePointToISO8601(scheduled_time);
+    j["recurrence_rule"] = recurrence_rule;
+    j["status"] = static_cast<int>(status);
+    j["created_at"] = TimePointToISO8601(created_at);
+    j["updated_at"] = TimePointToISO8601(updated_at);
+
+    if (end_time.has_value()) {
+        j["end_time"] = TimePointToISO8601(end_time.value());
+    }
+    if (next_run_time.has_value()) {
+        j["next_run_time"] = TimePointToISO8601(next_run_time.value());
+    }
+    if (executed_at.has_value()) {
+        j["executed_at"] = TimePointToISO8601(executed_at.value());
+    }
+    if (error_message.has_value()) {
+        j["error_message"] = error_message.value();
+    }
+    if (result.has_value()) {
+        j["result"] = result.value();
+    }
+
+    return j;
+}
+
+std::unique_ptr<Job> Job::FromJson(const json& j) {
+    auto job = std::make_unique<Job>();
+
+    job->id = j.at("id").get<std::string>();
+    job->title = j.at("title").get<std::string>();
+    job->service_name = j.at("service_name").get<std::string>();
+    job->method_name = j.at("method_name").get<std::string>();
+    job->parameters = j.value("parameters", json::object());
+    job->service_address = j.value("service_address", "");
+    job->scheduled_time = ISO8601ToTimePoint(j.at("scheduled_time").get<std::string>());
+    job->recurrence_rule = j.value("recurrence_rule", "");
+    job->status = static_cast<swdv::ifex_scheduler::job_status_t>(j.at("status").get<int>());
+    job->created_at = ISO8601ToTimePoint(j.at("created_at").get<std::string>());
+    job->updated_at = ISO8601ToTimePoint(j.at("updated_at").get<std::string>());
+
+    if (j.contains("end_time")) {
+        job->end_time = ISO8601ToTimePoint(j.at("end_time").get<std::string>());
+    }
+    if (j.contains("next_run_time")) {
+        job->next_run_time = ISO8601ToTimePoint(j.at("next_run_time").get<std::string>());
+    }
+    if (j.contains("executed_at")) {
+        job->executed_at = ISO8601ToTimePoint(j.at("executed_at").get<std::string>());
+    }
+    if (j.contains("error_message")) {
+        job->error_message = j.at("error_message").get<std::string>();
+    }
+    if (j.contains("result")) {
+        job->result = j.at("result").get<std::string>();
+    }
+
+    return job;
+}
+
 SchedulerServer::SchedulerServer(const std::string& service_discovery_endpoint)
-    : discovery_endpoint_(service_discovery_endpoint) {
-    if (service_discovery_endpoint.empty()) {
+    : SchedulerServer(Config{service_discovery_endpoint, ""}) {
+}
+
+SchedulerServer::SchedulerServer(const Config& config)
+    : discovery_endpoint_(config.discovery_endpoint),
+      persistence_dir_(config.persistence_dir) {
+    if (config.discovery_endpoint.empty()) {
         LOG(FATAL) << "Service discovery endpoint cannot be empty";
     }
 
@@ -125,14 +199,113 @@ SchedulerServer::SchedulerServer(const std::string& service_discovery_endpoint)
     LOG(INFO) << "  - CRUD operations for jobs";
     LOG(INFO) << "  - Cron expression support";
     LOG(INFO) << "  - Dynamic service invocation via dispatcher";
+    if (!persistence_dir_.empty()) {
+        LOG(INFO) << "  - Persistence enabled: " << persistence_dir_;
+    }
 
     // Initialize service discovery client using ifex-core API
-    LOG(INFO) << "Connecting to service discovery at: " << service_discovery_endpoint;
-    discovery_client_ = ifex::DiscoveryClient::create(service_discovery_endpoint);
+    LOG(INFO) << "Connecting to service discovery at: " << config.discovery_endpoint;
+    discovery_client_ = ifex::DiscoveryClient::create(config.discovery_endpoint);
+
+    // Load persisted jobs if persistence is enabled
+    if (!persistence_dir_.empty()) {
+        LoadJobs();
+    }
 }
 
 SchedulerServer::~SchedulerServer() {
+    // Save jobs before shutdown if persistence is enabled
+    if (!persistence_dir_.empty()) {
+        SaveJobs();
+    }
     StopExecutor();
+}
+
+std::string SchedulerServer::GetPersistenceFilePath() const {
+    return persistence_dir_ + "/scheduler_jobs.json";
+}
+
+void SchedulerServer::SaveJobs() {
+    if (persistence_dir_.empty()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    try {
+        // Create directory if it doesn't exist
+        std::filesystem::create_directories(persistence_dir_);
+
+        json jobs_array = json::array();
+        for (const auto& [id, job] : jobs_) {
+            jobs_array.push_back(job->ToJson());
+        }
+
+        json root;
+        root["version"] = 1;
+        root["job_counter"] = job_counter_.load();
+        root["jobs"] = jobs_array;
+
+        std::string filepath = GetPersistenceFilePath();
+        std::ofstream file(filepath);
+        if (!file.is_open()) {
+            LOG(ERROR) << "Failed to open persistence file for writing: " << filepath;
+            return;
+        }
+
+        file << root.dump(2);
+        file.close();
+
+        LOG(INFO) << "Saved " << jobs_.size() << " jobs to " << filepath;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to save jobs: " << e.what();
+    }
+}
+
+void SchedulerServer::LoadJobs() {
+    if (persistence_dir_.empty()) {
+        return;
+    }
+
+    std::string filepath = GetPersistenceFilePath();
+
+    if (!std::filesystem::exists(filepath)) {
+        LOG(INFO) << "No persistence file found at " << filepath;
+        return;
+    }
+
+    try {
+        std::ifstream file(filepath);
+        if (!file.is_open()) {
+            LOG(ERROR) << "Failed to open persistence file for reading: " << filepath;
+            return;
+        }
+
+        json root = json::parse(file);
+        file.close();
+
+        int version = root.value("version", 1);
+        if (version != 1) {
+            LOG(WARNING) << "Unknown persistence file version: " << version;
+        }
+
+        job_counter_ = root.value("job_counter", 0);
+
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+        const auto& jobs_array = root.at("jobs");
+        for (const auto& job_json : jobs_array) {
+            auto job = Job::FromJson(job_json);
+            std::string job_id = job->id;
+            jobs_[job_id] = std::move(job);
+        }
+
+        LOG(INFO) << "Loaded " << jobs_.size() << " jobs from " << filepath;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to load jobs: " << e.what();
+    }
 }
 
 grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
@@ -192,6 +365,11 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
         }
 
         LOG(INFO) << "Created job " << job_id;
+
+        // Persist immediately for durability
+        if (!persistence_dir_.empty()) {
+            SaveJobs();
+        }
 
         response->set_success(true);
         response->set_job_id(job_id);
@@ -270,48 +448,58 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
     LOG(INFO) << "UPDATE JOB REQUEST: " << request->job_id();
 
     try {
-        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        bool updated = false;
+        {
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
 
-        auto it = jobs_.find(request->job_id());
-        if (it == jobs_.end()) {
-            response->set_success(false);
-            response->set_message("Job not found");
-            return grpc::Status::OK;
+            auto it = jobs_.find(request->job_id());
+            if (it == jobs_.end()) {
+                response->set_success(false);
+                response->set_message("Job not found");
+                return grpc::Status::OK;
+            }
+
+            auto& job = it->second;
+            const auto& updates = request->updates();
+
+            // Apply updates
+            if (!updates.title().empty()) {
+                job->title = updates.title();
+            }
+
+            if (!updates.scheduled_time().empty()) {
+                job->scheduled_time = ISO8601ToTimePoint(updates.scheduled_time());
+            }
+
+            if (!updates.recurrence_rule().empty()) {
+                job->recurrence_rule = updates.recurrence_rule();
+                // Recalculate next run time
+                job->next_run_time = CalculateNextRunTime(*job, std::chrono::system_clock::now());
+            }
+
+            if (!updates.end_time().empty()) {
+                job->end_time = ISO8601ToTimePoint(updates.end_time());
+            }
+
+            if (!updates.parameters().empty()) {
+                job->parameters = json::parse(updates.parameters());
+            }
+
+            if (!updates.service_address().empty()) {
+                job->service_address = updates.service_address();
+            }
+
+            job->updated_at = std::chrono::system_clock::now();
+            updated = true;
+
+            LOG(INFO) << "Updated job " << request->job_id();
+        }  // Release jobs_mutex_ here
+
+        // Persist immediately for durability
+        if (updated && !persistence_dir_.empty()) {
+            SaveJobs();
         }
 
-        auto& job = it->second;
-        const auto& updates = request->updates();
-
-        // Apply updates
-        if (!updates.title().empty()) {
-            job->title = updates.title();
-        }
-
-        if (!updates.scheduled_time().empty()) {
-            job->scheduled_time = ISO8601ToTimePoint(updates.scheduled_time());
-        }
-
-        if (!updates.recurrence_rule().empty()) {
-            job->recurrence_rule = updates.recurrence_rule();
-            // Recalculate next run time
-            job->next_run_time = CalculateNextRunTime(*job, std::chrono::system_clock::now());
-        }
-
-        if (!updates.end_time().empty()) {
-            job->end_time = ISO8601ToTimePoint(updates.end_time());
-        }
-
-        if (!updates.parameters().empty()) {
-            job->parameters = json::parse(updates.parameters());
-        }
-
-        if (!updates.service_address().empty()) {
-            job->service_address = updates.service_address();
-        }
-
-        job->updated_at = std::chrono::system_clock::now();
-
-        LOG(INFO) << "Updated job " << request->job_id();
         response->set_success(true);
         response->set_message("Job updated successfully");
 
@@ -331,17 +519,26 @@ grpc::Status SchedulerServer::delete_job(grpc::ServerContext* context,
     LOG(INFO) << "DELETE JOB REQUEST: " << request->job_id();
 
     try {
-        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        bool deleted = false;
+        {
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
 
-        auto it = jobs_.find(request->job_id());
-        if (it != jobs_.end()) {
-            jobs_.erase(it);
-            LOG(INFO) << "Deleted job " << request->job_id();
-            response->set_success(true);
-            response->set_message("Job deleted successfully");
-        } else {
-            response->set_success(false);
-            response->set_message("Job not found");
+            auto it = jobs_.find(request->job_id());
+            if (it != jobs_.end()) {
+                jobs_.erase(it);
+                deleted = true;
+                LOG(INFO) << "Deleted job " << request->job_id();
+                response->set_success(true);
+                response->set_message("Job deleted successfully");
+            } else {
+                response->set_success(false);
+                response->set_message("Job not found");
+            }
+        }  // Release jobs_mutex_ here
+
+        // Persist immediately for durability
+        if (deleted && !persistence_dir_.empty()) {
+            SaveJobs();
         }
 
         return grpc::Status::OK;
@@ -424,6 +621,12 @@ void SchedulerServer::StopExecutor() {
         executor_thread_.join();
     }
     LOG(INFO) << "Job executor stopped";
+}
+
+void SchedulerServer::PersistJobs() {
+    if (!persistence_dir_.empty()) {
+        SaveJobs();
+    }
 }
 
 bool SchedulerServer::RegisterWithDiscovery(int port, const std::string& ifex_schema) {
