@@ -409,6 +409,19 @@ Background thread polls pending jobs every second:
 5. Store result or error_message
 6. For recurring jobs: create next occurrence
 
+### Persistence
+
+Jobs are persisted to disk immediately on create/update/delete:
+- Configurable via `--persistence-dir` flag or `SCHEDULER_PERSISTENCE_DIR` env var
+- JSON format with job_counter, jobs array, and version
+- Jobs survive scheduler restarts (even ungraceful shutdowns)
+- If persistence is not configured, jobs are in-memory only
+
+```bash
+# Enable persistence
+./ifex-scheduler-service --discovery localhost:50051 --persistence-dir /var/lib/ifex/scheduler
+```
+
 ### Default Port
 
 `50053`
@@ -458,7 +471,8 @@ Or use the helper script:
 
 | Limitation | Impact |
 |------------|--------|
-| In-memory storage | State lost on restart |
+| Discovery in-memory | Service registry lost on restart |
+| Scheduler persistence optional | Must configure `--persistence-dir` for durability |
 | Single instance | No clustering or replication |
 | Basic recurrence | Only daily/weekly/hourly, partial cron |
 | No authentication | Open access |
