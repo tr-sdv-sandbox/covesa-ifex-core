@@ -26,6 +26,12 @@ add_subdirectory(backend-transport)
 # Build dispatcher bridge service
 add_subdirectory(dispatcher-bridge)
 
+# Build discovery sync bridge service
+add_subdirectory(discovery-sync-bridge)
+
+# Build scheduler sync bridge service
+add_subdirectory(scheduler-sync-bridge)
+
 # Copy IFEX files to build directory as resources
 file(GLOB IFEX_FILES "${CMAKE_CURRENT_SOURCE_DIR}/ifex/*.yml")
 foreach(IFEX_FILE ${IFEX_FILES})
