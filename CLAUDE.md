@@ -40,7 +40,10 @@ ctest --output-on-failure                                        # All tests
 # Manual (must be in order - Discovery first)
 ./build/reference-services/discovery/ifex-discovery-service --listen=0.0.0.0:50051
 ./build/reference-services/dispatcher/ifex-dispatcher-service --listen=0.0.0.0:50052 --discovery=localhost:50051
-./build/reference-services/scheduler/ifex-scheduler-service --port=50053 --discovery=localhost:50051
+./build/reference-services/scheduler/ifex-scheduler-service --listen=0.0.0.0:50053 --discovery=localhost:50051
+
+# Scheduler with persistence (jobs survive restarts)
+./build/reference-services/scheduler/ifex-scheduler-service --listen=0.0.0.0:50053 --discovery=localhost:50051 --persistence-dir=/var/lib/ifex/scheduler
 ```
 
 Integration tests spawn their own service instances (via `test_fixture.cpp`) - no need to start services manually before running tests.
@@ -58,11 +61,15 @@ Scheduler → Orchestrator → Dispatcher → Discovery → Target Service
 |---------|------|---------|
 | Discovery | 50051 | Service registry with IFEX schema |
 | Dispatcher | 50052 | Dynamic routing, JSON↔Protobuf translation |
-| Scheduler | 50053 | Time/event triggers |
+| Scheduler | 50053 | Time/event triggers, job persistence |
 | Backend Transport | 50060 | Vehicle-to-cloud (MQTT) |
 | Beverage (test) | 50061 | In-vehicle beverage prep |
 | Climate Comfort (test) | 50062 | Cabin comfort control |
 | Defrost (test) | 50063 | Windshield defrost |
+| Echo (test) | 50097* | Simple echo for integration tests |
+| Test Types (test) | 50095* | Type validation tests |
+
+*Integration tests use ports 50094-50099 to avoid conflicts with manually started services.
 
 ### Key Concepts
 
@@ -105,6 +112,21 @@ The `reference-services/backend-transport/` provides vehicle-to-cloud communicat
 - Persistence levels: BEST_EFFORT, VOLATILE, DURABLE
 
 See `reference-services/backend-transport/README.md` for full API documentation.
+
+### Scheduler Persistence
+
+The Scheduler supports optional job persistence via `--persistence-dir`:
+- Jobs are saved to JSON immediately on create/update/delete (not just at shutdown)
+- Jobs are restored automatically when the scheduler restarts
+- Without `--persistence-dir`, jobs are in-memory only
+
+```bash
+# Enable persistence
+./ifex-scheduler-service --discovery localhost:50051 --persistence-dir /var/lib/ifex/scheduler
+
+# Or via environment variable
+SCHEDULER_PERSISTENCE_DIR=/var/lib/ifex/scheduler ./ifex-scheduler-service --discovery localhost:50051
+```
 
 ## Code Conventions
 
