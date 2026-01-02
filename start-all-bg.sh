@@ -92,7 +92,7 @@ if [ -f "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-
         GLOG_v=2 GLOG_logtostderr=1 \
         MQTT_HOST="$MQTT_HOST" MQTT_PORT="$MQTT_PORT" VEHICLE_ID="$VEHICLE_ID" \
         "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-service" \
-            --port=50060 \
+            --listen=0.0.0.0:50060 \
             > "$LOG_DIR/backend-transport.log" 2>&1 &
         BACKEND_TRANSPORT_PID=$!
         sleep 2
