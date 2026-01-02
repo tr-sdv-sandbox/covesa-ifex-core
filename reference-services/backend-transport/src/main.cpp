@@ -81,7 +81,7 @@ void PrintUsage(const char* program) {
     std::cout << "IFEX Backend Transport Service\n"
               << "Usage: " << program << " [options]\n"
               << "Options:\n"
-              << "  --port=<port>            gRPC server port (default: auto-assigned)\n"
+              << "  --listen=ADDRESS         Listen address (default: 0.0.0.0:50060)\n"
               << "  --mqtt-host=<host>       MQTT broker host (default: localhost)\n"
               << "  --mqtt-port=<port>       MQTT broker port (default: 1883)\n"
               << "  --mqtt-user=<user>       MQTT username\n"
@@ -103,9 +103,9 @@ void PrintUsage(const char* program) {
               << "  SERVICE_DISCOVERY_ENDPOINT  Service discovery address\n";
 }
 
-void RunServer(ifex::reference::BackendTransportServer::Config& config, int port) {
+void RunServer(ifex::reference::BackendTransportServer::Config& config, const std::string& listen_address) {
     LOG(INFO) << "IFEX Backend Transport Service (C++)";
-    LOG(INFO) << "  - gRPC Port: " << (port == 0 ? "auto-assigned" : std::to_string(port));
+    LOG(INFO) << "  - Listen: " << listen_address;
     LOG(INFO) << "  - MQTT Broker: " << config.mqtt_host << ":" << config.mqtt_port;
     LOG(INFO) << "  - Vehicle ID: " << config.vehicle_id;
     LOG(INFO) << "  - Queue Size: " << config.queue_size_per_content_id << " per content_id";
@@ -132,7 +132,7 @@ void RunServer(ifex::reference::BackendTransportServer::Config& config, int port
     grpc::ServerBuilder builder;
 
     int actual_port;
-    builder.AddListeningPort("0.0.0.0:" + std::to_string(port),
+    builder.AddListeningPort(listen_address,
                              grpc::InsecureServerCredentials(),
                              &actual_port);
 
@@ -215,14 +215,14 @@ int main(int argc, char** argv) {
     config.persistence_dir = GetEnvOrDefault("PERSISTENCE_DIR", "/var/lib/ifex/backend-transport");
     config.discovery_endpoint = GetEnvOrDefault("SERVICE_DISCOVERY_ENDPOINT", "");
 
-    int port = 0;  // Auto-assign by default
+    std::string listen_address = "0.0.0.0:50060";
 
     // Parse command line arguments (override env vars)
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 
-        if (arg.rfind("--port=", 0) == 0) {
-            port = std::stoi(arg.substr(7));
+        if (arg.rfind("--listen=", 0) == 0) {
+            listen_address = arg.substr(9);
         } else if (arg.rfind("--mqtt-host=", 0) == 0) {
             config.mqtt_host = arg.substr(12);
         } else if (arg.rfind("--mqtt-port=", 0) == 0) {
@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
     }
 
     try {
-        RunServer(config, port);
+        RunServer(config, listen_address);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Server failed: " << e.what();
         return 1;

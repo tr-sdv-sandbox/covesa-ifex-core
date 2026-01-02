@@ -222,7 +222,13 @@ void MqttClient::LoopThread() {
                         reconnect_delay_secs = std::min(
                             reconnect_delay_secs * 2,
                             static_cast<int>(config_.reconnect_delay_max.count()));
+                    } else {
+                        // Sleep to avoid busy-spinning while waiting for reconnect delay
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
+                } else {
+                    // Auto-reconnect disabled, sleep to avoid busy-spinning
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
             } else if (rc != MOSQ_ERR_SUCCESS) {
                 VLOG(2) << "MQTT loop: " << mosquitto_strerror(rc);
