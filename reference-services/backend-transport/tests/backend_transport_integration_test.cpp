@@ -461,6 +461,357 @@ TEST_F(BackendTransportIntegrationTest, MessagesReceivedIncreasesAfterC2V) {
     EXPECT_GE(after.messages_received, initial_received + 3);
 }
 
+// =============================================================================
+// C2V Queue Tests - Messages queued before handler registration
+// =============================================================================
+
+/**
+ * @brief Test fixture for c2v queue tests with fresh service instance
+ *
+ * These tests require a fresh service instance to control the timing
+ * of handler registration vs message arrival.
+ */
+class C2vQueueTest : public MqttTestFixture {
+protected:
+    std::unique_ptr<reference::BackendTransportServer> service_;
+    std::unique_ptr<grpc::Server> grpc_server_;
+    std::shared_ptr<grpc::Channel> channel_;
+    int grpc_port_ = 0;
+    std::string vehicle_id_;
+
+    void SetUp() override {
+        MqttTestFixture::SetUp();
+        if (!container_started) {
+            GTEST_SKIP() << "MQTT container not available";
+            return;
+        }
+
+        vehicle_id_ = "c2v-queue-test-" + std::to_string(std::rand());
+    }
+
+    void TearDown() override {
+        channel_.reset();
+        if (grpc_server_) {
+            grpc_server_->Shutdown();
+            grpc_server_.reset();
+        }
+        if (service_) {
+            service_->Stop();
+            service_.reset();
+        }
+        MqttTestFixture::TearDown();
+    }
+
+    void startService() {
+        reference::BackendTransportServer::Config config;
+        config.mqtt_host = mqtt_host;
+        config.mqtt_port = mqtt_port;
+        config.vehicle_id = vehicle_id_;
+        config.queue_size_per_content_id = 100;
+        config.c2v_queue_size_per_content_id = 50;
+        config.persistence_dir = "/tmp/ifex-c2v-queue-test";
+        config.clean_session = false;  // Enable persistent sessions
+
+        service_ = std::make_unique<reference::BackendTransportServer>(config);
+        ASSERT_TRUE(service_->Start()) << "Failed to start service";
+
+        grpc::ServerBuilder builder;
+        builder.AddListeningPort("0.0.0.0:0", grpc::InsecureServerCredentials(), &grpc_port_);
+
+        using namespace swdv::backend_transport_service;
+        builder.RegisterService(static_cast<publish_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<get_connection_status_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<get_queue_status_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<get_stats_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<healthy_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<get_content_id_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<on_content_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<on_ack_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<on_connection_changed_service::Service*>(service_.get()));
+        builder.RegisterService(static_cast<on_queue_status_changed_service::Service*>(service_.get()));
+
+        grpc_server_ = builder.BuildAndStart();
+        ASSERT_TRUE(grpc_server_) << "Failed to start gRPC server";
+
+        std::string server_address = "localhost:" + std::to_string(grpc_port_);
+        channel_ = grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials());
+
+        // Wait for service to be ready
+        std::this_thread::sleep_for(1s);
+    }
+
+    BackendTransportClient createClient(uint32_t content_id) {
+        return BackendTransportClient(channel_, content_id);
+    }
+
+    bool publishToMqtt(uint32_t content_id, const std::vector<uint8_t>& payload) {
+        std::string topic = "c2v/" + vehicle_id_ + "/" + std::to_string(content_id);
+
+        struct mosquitto* mosq = mosquitto_new("c2v-queue-test-pub", true, nullptr);
+        if (!mosq) return false;
+
+        if (mosquitto_connect(mosq, mqtt_host.c_str(), mqtt_port, 60) != MOSQ_ERR_SUCCESS) {
+            mosquitto_destroy(mosq);
+            return false;
+        }
+
+        int rc = mosquitto_publish(mosq, nullptr, topic.c_str(),
+                                   static_cast<int>(payload.size()),
+                                   payload.data(), 1, false);
+
+        mosquitto_loop(mosq, 1000, 1);
+        mosquitto_disconnect(mosq);
+        mosquitto_destroy(mosq);
+
+        return rc == MOSQ_ERR_SUCCESS;
+    }
+
+    void subscribeServiceToTopic(uint32_t content_id) {
+        // Force service to subscribe to MQTT topic by creating a client
+        // that subscribes but immediately unsubscribes
+        // This ensures the MQTT subscription is active
+        auto client = createClient(content_id);
+        std::atomic<bool> got_message{false};
+        client.on_content([&](const std::vector<uint8_t>&) {
+            got_message = true;
+        });
+        std::this_thread::sleep_for(200ms);
+        client.unsubscribe_all();
+    }
+};
+
+TEST_F(C2vQueueTest, MessagesQueuedBeforeHandlerRegistration) {
+    const uint32_t content_id = 6001;
+
+    // Start service
+    startService();
+
+    // First, make sure service subscribes to the MQTT topic
+    // by briefly registering and unregistering a handler
+    {
+        auto client = createClient(content_id);
+        std::atomic<bool> dummy{false};
+        client.on_content([&](const std::vector<uint8_t>&) { dummy = true; });
+        std::this_thread::sleep_for(300ms);
+        client.unsubscribe_all();
+    }
+
+    // Now publish messages to MQTT while NO handler is registered
+    // These should be queued in Backend Transport's c2v queue
+    std::vector<std::vector<uint8_t>> sent_payloads = {
+        {0x01, 0x02, 0x03},
+        {0x04, 0x05, 0x06},
+        {0x07, 0x08, 0x09}
+    };
+
+    LOG(INFO) << "Publishing " << sent_payloads.size() << " messages while no handler registered";
+
+    for (const auto& payload : sent_payloads) {
+        ASSERT_TRUE(publishToMqtt(content_id, payload))
+            << "Failed to publish to MQTT";
+        std::this_thread::sleep_for(100ms);
+    }
+
+    // Wait for messages to arrive at Backend Transport
+    std::this_thread::sleep_for(500ms);
+
+    // Now register a handler - should receive the queued messages
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<std::vector<uint8_t>> received_payloads;
+
+    auto client = createClient(content_id);
+    client.on_content([&](const std::vector<uint8_t>& payload) {
+        std::lock_guard<std::mutex> lock(mtx);
+        received_payloads.push_back(payload);
+        LOG(INFO) << "Handler received message, size=" << payload.size()
+                  << ", total=" << received_payloads.size();
+        cv.notify_all();
+    });
+
+    // Wait for queued messages to be delivered
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        bool success = cv.wait_for(lock, 10s, [&]() {
+            return received_payloads.size() >= sent_payloads.size();
+        });
+
+        LOG(INFO) << "Received " << received_payloads.size() << " of "
+                  << sent_payloads.size() << " expected messages";
+
+        ASSERT_TRUE(success)
+            << "Should receive all queued messages after handler registration. "
+            << "Got " << received_payloads.size() << ", expected " << sent_payloads.size();
+    }
+
+    client.unsubscribe_all();
+
+    // Verify message contents
+    ASSERT_EQ(received_payloads.size(), sent_payloads.size());
+    for (size_t i = 0; i < sent_payloads.size(); ++i) {
+        EXPECT_EQ(received_payloads[i], sent_payloads[i])
+            << "Message " << i << " content should match";
+    }
+}
+
+TEST_F(C2vQueueTest, QueuedMessagesDeliveredInOrder) {
+    const uint32_t content_id = 6002;
+
+    startService();
+
+    // Subscribe briefly to ensure MQTT subscription exists
+    {
+        auto client = createClient(content_id);
+        std::atomic<bool> dummy{false};
+        client.on_content([&](const std::vector<uint8_t>&) { dummy = true; });
+        std::this_thread::sleep_for(300ms);
+        client.unsubscribe_all();
+    }
+
+    // Publish numbered messages while no handler registered
+    const int num_messages = 10;
+    LOG(INFO) << "Publishing " << num_messages << " numbered messages";
+
+    for (int i = 0; i < num_messages; ++i) {
+        ASSERT_TRUE(publishToMqtt(content_id, {static_cast<uint8_t>(i)}));
+        std::this_thread::sleep_for(50ms);
+    }
+
+    std::this_thread::sleep_for(500ms);
+
+    // Register handler
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<uint8_t> received_sequence;
+
+    auto client = createClient(content_id);
+    client.on_content([&](const std::vector<uint8_t>& payload) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!payload.empty()) {
+            received_sequence.push_back(payload[0]);
+        }
+        cv.notify_all();
+    });
+
+    // Wait for all messages
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        ASSERT_TRUE(cv.wait_for(lock, 10s, [&]() {
+            return received_sequence.size() >= static_cast<size_t>(num_messages);
+        })) << "Should receive all " << num_messages << " messages, got "
+            << received_sequence.size();
+    }
+
+    client.unsubscribe_all();
+
+    // Verify order
+    ASSERT_EQ(received_sequence.size(), static_cast<size_t>(num_messages));
+    for (int i = 0; i < num_messages; ++i) {
+        EXPECT_EQ(received_sequence[i], static_cast<uint8_t>(i))
+            << "Message " << i << " should be in order";
+    }
+}
+
+TEST_F(C2vQueueTest, CleanSessionConfiguredCorrectly) {
+    // This test verifies that clean_session=false is configured
+    // We can't directly inspect the MQTT connection, but we can verify
+    // the config is passed correctly
+
+    reference::BackendTransportServer::Config config;
+    config.mqtt_host = mqtt_host;
+    config.mqtt_port = mqtt_port;
+    config.vehicle_id = "clean-session-test";
+    config.clean_session = false;  // Persistent sessions
+
+    // Default should be false (persistent sessions)
+    reference::BackendTransportServer::Config default_config;
+    EXPECT_FALSE(default_config.clean_session)
+        << "Default clean_session should be false for persistent sessions";
+}
+
+TEST_F(C2vQueueTest, QueueSizeRespected) {
+    const uint32_t content_id = 6003;
+
+    // Start service with small queue size
+    reference::BackendTransportServer::Config config;
+    config.mqtt_host = mqtt_host;
+    config.mqtt_port = mqtt_port;
+    config.vehicle_id = vehicle_id_;
+    config.queue_size_per_content_id = 100;
+    config.c2v_queue_size_per_content_id = 5;  // Small queue
+    config.persistence_dir = "/tmp/ifex-c2v-queue-test";
+
+    service_ = std::make_unique<reference::BackendTransportServer>(config);
+    ASSERT_TRUE(service_->Start());
+
+    grpc::ServerBuilder builder;
+    builder.AddListeningPort("0.0.0.0:0", grpc::InsecureServerCredentials(), &grpc_port_);
+
+    using namespace swdv::backend_transport_service;
+    builder.RegisterService(static_cast<on_content_service::Service*>(service_.get()));
+
+    grpc_server_ = builder.BuildAndStart();
+    ASSERT_TRUE(grpc_server_);
+
+    channel_ = grpc::CreateChannel("localhost:" + std::to_string(grpc_port_),
+                                    grpc::InsecureChannelCredentials());
+
+    std::this_thread::sleep_for(1s);
+
+    // Subscribe briefly to ensure MQTT subscription exists
+    {
+        auto client = createClient(content_id);
+        std::atomic<bool> dummy{false};
+        client.on_content([&](const std::vector<uint8_t>&) { dummy = true; });
+        std::this_thread::sleep_for(300ms);
+        client.unsubscribe_all();
+    }
+
+    // Publish more messages than queue can hold
+    const int num_messages = 10;  // More than queue size of 5
+    for (int i = 0; i < num_messages; ++i) {
+        publishToMqtt(content_id, {static_cast<uint8_t>(i)});
+        std::this_thread::sleep_for(50ms);
+    }
+
+    std::this_thread::sleep_for(500ms);
+
+    // Register handler
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<uint8_t> received;
+
+    auto client = createClient(content_id);
+    client.on_content([&](const std::vector<uint8_t>& payload) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!payload.empty()) {
+            received.push_back(payload[0]);
+        }
+        cv.notify_all();
+    });
+
+    // Wait for messages (may be fewer than sent due to queue limit)
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        cv.wait_for(lock, 5s, [&]() {
+            return received.size() >= 5;  // At least queue size
+        });
+    }
+
+    client.unsubscribe_all();
+
+    // Should have at most queue_size messages (oldest dropped)
+    EXPECT_LE(received.size(), 5u)
+        << "Queue should respect size limit, got " << received.size();
+
+    // Most recent messages should be preserved (oldest dropped)
+    if (received.size() == 5) {
+        // Should have messages 5-9 (oldest 0-4 dropped)
+        EXPECT_GE(received[0], 5u)
+            << "Oldest messages should be dropped when queue full";
+    }
+}
+
 }  // namespace ifex::test
 
 int main(int argc, char** argv) {

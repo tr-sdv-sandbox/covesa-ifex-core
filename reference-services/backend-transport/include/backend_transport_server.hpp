@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -54,6 +55,16 @@ public:
         // Queue settings
         size_t queue_size_per_content_id = 1000;
         std::string persistence_dir = "/var/lib/ifex/backend-transport";
+
+        // MQTT session settings
+        // clean_session=false enables persistent sessions:
+        // - Broker queues QoS 1+ messages while vehicle is offline
+        // - Subscriptions persist across disconnects
+        // - Messages delivered on reconnect
+        bool clean_session = false;
+
+        // c2v message queue settings (for messages arriving before handler registration)
+        size_t c2v_queue_size_per_content_id = 100;
 
         // Service discovery
         std::string discovery_endpoint;
@@ -230,6 +241,23 @@ private:
     // Track last queue level to detect changes for broadcasts
     swdv::backend_transport_service::queue_level_t last_queue_level_ =
         swdv::backend_transport_service::EMPTY;
+
+    // c2v message queue for messages arriving before handler registration
+    // This solves the race condition where MQTT delivers a message before
+    // the sync bridge has time to register its handler.
+    struct QueuedC2vMessage {
+        std::vector<uint8_t> payload;
+        std::chrono::steady_clock::time_point received_at;
+    };
+    std::shared_mutex c2v_queue_mutex_;
+    std::unordered_map<uint32_t, std::deque<QueuedC2vMessage>> c2v_queues_;
+
+    // Helper to queue c2v message if no handler, otherwise deliver
+    void DeliverOrQueueC2v(uint32_t content_id, const std::vector<uint8_t>& payload);
+
+    // Deliver queued messages to newly registered handler
+    void DeliverQueuedC2v(uint32_t content_id,
+                          grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer);
 };
 
 }  // namespace ifex::reference

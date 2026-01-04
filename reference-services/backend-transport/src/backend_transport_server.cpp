@@ -32,6 +32,14 @@ BackendTransportServer::BackendTransportServer(const Config& config) : config_(c
     mqtt_config.username = config_.mqtt_username;
     mqtt_config.password = config_.mqtt_password;
     mqtt_config.client_id = "ifex-backend-transport-" + config_.vehicle_id;
+    // clean_session=false enables persistent sessions:
+    // - Broker queues QoS 1+ messages while vehicle is offline
+    // - Subscriptions persist across disconnects
+    // - Messages delivered on reconnect
+    mqtt_config.clean_session = config_.clean_session;
+
+    LOG(INFO) << "MQTT client_id=" << mqtt_config.client_id
+              << " clean_session=" << (mqtt_config.clean_session ? "true" : "false");
 
     mqtt_client_ = std::make_unique<MqttClient>(mqtt_config);
 
@@ -249,6 +257,9 @@ grpc::Status BackendTransportServer::subscribe(
 
     AddContentStream(writer, content_id);
 
+    // Deliver any queued messages that arrived before handler registered
+    DeliverQueuedC2v(content_id, writer);
+
     // Keep stream open until client disconnects
     while (!context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -396,7 +407,8 @@ void BackendTransportServer::OnMqttMessage(const std::string& topic, const std::
     bytes_received_ += payload.size();
     last_receive_timestamp_ns_ = NowNs();
 
-    BroadcastContent(content_id, payload);
+    // Queue message if no handler registered yet, otherwise deliver immediately
+    DeliverOrQueueC2v(content_id, payload);
 }
 
 bool BackendTransportServer::SendToMqtt(uint32_t content_id, const std::vector<uint8_t>& payload) {
@@ -570,6 +582,83 @@ void BackendTransportServer::BroadcastAck(uint32_t content_id, uint64_t sequence
         // Only send to streams bound to this content_id
         if (sub.content_id == content_id) {
             sub.writer->Write(event);
+        }
+    }
+}
+
+void BackendTransportServer::DeliverOrQueueC2v(uint32_t content_id, const std::vector<uint8_t>& payload) {
+    // Try to deliver to any registered handlers
+    // If no handlers or delivery fails, queue the message
+    bool delivered = false;
+    {
+        std::shared_lock<std::shared_mutex> lock(content_streams_mutex_);
+        for (const auto& sub : content_streams_) {
+            if (sub.content_id == content_id) {
+                swdv::backend_transport_service::on_content event;
+                auto* msg = event.mutable_message();
+                msg->set_payload(std::string(payload.begin(), payload.end()));
+
+                // Try to write - if successful, message is delivered
+                if (sub.writer->Write(event)) {
+                    delivered = true;
+                    VLOG(1) << "Delivered c2v message to handler, content_id=" << content_id;
+                }
+            }
+        }
+    }
+
+    if (!delivered) {
+        // No handlers or delivery failed - queue for later
+        std::unique_lock<std::shared_mutex> lock(c2v_queue_mutex_);
+
+        auto& queue = c2v_queues_[content_id];
+
+        // Enforce queue size limit (drop oldest if full)
+        while (queue.size() >= config_.c2v_queue_size_per_content_id) {
+            LOG(WARNING) << "c2v queue full for content_id=" << content_id
+                         << ", dropping oldest message";
+            queue.pop_front();
+        }
+
+        queue.push_back({payload, std::chrono::steady_clock::now()});
+        LOG(INFO) << "Queued c2v message for content_id=" << content_id
+                  << " (queue_size=" << queue.size() << ")";
+    }
+}
+
+void BackendTransportServer::DeliverQueuedC2v(
+    uint32_t content_id,
+    grpc::ServerWriter<swdv::backend_transport_service::on_content>* writer) {
+
+    std::vector<QueuedC2vMessage> messages_to_deliver;
+
+    // Move messages out of queue under lock
+    {
+        std::unique_lock<std::shared_mutex> lock(c2v_queue_mutex_);
+        auto it = c2v_queues_.find(content_id);
+        if (it != c2v_queues_.end() && !it->second.empty()) {
+            messages_to_deliver.reserve(it->second.size());
+            for (auto& msg : it->second) {
+                messages_to_deliver.push_back(std::move(msg));
+            }
+            it->second.clear();
+        }
+    }
+
+    // Deliver outside the lock
+    if (!messages_to_deliver.empty()) {
+        LOG(INFO) << "Delivering " << messages_to_deliver.size()
+                  << " queued c2v messages to new handler (content_id=" << content_id << ")";
+
+        for (const auto& msg : messages_to_deliver) {
+            swdv::backend_transport_service::on_content event;
+            auto* content = event.mutable_message();
+            content->set_payload(std::string(msg.payload.begin(), msg.payload.end()));
+
+            if (!writer->Write(event)) {
+                LOG(WARNING) << "Failed to deliver queued c2v message to handler";
+                break;
+            }
         }
     }
 }
