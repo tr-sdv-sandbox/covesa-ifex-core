@@ -302,6 +302,48 @@ ifex-backend-transport-service \
 | Vehicle → Cloud | `v2c/{vehicle_id}/{content_id}` | `v2c/vehicle-001/42` |
 | Cloud → Vehicle | `c2v/{vehicle_id}/{content_id}` | `c2v/vehicle-001/100` |
 
+### Offline Vehicle Support
+
+Commands sent while a vehicle is offline are delivered when it reconnects. This is achieved through two mechanisms:
+
+**1. Persistent MQTT Sessions (`clean_session=false`)**
+
+The service connects with `clean_session=false`, enabling MQTT persistent sessions:
+- Broker queues QoS 1+ messages while vehicle is disconnected
+- Subscriptions persist across disconnects
+- Messages delivered automatically on reconnect
+
+**2. C2V Message Queue (Handler Registration Race)**
+
+Messages arriving via MQTT before a gRPC handler registers are queued internally:
+
+```
+MQTT message arrives ──▶ Handler registered? ──▶ Yes ──▶ Deliver immediately
+                                │
+                                ▼ No
+                         Queue message
+                                │
+                         Handler registers
+                                │
+                                ▼
+                         Deliver queued messages (FIFO)
+```
+
+This solves the race condition where MQTT delivers a message before the sync bridge has time to register its `on_content` handler.
+
+**Configuration:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `clean_session` | `false` | Persistent MQTT sessions (broker queues while offline) |
+| `c2v_queue_size_per_content_id` | `100` | Internal queue size for handler registration race |
+
+**Behavior summary:**
+- Vehicle goes offline → broker queues incoming c2v messages
+- Vehicle reconnects → broker delivers queued messages
+- Handler not yet registered → Backend Transport queues internally
+- Handler registers → queued messages delivered in order
+
 ---
 
 ## Client Library
