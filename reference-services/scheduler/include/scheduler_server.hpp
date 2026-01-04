@@ -64,6 +64,9 @@ class SchedulerServer final : public swdv::ifex_scheduler::create_job_service::S
                               public swdv::ifex_scheduler::get_job_service::Service,
                               public swdv::ifex_scheduler::update_job_service::Service,
                               public swdv::ifex_scheduler::delete_job_service::Service,
+                              public swdv::ifex_scheduler::pause_job_service::Service,
+                              public swdv::ifex_scheduler::resume_job_service::Service,
+                              public swdv::ifex_scheduler::trigger_job_service::Service,
                               public swdv::ifex_scheduler::get_calendar_view_service::Service {
 public:
     struct Config {
@@ -95,6 +98,18 @@ public:
     grpc::Status delete_job(grpc::ServerContext* context,
                            const swdv::ifex_scheduler::delete_job_request* request,
                            swdv::ifex_scheduler::delete_job_response* response) override;
+
+    grpc::Status pause_job(grpc::ServerContext* context,
+                          const swdv::ifex_scheduler::pause_job_request* request,
+                          swdv::ifex_scheduler::pause_job_response* response) override;
+
+    grpc::Status resume_job(grpc::ServerContext* context,
+                           const swdv::ifex_scheduler::resume_job_request* request,
+                           swdv::ifex_scheduler::resume_job_response* response) override;
+
+    grpc::Status trigger_job(grpc::ServerContext* context,
+                            const swdv::ifex_scheduler::trigger_job_request* request,
+                            swdv::ifex_scheduler::trigger_job_response* response) override;
 
     grpc::Status get_calendar_view(grpc::ServerContext* context,
                                   const swdv::ifex_scheduler::get_calendar_view_request* request,

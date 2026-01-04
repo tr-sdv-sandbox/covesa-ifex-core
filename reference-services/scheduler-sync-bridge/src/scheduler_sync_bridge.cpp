@@ -21,6 +21,7 @@ namespace ifex::reference {
 
 using namespace std::chrono_literals;
 namespace sync_pb = swdv::scheduler_sync_envelope;
+namespace cmd_pb = swdv::scheduler_command_envelope;
 namespace scheduler_pb = swdv::ifex_scheduler;
 
 // =============================================================================
@@ -88,6 +89,12 @@ bool SchedulerSyncBridge::Start() {
         grpc::InsecureChannelCredentials());
 
     get_jobs_stub_ = scheduler_pb::get_jobs_service::NewStub(scheduler_channel_);
+    create_job_stub_ = scheduler_pb::create_job_service::NewStub(scheduler_channel_);
+    update_job_stub_ = scheduler_pb::update_job_service::NewStub(scheduler_channel_);
+    delete_job_stub_ = scheduler_pb::delete_job_service::NewStub(scheduler_channel_);
+    pause_job_stub_ = scheduler_pb::pause_job_service::NewStub(scheduler_channel_);
+    resume_job_stub_ = scheduler_pb::resume_job_service::NewStub(scheduler_channel_);
+    trigger_job_stub_ = scheduler_pb::trigger_job_service::NewStub(scheduler_channel_);
 
     // Verify Scheduler connection
     auto deadline = std::chrono::system_clock::now() + 5s;
@@ -103,11 +110,23 @@ bool SchedulerSyncBridge::Start() {
     stop_requested_.store(false);
     last_activity_time_ = std::chrono::steady_clock::now();
 
-    // Start worker threads
+    // Start v2c worker threads
     poll_thread_ = std::thread(&SchedulerSyncBridge::PollLoop, this);
 
     if (config_.batch_window_ms > 0) {
         batch_thread_ = std::thread(&SchedulerSyncBridge::BatchLoop, this);
+    }
+
+    // Initialize c2v command handling
+    if (config_.enable_cloud_commands) {
+        LOG(INFO) << "Enabling cloud command handling (c2v)";
+
+        // Subscribe to c2v content from Backend Transport
+        // Commands are processed synchronously - gRPC calls to Scheduler are fast
+        transport_client_->on_content(
+            [this](const std::vector<uint8_t>& payload) {
+                HandleCloudCommand(payload);
+            });
     }
 
     LOG(INFO) << "SchedulerSyncBridge started";
@@ -141,6 +160,9 @@ void SchedulerSyncBridge::Stop() {
     // Cleanup
     transport_client_.reset();
     get_jobs_stub_.reset();
+    create_job_stub_.reset();
+    update_job_stub_.reset();
+    delete_job_stub_.reset();
 
     LOG(INFO) << "SchedulerSyncBridge stopped";
 }
@@ -770,6 +792,411 @@ sync_pb::job_sync_status_t SchedulerSyncBridge::MapStatus(
         default:
             return sync_pb::PENDING;
     }
+}
+
+// =============================================================================
+// Cloud Command Handling (c2v)
+// =============================================================================
+
+void SchedulerSyncBridge::HandleCloudCommand(const std::vector<uint8_t>& payload) {
+    // Decode the command envelope
+    cmd_pb::scheduler_command_t command;
+    if (!command.ParseFromArray(payload.data(), static_cast<int>(payload.size()))) {
+        LOG(WARNING) << "Failed to parse scheduler command from c2v payload ("
+                     << payload.size() << " bytes)";
+        return;
+    }
+
+    LOG(INFO) << "Received cloud command: id=" << command.command_id()
+              << ", type=" << static_cast<int>(command.type());
+
+    // Update stats
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.commands_received++;
+    }
+
+    // Process command synchronously - gRPC calls to Scheduler are fast
+    ProcessCommand(command);
+}
+
+void SchedulerSyncBridge::ProcessCommand(
+    const cmd_pb::scheduler_command_t& command) {
+
+    CommandResult result;
+    std::string command_type_str;
+
+    switch (command.type()) {
+        case cmd_pb::COMMAND_CREATE_JOB: {
+            command_type_str = "CREATE_JOB";
+            if (command.has_create_job()) {
+                result = ExecuteCreateJob(command.create_job());
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                stats_.commands_create++;
+            } else {
+                result.success = false;
+                result.error_message = "Missing create_job payload";
+            }
+            break;
+        }
+
+        case cmd_pb::COMMAND_UPDATE_JOB: {
+            command_type_str = "UPDATE_JOB";
+            if (command.has_update_job()) {
+                result = ExecuteUpdateJob(command.update_job());
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                stats_.commands_update++;
+            } else {
+                result.success = false;
+                result.error_message = "Missing update_job payload";
+            }
+            break;
+        }
+
+        case cmd_pb::COMMAND_DELETE_JOB: {
+            command_type_str = "DELETE_JOB";
+            result = ExecuteDeleteJob(command.delete_job_id());
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            stats_.commands_delete++;
+            break;
+        }
+
+        case cmd_pb::COMMAND_PAUSE_JOB: {
+            command_type_str = "PAUSE_JOB";
+            result = ExecutePauseJob(command.pause_job_id());
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            stats_.commands_pause++;
+            break;
+        }
+
+        case cmd_pb::COMMAND_RESUME_JOB: {
+            command_type_str = "RESUME_JOB";
+            result = ExecuteResumeJob(command.resume_job_id());
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            stats_.commands_resume++;
+            break;
+        }
+
+        case cmd_pb::COMMAND_TRIGGER_JOB: {
+            command_type_str = "TRIGGER_JOB";
+            result = ExecuteTriggerJob(command.trigger_job_id());
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            stats_.commands_trigger++;
+            break;
+        }
+
+        default:
+            command_type_str = "UNKNOWN";
+            result.success = false;
+            result.error_message = "Unknown command type";
+            break;
+    }
+
+    // Update success/failure stats
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        if (result.success) {
+            stats_.commands_succeeded++;
+        } else {
+            stats_.commands_failed++;
+        }
+    }
+
+    LOG(INFO) << "Command " << command.command_id() << " (" << command_type_str << "): "
+              << (result.success ? "SUCCESS" : "FAILED")
+              << (result.error_message.empty() ? "" : " - " + result.error_message);
+
+    // Send acknowledgment
+    if (config_.send_command_acks) {
+        SendCommandAck(command.command_id(), result.success,
+                       result.error_message, result.job_id);
+    }
+}
+
+SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteCreateJob(
+    const cmd_pb::job_definition_t& def) {
+
+    CommandResult result;
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::milliseconds(config_.command_timeout_ms));
+
+    scheduler_pb::create_job_request request;
+    auto* job = request.mutable_job();
+
+    // Map job definition to scheduler job_create_t
+    job->set_title(def.title());
+    job->set_service(def.service());
+    job->set_method(def.method());
+    job->set_parameters(def.parameters_json());
+    job->set_scheduled_time(def.scheduled_time());
+    job->set_recurrence_rule(def.recurrence_rule());
+    job->set_end_time(def.end_time());
+    job->set_service_address(def.service_address());
+
+    scheduler_pb::create_job_response response;
+    auto status = create_job_stub_->create_job(&context, request, &response);
+
+    if (!status.ok()) {
+        result.success = false;
+        result.error_message = "gRPC error: " + status.error_message();
+        return result;
+    }
+
+    if (!response.success()) {
+        result.success = false;
+        result.error_message = response.message();
+        return result;
+    }
+
+    result.success = true;
+    result.job_id = response.job_id();
+
+    LOG(INFO) << "Created job: " << def.title() << " (id=" << result.job_id << ")";
+    return result;
+}
+
+SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteUpdateJob(
+    const cmd_pb::job_update_t& update) {
+
+    CommandResult result;
+    result.job_id = update.job_id();
+
+    if (update.job_id().empty()) {
+        result.success = false;
+        result.error_message = "job_id is required for update";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::milliseconds(config_.command_timeout_ms));
+
+    scheduler_pb::update_job_request request;
+    request.set_job_id(update.job_id());
+
+    // Set update fields via the updates sub-message
+    auto* updates = request.mutable_updates();
+    updates->set_title(update.title());
+    updates->set_scheduled_time(update.scheduled_time());
+    updates->set_recurrence_rule(update.recurrence_rule());
+    updates->set_parameters(update.parameters_json());
+    updates->set_end_time(update.end_time());
+
+    scheduler_pb::update_job_response response;
+    auto status = update_job_stub_->update_job(&context, request, &response);
+
+    if (!status.ok()) {
+        result.success = false;
+        result.error_message = "gRPC error: " + status.error_message();
+        return result;
+    }
+
+    if (!response.success()) {
+        result.success = false;
+        result.error_message = response.message();
+        return result;
+    }
+
+    result.success = true;
+    LOG(INFO) << "Updated job: " << update.job_id();
+    return result;
+}
+
+SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteDeleteJob(
+    const std::string& job_id) {
+
+    CommandResult result;
+    result.job_id = job_id;
+
+    if (job_id.empty()) {
+        result.success = false;
+        result.error_message = "job_id is required for delete";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::milliseconds(config_.command_timeout_ms));
+
+    scheduler_pb::delete_job_request request;
+    request.set_job_id(job_id);
+
+    scheduler_pb::delete_job_response response;
+    auto status = delete_job_stub_->delete_job(&context, request, &response);
+
+    if (!status.ok()) {
+        result.success = false;
+        result.error_message = "gRPC error: " + status.error_message();
+        return result;
+    }
+
+    if (!response.success()) {
+        result.success = false;
+        result.error_message = response.message();
+        return result;
+    }
+
+    result.success = true;
+    LOG(INFO) << "Deleted job: " << job_id;
+    return result;
+}
+
+SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecutePauseJob(
+    const std::string& job_id) {
+
+    CommandResult result;
+    result.job_id = job_id;
+
+    if (job_id.empty()) {
+        result.success = false;
+        result.error_message = "job_id is required for pause";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::milliseconds(config_.command_timeout_ms));
+
+    scheduler_pb::pause_job_request request;
+    request.set_job_id(job_id);
+
+    scheduler_pb::pause_job_response response;
+    auto status = pause_job_stub_->pause_job(&context, request, &response);
+
+    if (!status.ok()) {
+        result.success = false;
+        result.error_message = "gRPC error: " + status.error_message();
+        return result;
+    }
+
+    if (!response.success()) {
+        result.success = false;
+        result.error_message = response.message();
+        return result;
+    }
+
+    result.success = true;
+    LOG(INFO) << "Paused job: " << job_id;
+    return result;
+}
+
+SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteResumeJob(
+    const std::string& job_id) {
+
+    CommandResult result;
+    result.job_id = job_id;
+
+    if (job_id.empty()) {
+        result.success = false;
+        result.error_message = "job_id is required for resume";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::milliseconds(config_.command_timeout_ms));
+
+    scheduler_pb::resume_job_request request;
+    request.set_job_id(job_id);
+
+    scheduler_pb::resume_job_response response;
+    auto status = resume_job_stub_->resume_job(&context, request, &response);
+
+    if (!status.ok()) {
+        result.success = false;
+        result.error_message = "gRPC error: " + status.error_message();
+        return result;
+    }
+
+    if (!response.success()) {
+        result.success = false;
+        result.error_message = response.message();
+        return result;
+    }
+
+    result.success = true;
+    LOG(INFO) << "Resumed job: " << job_id;
+    return result;
+}
+
+SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteTriggerJob(
+    const std::string& job_id) {
+
+    CommandResult result;
+    result.job_id = job_id;
+
+    if (job_id.empty()) {
+        result.success = false;
+        result.error_message = "job_id is required for trigger";
+        return result;
+    }
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::milliseconds(config_.command_timeout_ms));
+
+    scheduler_pb::trigger_job_request request;
+    request.set_job_id(job_id);
+
+    scheduler_pb::trigger_job_response response;
+    auto status = trigger_job_stub_->trigger_job(&context, request, &response);
+
+    if (!status.ok()) {
+        result.success = false;
+        result.error_message = "gRPC error: " + status.error_message();
+        return result;
+    }
+
+    if (!response.success()) {
+        result.success = false;
+        result.error_message = response.message();
+        return result;
+    }
+
+    result.success = true;
+    LOG(INFO) << "Triggered job: " << job_id;
+    return result;
+}
+
+void SchedulerSyncBridge::SendCommandAck(const std::string& command_id,
+                                          bool success,
+                                          const std::string& error_message,
+                                          const std::string& job_id) {
+    cmd_pb::scheduler_command_ack_t ack;
+    ack.set_command_id(command_id);
+    ack.set_success(success);
+    if (!error_message.empty()) {
+        ack.set_error_message(error_message);
+    }
+    if (!job_id.empty()) {
+        ack.set_job_id(job_id);
+    }
+    ack.set_timestamp_ns(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::string serialized;
+    if (!ack.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize command ack";
+        return;
+    }
+
+    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
+    auto result = transport_client_->publish(payload, client::Persistence::BestEffort);
+
+    if (result.ok()) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.command_acks_sent++;
+        stats_.bytes_sent += serialized.size();
+        VLOG(1) << "Sent command ack for " << command_id;
+    } else {
+        LOG(WARNING) << "Failed to send command ack for " << command_id
+                     << ": status=" << static_cast<int>(result.status);
+    }
+
+    last_activity_time_ = std::chrono::steady_clock::now();
 }
 
 }  // namespace ifex::reference

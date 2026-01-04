@@ -28,6 +28,9 @@ namespaces:
           - name: CANCELLED
             value: 4
             description: Job was cancelled
+          - name: PAUSED
+            value: 5
+            description: Job is paused (will not execute until resumed)
             
       - name: view_type_t
         datatype: uint8
@@ -281,7 +284,56 @@ namespaces:
           - name: message
             datatype: string
             description: Success or error message
-            
+
+      - name: pause_job
+        description: Pause a scheduled job (prevents execution until resumed)
+        input:
+          - name: job_id
+            datatype: string
+            description: Job identifier to pause
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether pause succeeded
+          - name: message
+            datatype: string
+            description: Success or error message
+
+      - name: resume_job
+        description: Resume a paused job
+        input:
+          - name: job_id
+            datatype: string
+            description: Job identifier to resume
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether resume succeeded
+          - name: message
+            datatype: string
+            description: Success or error message
+
+      - name: trigger_job
+        description: Trigger immediate execution of a job (ignores schedule)
+        input:
+          - name: job_id
+            datatype: string
+            description: Job identifier to trigger
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean
+            description: Whether trigger succeeded
+          - name: job
+            datatype: job_t
+            description: Updated job with execution result
+            mandatory: false
+          - name: message
+            datatype: string
+            description: Success or error message
+
       - name: get_calendar_view
         description: Get jobs formatted for calendar display
         input:

@@ -1,0 +1,173 @@
+---
+name: scheduler_command_envelope
+major_version: 1
+minor_version: 0
+description: |
+  Envelope format for cloud-to-vehicle Scheduler commands.
+
+  Sent via Backend Transport c2v with content_id=202 (SCHEDULER_SYNC).
+  This enables cloud applications to create, update, and manage scheduled
+  jobs on vehicles via the Scheduler Sync Bridge.
+
+  Command flow:
+  1. Cloud sends scheduler_command_t to vehicle
+  2. Scheduler Sync Bridge receives command via on_content callback
+  3. Bridge forwards to Scheduler service via gRPC
+  4. Bridge sends scheduler_command_ack_t back to cloud
+
+namespaces:
+  - name: scheduler_command
+    description: Scheduler command types for cloud-to-vehicle communication
+
+    enumerations:
+      - name: command_type_t
+        datatype: uint8
+        description: Types of scheduler commands
+        options:
+          - name: COMMAND_UNKNOWN
+            value: 0
+            description: Unknown/invalid command
+          - name: COMMAND_CREATE_JOB
+            value: 1
+            description: Create a new scheduled job
+          - name: COMMAND_UPDATE_JOB
+            value: 2
+            description: Update an existing job
+          - name: COMMAND_DELETE_JOB
+            value: 3
+            description: Delete a job
+          - name: COMMAND_PAUSE_JOB
+            value: 4
+            description: Pause a job (stop scheduling)
+          - name: COMMAND_RESUME_JOB
+            value: 5
+            description: Resume a paused job
+          - name: COMMAND_TRIGGER_JOB
+            value: 6
+            description: Trigger immediate job execution
+
+    structs:
+      - name: job_definition_t
+        description: Job definition for create operations
+        members:
+          - name: job_id
+            datatype: string
+            description: Job identifier (cloud-generated, vehicle may reassign)
+            mandatory: false
+          - name: title
+            datatype: string
+            description: Human-readable job title
+          - name: service
+            datatype: string
+            description: Target service name (as registered in Discovery)
+          - name: method
+            datatype: string
+            description: Method name to invoke
+          - name: parameters_json
+            datatype: string
+            description: JSON-encoded parameters for the method call
+            mandatory: false
+          - name: scheduled_time
+            datatype: string
+            description: Scheduled execution time (ISO8601 format)
+          - name: recurrence_rule
+            datatype: string
+            description: Recurrence rule (iCal RRULE format, e.g., "FREQ=DAILY;INTERVAL=1")
+            mandatory: false
+          - name: end_time
+            datatype: string
+            description: Stop recurring job after this time (ISO8601)
+            mandatory: false
+          - name: service_address
+            datatype: string
+            description: Direct service address (bypasses Discovery lookup)
+            mandatory: false
+
+      - name: job_update_t
+        description: Partial job update - only specified fields are updated
+        members:
+          - name: job_id
+            datatype: string
+            description: Job to update (required)
+          - name: title
+            datatype: string
+            description: New title (empty = no change)
+            mandatory: false
+          - name: scheduled_time
+            datatype: string
+            description: New scheduled time (empty = no change)
+            mandatory: false
+          - name: recurrence_rule
+            datatype: string
+            description: New recurrence rule (empty = no change)
+            mandatory: false
+          - name: parameters_json
+            datatype: string
+            description: New parameters (empty = no change)
+            mandatory: false
+          - name: end_time
+            datatype: string
+            description: New end time (empty = no change)
+            mandatory: false
+
+      - name: scheduler_command_t
+        description: Scheduler command envelope (sent from cloud to vehicle)
+        members:
+          - name: command_id
+            datatype: string
+            description: Unique command ID for correlation/tracking
+          - name: timestamp_ns
+            datatype: uint64
+            description: When command was issued (nanoseconds since epoch)
+          - name: requester_id
+            datatype: string
+            description: Identity of requester (for audit)
+            mandatory: false
+          - name: type
+            datatype: command_type_t
+            description: Command type
+          - name: create_job
+            datatype: job_definition_t
+            description: Payload for COMMAND_CREATE_JOB
+            mandatory: false
+          - name: update_job
+            datatype: job_update_t
+            description: Payload for COMMAND_UPDATE_JOB
+            mandatory: false
+          - name: delete_job_id
+            datatype: string
+            description: Job ID for COMMAND_DELETE_JOB
+            mandatory: false
+          - name: pause_job_id
+            datatype: string
+            description: Job ID for COMMAND_PAUSE_JOB
+            mandatory: false
+          - name: resume_job_id
+            datatype: string
+            description: Job ID for COMMAND_RESUME_JOB
+            mandatory: false
+          - name: trigger_job_id
+            datatype: string
+            description: Job ID for COMMAND_TRIGGER_JOB
+            mandatory: false
+
+      - name: scheduler_command_ack_t
+        description: Command acknowledgment (sent from vehicle to cloud)
+        members:
+          - name: command_id
+            datatype: string
+            description: Correlation with original command
+          - name: success
+            datatype: boolean
+            description: Whether command executed successfully
+          - name: error_message
+            datatype: string
+            description: Error details if failed
+            mandatory: false
+          - name: job_id
+            datatype: string
+            description: For CREATE_JOB - the vehicle-assigned job ID
+            mandatory: false
+          - name: timestamp_ns
+            datatype: uint64
+            description: When acknowledgment was generated

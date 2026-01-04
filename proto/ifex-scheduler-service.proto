@@ -16,6 +16,7 @@ enum job_status_t {
   COMPLETED = 2;
   FAILED = 3;
   CANCELLED = 4;
+  PAUSED = 5;
 }
 
 // Calendar view types
@@ -154,6 +155,52 @@ message delete_job_response {
 
 service delete_job_service {
   rpc delete_job(delete_job_request) returns (delete_job_response);
+}
+
+// Method: pause_job
+// Pause a scheduled job (prevents execution until resumed)
+message pause_job_request {
+  string job_id = 1;
+}
+
+message pause_job_response {
+  bool success = 1;
+  string message = 2;
+}
+
+service pause_job_service {
+  rpc pause_job(pause_job_request) returns (pause_job_response);
+}
+
+// Method: resume_job
+// Resume a paused job
+message resume_job_request {
+  string job_id = 1;
+}
+
+message resume_job_response {
+  bool success = 1;
+  string message = 2;
+}
+
+service resume_job_service {
+  rpc resume_job(resume_job_request) returns (resume_job_response);
+}
+
+// Method: trigger_job
+// Trigger immediate execution of a job (ignores schedule)
+message trigger_job_request {
+  string job_id = 1;
+}
+
+message trigger_job_response {
+  bool success = 1;
+  job_t job = 2;
+  string message = 3;
+}
+
+service trigger_job_service {
+  rpc trigger_job(trigger_job_request) returns (trigger_job_response);
 }
 
 // Method: get_calendar_view

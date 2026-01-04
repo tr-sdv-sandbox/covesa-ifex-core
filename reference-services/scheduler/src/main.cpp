@@ -100,6 +100,9 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
     builder.RegisterService(static_cast<swdv::ifex_scheduler::get_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::update_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::delete_job_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::pause_job_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::resume_job_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::trigger_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::get_calendar_view_service::Service*>(service.get()));
 
     // Build and start the server
@@ -120,6 +123,7 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
         LOG(INFO) << "";
         LOG(INFO) << "IFEX Scheduler Service is running and registered";
         LOG(INFO) << "  CRUD API: create_job, get_jobs, get_job, update_job, delete_job";
+        LOG(INFO) << "  Control: pause_job, resume_job, trigger_job";
         LOG(INFO) << "  Calendar views: get_calendar_view (day/week/month)";
         LOG(INFO) << "  Cron expressions and recurring jobs supported";
 

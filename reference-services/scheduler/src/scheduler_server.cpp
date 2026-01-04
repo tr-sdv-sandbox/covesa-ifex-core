@@ -551,6 +551,170 @@ grpc::Status SchedulerServer::delete_job(grpc::ServerContext* context,
     }
 }
 
+grpc::Status SchedulerServer::pause_job(grpc::ServerContext* context,
+                                        const swdv::ifex_scheduler::pause_job_request* request,
+                                        swdv::ifex_scheduler::pause_job_response* response) {
+    LOG(INFO) << "PAUSE JOB REQUEST: " << request->job_id();
+
+    try {
+        bool paused = false;
+        {
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+            auto it = jobs_.find(request->job_id());
+            if (it == jobs_.end()) {
+                response->set_success(false);
+                response->set_message("Job not found");
+                return grpc::Status::OK;
+            }
+
+            auto& job = it->second;
+
+            // Can only pause PENDING jobs
+            if (job->status != swdv::ifex_scheduler::PENDING) {
+                response->set_success(false);
+                response->set_message("Can only pause PENDING jobs, current status: " +
+                                     std::to_string(static_cast<int>(job->status)));
+                return grpc::Status::OK;
+            }
+
+            job->status = swdv::ifex_scheduler::PAUSED;
+            job->updated_at = std::chrono::system_clock::now();
+            paused = true;
+
+            LOG(INFO) << "Paused job " << request->job_id();
+        }
+
+        // Persist immediately
+        if (paused && !persistence_dir_.empty()) {
+            SaveJobs();
+        }
+
+        response->set_success(true);
+        response->set_message("Job paused successfully");
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to pause job: " << e.what();
+        response->set_success(false);
+        response->set_message(std::string("Failed to pause job: ") + e.what());
+        return grpc::Status::OK;
+    }
+}
+
+grpc::Status SchedulerServer::resume_job(grpc::ServerContext* context,
+                                         const swdv::ifex_scheduler::resume_job_request* request,
+                                         swdv::ifex_scheduler::resume_job_response* response) {
+    LOG(INFO) << "RESUME JOB REQUEST: " << request->job_id();
+
+    try {
+        bool resumed = false;
+        {
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+            auto it = jobs_.find(request->job_id());
+            if (it == jobs_.end()) {
+                response->set_success(false);
+                response->set_message("Job not found");
+                return grpc::Status::OK;
+            }
+
+            auto& job = it->second;
+
+            // Can only resume PAUSED jobs
+            if (job->status != swdv::ifex_scheduler::PAUSED) {
+                response->set_success(false);
+                response->set_message("Can only resume PAUSED jobs, current status: " +
+                                     std::to_string(static_cast<int>(job->status)));
+                return grpc::Status::OK;
+            }
+
+            job->status = swdv::ifex_scheduler::PENDING;
+            job->updated_at = std::chrono::system_clock::now();
+            resumed = true;
+
+            LOG(INFO) << "Resumed job " << request->job_id();
+        }
+
+        // Persist immediately
+        if (resumed && !persistence_dir_.empty()) {
+            SaveJobs();
+        }
+
+        response->set_success(true);
+        response->set_message("Job resumed successfully");
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to resume job: " << e.what();
+        response->set_success(false);
+        response->set_message(std::string("Failed to resume job: ") + e.what());
+        return grpc::Status::OK;
+    }
+}
+
+grpc::Status SchedulerServer::trigger_job(grpc::ServerContext* context,
+                                          const swdv::ifex_scheduler::trigger_job_request* request,
+                                          swdv::ifex_scheduler::trigger_job_response* response) {
+    LOG(INFO) << "TRIGGER JOB REQUEST: " << request->job_id();
+
+    try {
+        Job* job_to_execute = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+            auto it = jobs_.find(request->job_id());
+            if (it == jobs_.end()) {
+                response->set_success(false);
+                response->set_message("Job not found");
+                return grpc::Status::OK;
+            }
+
+            auto& job = it->second;
+
+            // Can trigger PENDING or PAUSED jobs
+            if (job->status != swdv::ifex_scheduler::PENDING &&
+                job->status != swdv::ifex_scheduler::PAUSED) {
+                response->set_success(false);
+                response->set_message("Can only trigger PENDING or PAUSED jobs, current status: " +
+                                     std::to_string(static_cast<int>(job->status)));
+                return grpc::Status::OK;
+            }
+
+            job_to_execute = job.get();
+        }
+
+        // Execute the job immediately (outside the lock)
+        if (job_to_execute) {
+            ExecuteJob(job_to_execute);
+
+            // Persist after execution
+            if (!persistence_dir_.empty()) {
+                SaveJobs();
+            }
+
+            // Return the updated job
+            std::lock_guard<std::mutex> lock(jobs_mutex_);
+            auto it = jobs_.find(request->job_id());
+            if (it != jobs_.end()) {
+                auto* proto_job = response->mutable_job();
+                it->second->ToProto(proto_job);
+            }
+
+            response->set_success(true);
+            response->set_message("Job triggered successfully");
+        }
+
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to trigger job: " << e.what();
+        response->set_success(false);
+        response->set_message(std::string("Failed to trigger job: ") + e.what());
+        return grpc::Status::OK;
+    }
+}
+
 grpc::Status SchedulerServer::get_calendar_view(grpc::ServerContext* context,
                                                 const swdv::ifex_scheduler::get_calendar_view_request* request,
                                                 swdv::ifex_scheduler::get_calendar_view_response* response) {
