@@ -46,6 +46,28 @@ namespaces:
             value: 6
             description: Trigger immediate job execution
 
+      - name: wake_policy_t
+        datatype: uint8
+        description: Vehicle wake behavior for scheduled jobs
+        options:
+          - name: NO_WAKE
+            value: 0
+            description: Only run if vehicle is already awake
+          - name: WAKE_REQUIRED
+            value: 1
+            description: Wake vehicle via RTC timer to run this job
+
+      - name: sleep_policy_t
+        datatype: uint8
+        description: Vehicle sleep behavior during job execution
+        options:
+          - name: SLEEP_NORMAL
+            value: 0
+            description: Normal sleep behavior after job completes
+          - name: INHIBIT_UNTIL_COMPLETE
+            value: 1
+            description: Prevent sleep until job execution finishes
+
     structs:
       - name: job_definition_t
         description: Job definition for create operations
@@ -82,6 +104,18 @@ namespaces:
             datatype: string
             description: Direct service address (bypasses Discovery lookup)
             mandatory: false
+          - name: wake_policy
+            datatype: wake_policy_t
+            description: Whether to wake vehicle for this job
+            mandatory: false
+          - name: sleep_policy
+            datatype: sleep_policy_t
+            description: Sleep behavior during execution
+            mandatory: false
+          - name: wake_lead_time_s
+            datatype: uint32
+            description: Seconds before scheduled_time to wake vehicle
+            mandatory: false
 
       - name: job_update_t
         description: Partial job update - only specified fields are updated
@@ -108,6 +142,18 @@ namespaces:
           - name: end_time
             datatype: string
             description: New end time (empty = no change)
+            mandatory: false
+          - name: wake_policy
+            datatype: wake_policy_t
+            description: New wake policy (empty = no change)
+            mandatory: false
+          - name: sleep_policy
+            datatype: sleep_policy_t
+            description: New sleep policy (empty = no change)
+            mandatory: false
+          - name: wake_lead_time_s
+            datatype: uint32
+            description: New wake lead time (0 = no change)
             mandatory: false
 
       - name: scheduler_command_t
