@@ -38,8 +38,14 @@ BackendTransportServer::BackendTransportServer(const Config& config) : config_(c
     // - Messages delivered on reconnect
     mqtt_config.clean_session = config_.clean_session;
 
+    // Status topic for online/offline detection via LWT
+    // Publishes "1" on connect, LWT publishes "0" on unexpected disconnect
+    mqtt_config.status_topic = config_.v2c_prefix + "/" + config_.vehicle_id + "/is_online";
+    mqtt_config.publish_status = true;
+
     LOG(INFO) << "MQTT client_id=" << mqtt_config.client_id
-              << " clean_session=" << (mqtt_config.clean_session ? "true" : "false");
+              << " clean_session=" << (mqtt_config.clean_session ? "true" : "false")
+              << " status_topic=" << mqtt_config.status_topic;
 
     mqtt_client_ = std::make_unique<MqttClient>(mqtt_config);
 

@@ -302,6 +302,32 @@ ifex-backend-transport-service \
 | Vehicle → Cloud | `v2c/{vehicle_id}/{content_id}` | `v2c/vehicle-001/42` |
 | Cloud → Vehicle | `c2v/{vehicle_id}/{content_id}` | `c2v/vehicle-001/100` |
 
+### Vehicle Online/Offline Status
+
+Backend Transport publishes connection status to the cloud using MQTT LWT (Last Will and Testament):
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    MqttClient::Connect()                             │
+│                                                                      │
+│  1. mosquitto_will_set("v2c/{vehicle_id}/is_online", "0", retain)   │
+│     └─▶ LWT: broker publishes "0" on unexpected disconnect          │
+│                                                                      │
+│  2. mosquitto_connect(host, port)                                   │
+│                                                                      │
+│  3. mosquitto_publish("v2c/{vehicle_id}/is_online", "1", retain)    │
+│     └─▶ Immediately marks vehicle as online                         │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+| Event | MQTT Publish | Result |
+|-------|--------------|--------|
+| Vehicle connects | `v2c/{id}/is_online` = `1` (retained) | Cloud sees online |
+| Vehicle crashes | Broker publishes LWT `0` (retained) | Cloud sees offline |
+| Vehicle graceful stop | (clean disconnect, no LWT) | Cloud relies on heartbeat timeout |
+
+The cloud side (`mqtt_kafka_bridge`) subscribes to `v2c/#`, detects `/is_online` topics, and updates PostgreSQL.
+
 ### Offline Vehicle Support
 
 Commands sent while a vehicle is offline are delivered when it reconnects. This is achieved through two mechanisms:

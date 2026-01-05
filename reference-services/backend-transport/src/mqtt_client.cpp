@@ -74,6 +74,19 @@ MqttClient::MqttClient(const Config& config) : config_(config) {
                                   static_cast<unsigned int>(config_.reconnect_delay_min.count()),
                                   static_cast<unsigned int>(config_.reconnect_delay_max.count()),
                                   true);  // exponential backoff
+
+    // Set Last Will and Testament (LWT) for offline detection
+    // When connection is lost unexpectedly, broker publishes "0" to status topic
+    if (!config_.status_topic.empty() && config_.publish_status) {
+        const char* offline_payload = "0";
+        int rc = mosquitto_will_set(mosq_.get(), config_.status_topic.c_str(),
+                                    1, offline_payload, 1, true);  // QoS 1, retain
+        if (rc != MOSQ_ERR_SUCCESS) {
+            LOG(WARNING) << "Failed to set LWT: " << mosquitto_strerror(rc);
+        } else {
+            LOG(INFO) << "LWT configured: " << config_.status_topic << " = 0";
+        }
+    }
 }
 
 MqttClient::~MqttClient() {
@@ -271,6 +284,19 @@ void MqttClient::HandleConnect(int rc) {
     if (rc == 0) {
         LOG(INFO) << "Connected to MQTT broker";
         connected_ = true;
+
+        // Publish online status (retained)
+        if (!config_.status_topic.empty() && config_.publish_status) {
+            const char* online_payload = "1";
+            int pub_rc = mosquitto_publish(mosq_.get(), nullptr, config_.status_topic.c_str(),
+                                           1, online_payload, 1, true);  // QoS 1, retain
+            if (pub_rc != MOSQ_ERR_SUCCESS) {
+                LOG(WARNING) << "Failed to publish online status: " << mosquitto_strerror(pub_rc);
+            } else {
+                LOG(INFO) << "Published online status: " << config_.status_topic << " = 1";
+            }
+        }
+
         if (on_connect_) {
             on_connect_();
         }

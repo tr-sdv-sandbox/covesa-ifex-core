@@ -75,6 +75,12 @@ public:
 
         // Clean session
         bool clean_session = true;
+
+        // Status topic for LWT and online notification
+        // e.g., "v2c/{vehicle_id}/is_online"
+        // Publishes "1" on connect, LWT publishes "0" on unexpected disconnect
+        std::string status_topic;
+        bool publish_status = true;
     };
 
     explicit MqttClient(const Config& config);

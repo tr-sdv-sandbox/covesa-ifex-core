@@ -113,6 +113,77 @@ The `reference-services/backend-transport/` provides vehicle-to-cloud communicat
 
 See `reference-services/backend-transport/README.md` for full API documentation.
 
+### Vehicle Online/Offline Status
+
+Backend Transport publishes vehicle connection status to the cloud using MQTT LWT (Last Will and Testament).
+
+#### Architecture (Vehicle Side)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Backend Transport Service                                                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ backend_transport_server.cpp                                         │   │
+│  │                                                                      │   │
+│  │  Config:                                                             │   │
+│  │    mqtt_config.status_topic = "v2c/" + vehicle_id + "/is_online"    │   │
+│  └──────────────────────────────┬──────────────────────────────────────┘   │
+│                                 │                                           │
+│  ┌──────────────────────────────▼──────────────────────────────────────┐   │
+│  │ mqtt_client.cpp                                                      │   │
+│  │                                                                      │   │
+│  │  MqttClient::Connect():                                             │   │
+│  │    ┌────────────────────────────────────────────────────────────┐   │   │
+│  │    │ 1. mosquitto_will_set(status_topic, "0", QoS=1, retain)    │   │   │
+│  │    │    └─▶ LWT: broker publishes "0" on unexpected disconnect  │   │   │
+│  │    └────────────────────────────────────────────────────────────┘   │   │
+│  │    ┌────────────────────────────────────────────────────────────┐   │   │
+│  │    │ 2. mosquitto_connect(host, port)                           │   │   │
+│  │    └────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                      │   │
+│  │  MqttClient::HandleConnect():                                       │   │
+│  │    ┌────────────────────────────────────────────────────────────┐   │   │
+│  │    │ 3. mosquitto_publish(status_topic, "1", QoS=1, retain)     │   │   │
+│  │    │    └─▶ Immediately marks vehicle as online                 │   │   │
+│  │    └────────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  │ MQTT (QoS 1, retained)
+                                  ▼
+                         ┌─────────────────┐
+                         │ Mosquitto Broker │ ──▶ Cloud (mqtt_kafka_bridge)
+                         └─────────────────┘
+```
+
+#### Code Path
+
+| Step | File | Line | Code |
+|------|------|------|------|
+| Config topic | `backend_transport_server.cpp` | ~46 | `status_topic = "v2c/" + vehicle_id + "/is_online"` |
+| Set LWT | `mqtt_client.cpp` | ~87 | `mosquitto_will_set(mosq_, topic, 1, "0", 1, true)` |
+| Publish online | `mqtt_client.cpp` | ~292 | `mosquitto_publish(mosq_, nullptr, topic, 1, "1", 1, true)` |
+
+#### MQTT Message
+
+| Property | Value |
+|----------|-------|
+| Topic | `v2c/{vehicle_id}/is_online` |
+| Payload | `1` (online) or `0` (offline) |
+| QoS | 1 (at least once) |
+| Retain | true |
+
+#### Testing
+
+```bash
+# Integration tests
+./build/reference-services/backend-transport/ifex-backend-transport-integration-test \
+    --gtest_filter="IsOnlineStatusTest.*"
+```
+
+The cloud side (`covesa-ifex-offboard-services/mqtt_kafka_bridge`) subscribes to `v2c/#`, detects the `/is_online` suffix, and updates PostgreSQL.
+
 ### Scheduler Persistence
 
 The Scheduler supports optional job persistence via `--persistence-dir`:
