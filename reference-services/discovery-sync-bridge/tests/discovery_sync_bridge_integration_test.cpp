@@ -138,15 +138,15 @@ protected:
         }
     }
 
-    /// Subscribe to MQTT and collect sync messages
-    std::vector<sync_pb::sync_message_t> collectSyncMessages(
+    /// Subscribe to MQTT and collect discovery envelope messages (hash-based protocol)
+    std::vector<sync_pb::discovery_envelope_t> collectDiscoveryEnvelopes(
         int expected_count, std::chrono::seconds timeout) {
 
         std::string topic = "v2c/" + vehicle_id_ + "/" +
                             std::to_string(content_id::DISCOVERY_SYNC);
 
         struct Context {
-            std::vector<sync_pb::sync_message_t> messages;
+            std::vector<sync_pb::discovery_envelope_t> messages;
             std::mutex mtx;
             std::condition_variable cv;
             int expected_count;
@@ -161,10 +161,10 @@ protected:
         mosquitto_message_callback_set(mosq, [](struct mosquitto*, void* userdata,
                                                  const struct mosquitto_message* msg) {
             auto* ctx = static_cast<Context*>(userdata);
-            sync_pb::sync_message_t message;
-            if (message.ParseFromArray(msg->payload, msg->payloadlen)) {
+            sync_pb::discovery_envelope_t envelope;
+            if (envelope.ParseFromArray(msg->payload, msg->payloadlen)) {
                 std::lock_guard<std::mutex> lock(ctx->mtx);
-                ctx->messages.push_back(std::move(message));
+                ctx->messages.push_back(std::move(envelope));
                 ctx->cv.notify_all();
             }
         });
@@ -192,7 +192,7 @@ protected:
         return ctx.messages;
     }
 
-    /// Register a test service with Discovery
+    /// Register a test service with Discovery (includes IFEX schema for hash-based protocol)
     bool registerTestService(const std::string& name, int port) {
         auto channel = grpc::CreateChannel(TEST_DISCOVERY_ADDRESS,
                                            grpc::InsecureChannelCredentials());
@@ -201,10 +201,28 @@ protected:
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 5s);
 
+        // Simple IFEX schema for testing - required for hash-based protocol
+        std::string ifex_schema = R"(
+name: )" + name + R"(
+version: 1.0.0
+description: Test service for integration testing
+
+namespaces:
+  - name: test
+    methods:
+      - name: ping
+        description: Simple ping method
+        input: []
+        output:
+          - name: pong
+            datatype: bool
+)";
+
         discovery_pb::register_service_request request;
         request.mutable_service_info()->set_name(name);
         request.mutable_service_info()->set_version("1.0.0");
         request.mutable_service_info()->set_description("Test service");
+        request.mutable_service_info()->set_ifex_schema(ifex_schema);
         request.mutable_service_info()->mutable_endpoint()->set_address(
             "localhost:" + std::to_string(port));
         request.mutable_service_info()->mutable_endpoint()->set_transport(
@@ -345,8 +363,8 @@ std::string DiscoverySyncBridgeIntegrationTest::vehicle_id_;
 // Integration Tests
 // =============================================================================
 
-TEST_F(DiscoverySyncBridgeIntegrationTest, FullSyncOnStartup) {
-    // Register a test service first
+TEST_F(DiscoverySyncBridgeIntegrationTest, HashManifestOnStartup) {
+    // Register a test service first (with IFEX schema for hash)
     ASSERT_TRUE(registerTestService("test-sync-service", 59001));
 
     // Start sync bridge with short init delay
@@ -361,9 +379,9 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, FullSyncOnStartup) {
     config.batch_window_ms = 0;  // Immediate send
     config.heartbeat_interval_ms = 0;  // Disable heartbeat
 
-    // Start collecting messages
+    // Start collecting discovery envelopes
     auto collect_future = std::async(std::launch::async, [this]() {
-        return collectSyncMessages(1, 15s);
+        return collectDiscoveryEnvelopes(1, 15s);
     });
 
     std::this_thread::sleep_for(500ms);
@@ -371,30 +389,30 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, FullSyncOnStartup) {
     DiscoverySyncBridge bridge(config);
     ASSERT_TRUE(bridge.Start());
 
-    // Wait for full sync message
-    auto messages = collect_future.get();
+    // Wait for hash manifest message
+    auto envelopes = collect_future.get();
 
     bridge.Stop();
 
-    ASSERT_GE(messages.size(), 1) << "Should receive at least one sync message";
+    ASSERT_GE(envelopes.size(), 1) << "Should receive at least one discovery envelope";
 
-    // First message should contain FULL_SYNC event
-    const auto& first_msg = messages[0];
-    EXPECT_EQ(first_msg.vehicle_id(), vehicle_id_);
-    EXPECT_FALSE(first_msg.bridge_instance_id().empty());
-    EXPECT_GT(first_msg.events_size(), 0);
+    // First message should be a hash manifest
+    const auto& first_envelope = envelopes[0];
+    EXPECT_EQ(first_envelope.vehicle_id(), vehicle_id_);
+    EXPECT_TRUE(first_envelope.has_manifest()) << "Should have hash manifest";
 
-    bool found_full_sync = false;
-    for (const auto& event : first_msg.events()) {
-        if (event.event_type() == sync_pb::FULL_SYNC) {
-            found_full_sync = true;
-            break;
+    if (first_envelope.has_manifest()) {
+        const auto& manifest = first_envelope.manifest();
+        EXPECT_GE(manifest.hashes_size(), 1) << "Should have at least one hash (test-sync-service)";
+
+        // Verify hash format (SHA-256 = 64 hex chars)
+        for (const auto& entry : manifest.hashes()) {
+            EXPECT_EQ(entry.schema_hash().size(), 64) << "Hash should be 64 characters (SHA-256 hex)";
         }
     }
-    EXPECT_TRUE(found_full_sync) << "Should have FULL_SYNC event";
 }
 
-TEST_F(DiscoverySyncBridgeIntegrationTest, DeltaSyncOnServiceRegistration) {
+TEST_F(DiscoverySyncBridgeIntegrationTest, ManifestUpdateOnServiceRegistration) {
     DiscoverySyncBridgeConfig config;
     config.discovery_endpoint = TEST_DISCOVERY_ADDRESS;
     config.backend_transport_endpoint = "localhost:" +
@@ -413,35 +431,141 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, DeltaSyncOnServiceRegistration) {
     std::this_thread::sleep_for(1s);
     ASSERT_TRUE(bridge.IsInitialized());
 
-    // Start collecting delta messages
+    // Start collecting discovery envelopes - expect 1 for new service
     auto collect_future = std::async(std::launch::async, [this]() {
-        return collectSyncMessages(1, 10s);
+        return collectDiscoveryEnvelopes(1, 10s);
     });
 
     std::this_thread::sleep_for(500ms);
 
-    // Register a new service - should trigger delta sync
+    // Register a new service - should trigger updated manifest
     ASSERT_TRUE(registerTestService("delta-test-service", 59002));
 
-    // Wait for delta message
-    auto messages = collect_future.get();
+    // Wait for updated manifest
+    auto envelopes = collect_future.get();
 
     bridge.Stop();
 
-    ASSERT_GE(messages.size(), 1) << "Should receive delta sync message";
+    ASSERT_GE(envelopes.size(), 1) << "Should receive updated manifest after new service registration";
 
-    // Look for SERVICE_REGISTERED event
-    bool found_registered = false;
-    for (const auto& msg : messages) {
-        for (const auto& event : msg.events()) {
-            if (event.event_type() == sync_pb::SERVICE_REGISTERED &&
-                event.service_info().name() == "delta-test-service") {
-                found_registered = true;
-                break;
-            }
+    // Look for manifest with additional hash
+    bool found_manifest = false;
+    for (const auto& envelope : envelopes) {
+        if (envelope.has_manifest()) {
+            found_manifest = true;
+            // New manifest should have the new service's hash
+            EXPECT_GE(envelope.manifest().hashes_size(), 1)
+                << "Manifest should have at least one hash (delta-test-service)";
+            break;
         }
     }
-    EXPECT_TRUE(found_registered) << "Should have SERVICE_REGISTERED event for delta-test-service";
+    EXPECT_TRUE(found_manifest) << "Should have received hash manifest";
+}
+
+TEST_F(DiscoverySyncBridgeIntegrationTest, SchemaRequestResponse) {
+    // Register a test service first
+    ASSERT_TRUE(registerTestService("schema-request-test-service", 59003));
+
+    DiscoverySyncBridgeConfig config;
+    config.discovery_endpoint = TEST_DISCOVERY_ADDRESS;
+    config.backend_transport_endpoint = "localhost:" +
+        std::to_string(BACKEND_TRANSPORT_GRPC_PORT);
+    config.sync_content_id = content_id::DISCOVERY_SYNC;
+    config.vehicle_id = vehicle_id_;
+    config.initialization_delay_ms = 500;
+    config.poll_interval_ms = 500;
+    config.batch_window_ms = 0;
+    config.heartbeat_interval_ms = 0;
+
+    // Start collecting BEFORE starting bridge to capture initial manifest
+    auto collect_future = std::async(std::launch::async, [this]() {
+        return collectDiscoveryEnvelopes(1, 15s);
+    });
+
+    std::this_thread::sleep_for(500ms);
+
+    DiscoverySyncBridge bridge(config);
+    ASSERT_TRUE(bridge.Start());
+
+    // Wait for initial manifest to be collected
+    auto initial_envelopes = collect_future.get();
+
+    ASSERT_TRUE(bridge.IsInitialized());
+    ASSERT_GE(initial_envelopes.size(), 1) << "Should receive initial manifest";
+    ASSERT_TRUE(initial_envelopes[0].has_manifest());
+    ASSERT_GE(initial_envelopes[0].manifest().hashes_size(), 1);
+
+    std::string service_hash = initial_envelopes[0].manifest().hashes(0).schema_hash();
+    LOG(INFO) << "Got service hash: " << service_hash;
+
+    // Simulate cloud sending a schema request via c2v MQTT
+    // First, create the schema request message
+    sync_pb::discovery_envelope_t schema_request;
+    schema_request.set_vehicle_id(vehicle_id_);
+    auto* request = schema_request.mutable_schema_request();
+    request->add_hashes(service_hash);
+
+    std::string request_serialized;
+    ASSERT_TRUE(schema_request.SerializeToString(&request_serialized));
+
+    // Publish schema request to c2v topic
+    std::string c2v_topic = "c2v/" + vehicle_id_ + "/" +
+                            std::to_string(content_id::DISCOVERY_SYNC);
+
+    struct mosquitto* mosq = mosquitto_new("test-schema-requester", true, nullptr);
+    ASSERT_TRUE(mosq != nullptr);
+
+    ASSERT_EQ(mosquitto_connect(mosq, mqtt_host.c_str(), mqtt_port, 60), MOSQ_ERR_SUCCESS);
+    std::this_thread::sleep_for(200ms);
+
+    // Start collecting response envelopes before sending request
+    auto response_collect_future = std::async(std::launch::async, [this]() {
+        return collectDiscoveryEnvelopes(1, 10s);
+    });
+
+    std::this_thread::sleep_for(200ms);
+
+    // Publish the schema request
+    int rc = mosquitto_publish(mosq, nullptr, c2v_topic.c_str(),
+                                request_serialized.size(),
+                                request_serialized.data(), 1, false);
+    ASSERT_EQ(rc, MOSQ_ERR_SUCCESS);
+
+    mosquitto_loop(mosq, 100, 1);  // Process the publish
+
+    LOG(INFO) << "Published schema request to " << c2v_topic;
+
+    // Wait for schema response
+    auto response_envelopes = response_collect_future.get();
+
+    mosquitto_disconnect(mosq);
+    mosquitto_destroy(mosq);
+    bridge.Stop();
+
+    // Find the schema response
+    bool found_schema_response = false;
+    for (const auto& envelope : response_envelopes) {
+        if (envelope.has_schemas()) {
+            found_schema_response = true;
+            LOG(INFO) << "Got schema response with " << envelope.schemas().schemas_size() << " schemas";
+
+            // Verify the schema was returned
+            const auto& schemas = envelope.schemas().schemas();
+            bool found_hash = false;
+            for (const auto& entry : schemas) {
+                if (entry.schema_hash() == service_hash) {
+                    found_hash = true;
+                    const auto& ifex_yaml = entry.ifex_schema();
+                    EXPECT_TRUE(ifex_yaml.find("schema-request-test-service") != std::string::npos)
+                        << "Schema YAML should contain service name";
+                    break;
+                }
+            }
+            EXPECT_TRUE(found_hash) << "Response should contain requested schema hash";
+            break;
+        }
+    }
+    EXPECT_TRUE(found_schema_response) << "Should receive schema response to request";
 }
 
 TEST_F(DiscoverySyncBridgeIntegrationTest, StatsAfterSync) {
@@ -459,12 +583,12 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, StatsAfterSync) {
     DiscoverySyncBridge bridge(config);
 
     auto initial_stats = bridge.GetStats();
-    EXPECT_EQ(initial_stats.events_sent, 0);
+    EXPECT_EQ(initial_stats.manifests_sent, 0);
     EXPECT_FALSE(initial_stats.is_initialized);
 
     ASSERT_TRUE(bridge.Start());
 
-    // Wait for initialization and full sync
+    // Wait for initialization and hash manifest sync
     std::this_thread::sleep_for(1s);
 
     auto final_stats = bridge.GetStats();
@@ -472,36 +596,8 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, StatsAfterSync) {
     bridge.Stop();
 
     EXPECT_TRUE(final_stats.is_initialized);
-    EXPECT_GT(final_stats.events_sent, 0);
-    EXPECT_GT(final_stats.full_syncs_sent, 0);
+    EXPECT_GT(final_stats.manifests_sent, 0);  // At least one hash manifest sent
     EXPECT_GT(final_stats.bytes_sent, 0);
-    EXPECT_GT(final_stats.current_sequence, 0);
-}
-
-TEST_F(DiscoverySyncBridgeIntegrationTest, ChecksumConsistency) {
-    DiscoverySyncBridgeConfig config;
-    config.discovery_endpoint = TEST_DISCOVERY_ADDRESS;
-    config.backend_transport_endpoint = "localhost:" +
-        std::to_string(BACKEND_TRANSPORT_GRPC_PORT);
-    config.sync_content_id = content_id::DISCOVERY_SYNC;
-    config.vehicle_id = vehicle_id_;
-    config.initialization_delay_ms = 200;
-    config.poll_interval_ms = 500;
-    config.batch_window_ms = 0;
-
-    DiscoverySyncBridge bridge(config);
-    ASSERT_TRUE(bridge.Start());
-
-    std::this_thread::sleep_for(1s);
-
-    // Get checksum multiple times - should be consistent if no changes
-    uint32_t checksum1 = bridge.GetStateChecksum();
-    std::this_thread::sleep_for(100ms);
-    uint32_t checksum2 = bridge.GetStateChecksum();
-
-    bridge.Stop();
-
-    EXPECT_EQ(checksum1, checksum2) << "Checksum should be stable when state unchanged";
 }
 
 }  // namespace ifex::test

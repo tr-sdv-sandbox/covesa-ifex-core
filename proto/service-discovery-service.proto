@@ -94,6 +94,19 @@ message service_info_t {
   uint64 last_heartbeat = 8;
 }
 
+// Service name to schema hash mapping
+message service_hash_t {
+  string service_name = 1;
+  string version = 2;
+  string schema_hash = 3;
+}
+
+// Schema hash to full schema mapping
+message schema_entry_t {
+  string schema_hash = 1;
+  string ifex_schema = 2;
+}
+
 // Filter criteria for service queries
 message service_filter_t {
   string name_pattern = 1;
@@ -202,6 +215,33 @@ message heartbeat_response {
 
 service heartbeat_service {
   rpc heartbeat(heartbeat_request) returns (heartbeat_response);
+}
+
+// Method: get_service_hashes
+// Get SHA-256 hashes of all registered service schemas (for sync protocol)
+message get_service_hashes_request {
+}
+
+message get_service_hashes_response {
+  repeated service_hash_t hashes = 1;
+}
+
+service get_service_hashes_service {
+  rpc get_service_hashes(get_service_hashes_request) returns (get_service_hashes_response);
+}
+
+// Method: get_schemas_by_hash
+// Get full IFEX schemas for the requested hashes
+message get_schemas_by_hash_request {
+  repeated string hashes = 1;
+}
+
+message get_schemas_by_hash_response {
+  repeated schema_entry_t schemas = 1;
+}
+
+service get_schemas_by_hash_service {
+  rpc get_schemas_by_hash(get_schemas_by_hash_request) returns (get_schemas_by_hash_response);
 }
 
 

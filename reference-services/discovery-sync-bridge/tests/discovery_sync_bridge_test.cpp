@@ -44,129 +44,115 @@ TEST_F(DiscoverySyncBridgeTest, ContentIdConstants) {
     EXPECT_EQ(ifex::content_id::SCHEDULER_SYNC, 202);
 }
 
-TEST_F(DiscoverySyncBridgeTest, SyncEventTypeSerialization) {
-    swdv::discovery_sync_envelope::sync_event_t event;
-    event.set_event_type(swdv::discovery_sync_envelope::SERVICE_REGISTERED);
-    event.set_sequence_number(42);
-    event.set_timestamp_ns(1234567890000000000);
-    event.set_registration_id("reg_001");
+// =============================================================================
+// Hash-based Protocol Serialization Tests
+// =============================================================================
 
-    auto* info = event.mutable_service_info();
-    info->set_registration_id("reg_001");
-    info->set_name("test-service");
-    info->set_version("1.0.0");
-    info->mutable_endpoint()->set_address("localhost:50055");
-    info->mutable_endpoint()->set_transport(swdv::discovery_sync_envelope::GRPC);
-    info->set_status(swdv::discovery_sync_envelope::AVAILABLE);
-    info->set_last_heartbeat_ms(1234567890000);
+TEST_F(DiscoverySyncBridgeTest, HashListSerialization) {
+    swdv::discovery_sync_envelope::hash_list_t hash_list;
+    auto* entry1 = hash_list.add_hashes();
+    entry1->set_service_name("service1");
+    entry1->set_schema_hash("abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab");
+    auto* entry2 = hash_list.add_hashes();
+    entry2->set_service_name("service2");
+    entry2->set_schema_hash("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
 
     std::string serialized;
-    ASSERT_TRUE(event.SerializeToString(&serialized));
+    ASSERT_TRUE(hash_list.SerializeToString(&serialized));
     EXPECT_GT(serialized.size(), 0);
 
-    swdv::discovery_sync_envelope::sync_event_t parsed;
+    swdv::discovery_sync_envelope::hash_list_t parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
-    EXPECT_EQ(parsed.event_type(), swdv::discovery_sync_envelope::SERVICE_REGISTERED);
-    EXPECT_EQ(parsed.sequence_number(), 42);
-    EXPECT_EQ(parsed.registration_id(), "reg_001");
-    EXPECT_EQ(parsed.service_info().name(), "test-service");
-    EXPECT_EQ(parsed.service_info().status(), swdv::discovery_sync_envelope::AVAILABLE);
+    ASSERT_EQ(parsed.hashes_size(), 2);
+    EXPECT_EQ(parsed.hashes(0).schema_hash(), "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab");
+    EXPECT_EQ(parsed.hashes(1).schema_hash(), "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
 }
 
-TEST_F(DiscoverySyncBridgeTest, SyncMessageSerialization) {
-    swdv::discovery_sync_envelope::sync_message_t message;
-    message.set_vehicle_id("vehicle-001");
-    message.set_bridge_instance_id("dsb_1234567890abcdef");
-    message.set_state_checksum(0xDEADBEEF);
-    message.set_total_services(3);
-
-    // Add FULL_SYNC event
-    auto* event = message.add_events();
-    event->set_event_type(swdv::discovery_sync_envelope::FULL_SYNC);
-    event->set_sequence_number(1);
-    event->set_timestamp_ns(1234567890000000000);
+TEST_F(DiscoverySyncBridgeTest, SchemaMapSerialization) {
+    swdv::discovery_sync_envelope::schema_map_t schema_map;
+    auto* entry1 = schema_map.add_schemas();
+    entry1->set_schema_hash("hash1");
+    entry1->set_ifex_schema("name: service1\nversion: 1.0.0");
+    auto* entry2 = schema_map.add_schemas();
+    entry2->set_schema_hash("hash2");
+    entry2->set_ifex_schema("name: service2\nversion: 2.0.0");
 
     std::string serialized;
-    ASSERT_TRUE(message.SerializeToString(&serialized));
+    ASSERT_TRUE(schema_map.SerializeToString(&serialized));
     EXPECT_GT(serialized.size(), 0);
 
-    swdv::discovery_sync_envelope::sync_message_t parsed;
+    swdv::discovery_sync_envelope::schema_map_t parsed;
+    ASSERT_TRUE(parsed.ParseFromString(serialized));
+    ASSERT_EQ(parsed.schemas_size(), 2);
+    EXPECT_EQ(parsed.schemas(0).schema_hash(), "hash1");
+    EXPECT_EQ(parsed.schemas(0).ifex_schema(), "name: service1\nversion: 1.0.0");
+    EXPECT_EQ(parsed.schemas(1).schema_hash(), "hash2");
+    EXPECT_EQ(parsed.schemas(1).ifex_schema(), "name: service2\nversion: 2.0.0");
+}
+
+TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithManifest) {
+    swdv::discovery_sync_envelope::discovery_envelope_t envelope;
+    envelope.set_vehicle_id("vehicle-001");
+
+    auto* manifest = envelope.mutable_manifest();
+    auto* entry = manifest->add_hashes();
+    entry->set_service_name("test_service");
+    entry->set_schema_hash("abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab");
+
+    std::string serialized;
+    ASSERT_TRUE(envelope.SerializeToString(&serialized));
+
+    swdv::discovery_sync_envelope::discovery_envelope_t parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
     EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
-    EXPECT_EQ(parsed.bridge_instance_id(), "dsb_1234567890abcdef");
-    EXPECT_EQ(parsed.state_checksum(), 0xDEADBEEF);
-    EXPECT_EQ(parsed.total_services(), 3);
-    EXPECT_EQ(parsed.events_size(), 1);
-    EXPECT_EQ(parsed.events(0).event_type(), swdv::discovery_sync_envelope::FULL_SYNC);
+    EXPECT_TRUE(parsed.has_manifest());
+    EXPECT_FALSE(parsed.has_schema_request());
+    EXPECT_FALSE(parsed.has_schemas());
+    ASSERT_EQ(parsed.manifest().hashes_size(), 1);
+    EXPECT_EQ(parsed.manifest().hashes(0).schema_hash(), "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab");
 }
 
-TEST_F(DiscoverySyncBridgeTest, EventTypeValues) {
-    EXPECT_EQ(swdv::discovery_sync_envelope::FULL_SYNC, 0);
-    EXPECT_EQ(swdv::discovery_sync_envelope::SERVICE_REGISTERED, 1);
-    EXPECT_EQ(swdv::discovery_sync_envelope::SERVICE_UNREGISTERED, 2);
-    EXPECT_EQ(swdv::discovery_sync_envelope::SERVICE_STATUS_CHANGED, 3);
-    EXPECT_EQ(swdv::discovery_sync_envelope::HEARTBEAT, 4);
-}
+TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithSchemaRequest) {
+    swdv::discovery_sync_envelope::discovery_envelope_t envelope;
+    envelope.set_vehicle_id("vehicle-001");
 
-TEST_F(DiscoverySyncBridgeTest, ServiceStatusValues) {
-    EXPECT_EQ(swdv::discovery_sync_envelope::AVAILABLE, 0);
-    EXPECT_EQ(swdv::discovery_sync_envelope::UNAVAILABLE, 1);
-    EXPECT_EQ(swdv::discovery_sync_envelope::STARTING, 2);
-    EXPECT_EQ(swdv::discovery_sync_envelope::STOPPING, 3);
-    EXPECT_EQ(swdv::discovery_sync_envelope::ERROR, 4);
-}
-
-TEST_F(DiscoverySyncBridgeTest, TransportTypeValues) {
-    EXPECT_EQ(swdv::discovery_sync_envelope::GRPC, 0);
-    EXPECT_EQ(swdv::discovery_sync_envelope::HTTP_REST, 1);
-    EXPECT_EQ(swdv::discovery_sync_envelope::DBUS, 2);
-    EXPECT_EQ(swdv::discovery_sync_envelope::SOMEIP, 3);
-    EXPECT_EQ(swdv::discovery_sync_envelope::MQTT, 4);
-}
-
-TEST_F(DiscoverySyncBridgeTest, SyncedServiceStateHash) {
-    SyncedServiceState state1;
-    state1.registration_id = "reg_001";
-    state1.name = "service1";
-    state1.version = "1.0.0";
-    state1.address = "localhost:50055";
-    state1.status = swdv::discovery_sync_envelope::AVAILABLE;
-    state1.last_heartbeat_ms = 1000;
-
-    SyncedServiceState state2 = state1;
-
-    // Same state should have same hash
-    EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
-
-    // Different status should have different hash
-    state2.status = swdv::discovery_sync_envelope::UNAVAILABLE;
-    EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
-
-    // Different heartbeat should have different hash
-    state2 = state1;
-    state2.last_heartbeat_ms = 2000;
-    EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
-
-    // Different name should have different hash
-    state2 = state1;
-    state2.name = "service2";
-    EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
-}
-
-TEST_F(DiscoverySyncBridgeTest, SyncAckSerialization) {
-    swdv::discovery_sync_envelope::sync_ack_t ack;
-    ack.set_last_sequence_received(100);
-    ack.set_checksum_match(true);
-    ack.set_request_full_sync(false);
+    auto* request = envelope.mutable_schema_request();
+    request->add_hashes("unknown_hash_1");
+    request->add_hashes("unknown_hash_2");
 
     std::string serialized;
-    ASSERT_TRUE(ack.SerializeToString(&serialized));
+    ASSERT_TRUE(envelope.SerializeToString(&serialized));
 
-    swdv::discovery_sync_envelope::sync_ack_t parsed;
+    swdv::discovery_sync_envelope::discovery_envelope_t parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
-    EXPECT_EQ(parsed.last_sequence_received(), 100);
-    EXPECT_TRUE(parsed.checksum_match());
-    EXPECT_FALSE(parsed.request_full_sync());
+    EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
+    EXPECT_FALSE(parsed.has_manifest());
+    EXPECT_TRUE(parsed.has_schema_request());
+    EXPECT_FALSE(parsed.has_schemas());
+    ASSERT_EQ(parsed.schema_request().hashes_size(), 2);
+}
+
+TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithSchemas) {
+    swdv::discovery_sync_envelope::discovery_envelope_t envelope;
+    envelope.set_vehicle_id("vehicle-001");
+
+    auto* schemas = envelope.mutable_schemas();
+    auto* entry = schemas->add_schemas();
+    entry->set_schema_hash("hash1");
+    entry->set_ifex_schema("name: service1\nversion: 1.0.0");
+
+    std::string serialized;
+    ASSERT_TRUE(envelope.SerializeToString(&serialized));
+
+    swdv::discovery_sync_envelope::discovery_envelope_t parsed;
+    ASSERT_TRUE(parsed.ParseFromString(serialized));
+    EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
+    EXPECT_FALSE(parsed.has_manifest());
+    EXPECT_FALSE(parsed.has_schema_request());
+    EXPECT_TRUE(parsed.has_schemas());
+    ASSERT_EQ(parsed.schemas().schemas_size(), 1);
+    EXPECT_EQ(parsed.schemas().schemas(0).schema_hash(), "hash1");
+    EXPECT_EQ(parsed.schemas().schemas(0).ifex_schema(), "name: service1\nversion: 1.0.0");
 }
 
 // =============================================================================
@@ -202,9 +188,8 @@ TEST_F(DiscoverySyncBridgeTest, DISABLED_StatsInitiallyZero) {
     DiscoverySyncBridge bridge(config);
 
     auto stats = bridge.GetStats();
-    EXPECT_EQ(stats.events_sent, 0);
-    EXPECT_EQ(stats.full_syncs_sent, 0);
-    EXPECT_EQ(stats.delta_syncs_sent, 0);
+    EXPECT_EQ(stats.manifests_sent, 0);
+    EXPECT_EQ(stats.schema_responses_sent, 0);
     EXPECT_EQ(stats.heartbeats_sent, 0);
     EXPECT_EQ(stats.bytes_sent, 0);
     EXPECT_FALSE(stats.is_initialized);

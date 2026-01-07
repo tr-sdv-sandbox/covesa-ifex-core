@@ -81,7 +81,7 @@ ConnectionStatus from_proto(const pb::connection_status_t& s) {
     ConnectionStatus result;
     result.state = from_proto(s.state());
     result.reason = from_proto(s.reason());
-    result.timestamp_ns = s.timestamp_ns();
+    result.timestamp_ms = s.timestamp_ms();
     return result;
 }
 
@@ -249,8 +249,8 @@ public:
         result.bytes_sent = response.stats().bytes_sent();
         result.messages_received = response.stats().messages_received();
         result.bytes_received = response.stats().bytes_received();
-        result.last_send_timestamp_ns = response.stats().last_send_timestamp_ns();
-        result.last_receive_timestamp_ns = response.stats().last_receive_timestamp_ns();
+        result.last_send_timestamp_ms = response.stats().last_send_timestamp_ms();
+        result.last_receive_timestamp_ms = response.stats().last_receive_timestamp_ms();
         return result;
     }
 

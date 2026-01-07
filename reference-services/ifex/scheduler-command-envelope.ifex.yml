@@ -162,9 +162,9 @@ namespaces:
           - name: command_id
             datatype: string
             description: Unique command ID for correlation/tracking
-          - name: timestamp_ns
+          - name: timestamp_ms
             datatype: uint64
-            description: When command was issued (nanoseconds since epoch)
+            description: When command was issued (milliseconds since epoch)
           - name: requester_id
             datatype: string
             description: Identity of requester (for audit)
@@ -214,6 +214,6 @@ namespaces:
             datatype: string
             description: For CREATE_JOB - the vehicle-assigned job ID
             mandatory: false
-          - name: timestamp_ns
+          - name: timestamp_ms
             datatype: uint64
-            description: When acknowledgment was generated
+            description: When acknowledgment was generated (milliseconds since epoch)

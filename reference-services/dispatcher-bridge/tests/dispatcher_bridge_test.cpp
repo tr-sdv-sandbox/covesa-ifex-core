@@ -51,7 +51,7 @@ TEST_F(DispatcherBridgeTest, RpcRequestSerialization) {
     request.set_method_name("set_temperature");
     request.set_parameters_json(R"({"target": 22})");
     request.set_timeout_ms(5000);
-    request.set_request_timestamp_ns(1234567890000000000);
+    request.set_request_timestamp_ms(1234567890000);
 
     std::string serialized;
     ASSERT_TRUE(request.SerializeToString(&serialized));
@@ -64,7 +64,7 @@ TEST_F(DispatcherBridgeTest, RpcRequestSerialization) {
     EXPECT_EQ(parsed.method_name(), "set_temperature");
     EXPECT_EQ(parsed.parameters_json(), R"({"target": 22})");
     EXPECT_EQ(parsed.timeout_ms(), 5000);
-    EXPECT_EQ(parsed.request_timestamp_ns(), 1234567890000000000);
+    EXPECT_EQ(parsed.request_timestamp_ms(), 1234567890000);
 }
 
 TEST_F(DispatcherBridgeTest, RpcResponseSerialization) {
@@ -74,7 +74,7 @@ TEST_F(DispatcherBridgeTest, RpcResponseSerialization) {
     response.set_result_json(R"({"acknowledged": true})");
     response.set_duration_ms(150);
     response.set_service_endpoint("localhost:50055");
-    response.set_response_timestamp_ns(1234567890500000000);
+    response.set_response_timestamp_ms(1234567890500);
 
     std::string serialized;
     ASSERT_TRUE(response.SerializeToString(&serialized));
@@ -87,7 +87,7 @@ TEST_F(DispatcherBridgeTest, RpcResponseSerialization) {
     EXPECT_EQ(parsed.result_json(), R"({"acknowledged": true})");
     EXPECT_EQ(parsed.duration_ms(), 150);
     EXPECT_EQ(parsed.service_endpoint(), "localhost:50055");
-    EXPECT_EQ(parsed.response_timestamp_ns(), 1234567890500000000);
+    EXPECT_EQ(parsed.response_timestamp_ms(), 1234567890500);
 }
 
 TEST_F(DispatcherBridgeTest, RpcStatusValues) {

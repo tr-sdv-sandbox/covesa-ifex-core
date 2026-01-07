@@ -124,13 +124,11 @@ int main(int argc, char* argv[]) {
             auto now = std::chrono::steady_clock::now();
             if (now - last_stats_time >= stats_interval) {
                 auto stats = g_bridge->GetStats();
-                LOG(INFO) << "Stats: events_sent=" << stats.events_sent
-                          << " full_syncs=" << stats.full_syncs_sent
-                          << " delta_syncs=" << stats.delta_syncs_sent
+                LOG(INFO) << "Stats: manifests=" << stats.manifests_sent
+                          << " schema_responses=" << stats.schema_responses_sent
                           << " heartbeats=" << stats.heartbeats_sent
                           << " bytes=" << stats.bytes_sent
-                          << " services=" << stats.services_tracked
-                          << " seq=" << stats.current_sequence;
+                          << " hashes=" << stats.hashes_tracked;
                 last_stats_time = now;
             }
         }
@@ -140,9 +138,8 @@ int main(int argc, char* argv[]) {
 
         // Final stats
         auto stats = g_bridge->GetStats();
-        LOG(INFO) << "Final stats: events_sent=" << stats.events_sent
-                  << " full_syncs=" << stats.full_syncs_sent
-                  << " delta_syncs=" << stats.delta_syncs_sent
+        LOG(INFO) << "Final stats: manifests=" << stats.manifests_sent
+                  << " schema_responses=" << stats.schema_responses_sent
                   << " heartbeats=" << stats.heartbeats_sent
                   << " bytes=" << stats.bytes_sent;
 

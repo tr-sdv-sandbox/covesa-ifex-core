@@ -142,7 +142,7 @@ struct SchedulerSyncStats {
     uint64_t heartbeats_sent = 0;
     uint64_t bytes_sent = 0;
     uint64_t active_jobs_tracked = 0;
-    uint64_t last_sync_timestamp_ns = 0;
+    uint64_t last_sync_timestamp_ms = 0;
     uint64_t current_sequence = 0;
     bool is_initialized = false;
     bool is_connected = false;

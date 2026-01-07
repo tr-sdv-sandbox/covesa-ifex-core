@@ -130,5 +130,6 @@ if(BUILD_INTEGRATION_TESTS)
     set_tests_properties(scheduler_sync_bridge_integration_test PROPERTIES
         TIMEOUT 180
         LABELS "integration;docker;mqtt"
+        RESOURCE_LOCK mqtt_broker
     )
 endif()

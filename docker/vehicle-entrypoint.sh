@@ -89,6 +89,7 @@ log_info "Starting Discovery Sync Bridge..."
     --discovery=localhost:$DISCOVERY_PORT \
     --backend-transport=localhost:$BACKEND_TRANSPORT_PORT \
     --content-id=201 \
+    --vehicle-id=$VEHICLE_ID \
     > /app/logs/discovery-sync-bridge.log 2>&1 &
 sleep 0.5
 
@@ -97,6 +98,7 @@ log_info "Starting Scheduler Sync Bridge..."
     --scheduler=localhost:$SCHEDULER_PORT \
     --backend-transport=localhost:$BACKEND_TRANSPORT_PORT \
     --content-id=202 \
+    --vehicle_id=$VEHICLE_ID \
     > /app/logs/scheduler-sync-bridge.log 2>&1 &
 sleep 0.5
 
@@ -116,6 +118,7 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
         /app/bin/ifex-echo-service \
             --port=50064 \
             --discovery=localhost:$DISCOVERY_PORT \
+            --ifex-schema=/app/ifex/echo_service.ifex.yml \
             > /app/logs/echo.log 2>&1 &
         log_info "  Echo service started on port 50064"
     fi
@@ -124,6 +127,7 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
         /app/bin/beverage-service \
             --port=50061 \
             --discovery=localhost:$DISCOVERY_PORT \
+            --ifex-schema=/app/ifex/beverage-service.ifex.yml \
             > /app/logs/beverage.log 2>&1 &
     fi
 
@@ -131,12 +135,14 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
         /app/bin/climate-comfort-service \
             --port=50062 \
             --discovery=localhost:$DISCOVERY_PORT \
+            --ifex-schema=/app/ifex/climate-comfort-service.ifex.yml \
             > /app/logs/climate-comfort.log 2>&1 &
     fi
 
     if [ -x /app/bin/defrost-service ]; then
         /app/bin/defrost-service \
             --port=50063 \
+            --ifex-schema=/app/ifex/defrost-service.ifex.yml \
             --discovery=localhost:$DISCOVERY_PORT \
             > /app/logs/defrost.log 2>&1 &
     fi

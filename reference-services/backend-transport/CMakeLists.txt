@@ -164,6 +164,7 @@ if(BUILD_INTEGRATION_TESTS)
     set_tests_properties(backend_transport_conformance_test PROPERTIES
         TIMEOUT 120
         LABELS "integration;docker;conformance"
+        RESOURCE_LOCK mqtt_broker
     )
 
     # =========================================================================
@@ -199,6 +200,7 @@ if(BUILD_INTEGRATION_TESTS)
     set_tests_properties(backend_transport_integration_test PROPERTIES
         TIMEOUT 120
         LABELS "integration;docker;mqtt"
+        RESOURCE_LOCK mqtt_broker
     )
 
     # =========================================================================
@@ -234,5 +236,6 @@ if(BUILD_INTEGRATION_TESTS)
     set_tests_properties(backend_transport_resilience_test PROPERTIES
         TIMEOUT 300
         LABELS "integration;docker;resilience"
+        RESOURCE_LOCK mqtt_broker
     )
 endif()

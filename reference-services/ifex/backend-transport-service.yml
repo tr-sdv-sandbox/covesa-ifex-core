@@ -176,7 +176,7 @@ namespaces:
           - name: reason
             datatype: disconnect_reason_t
             description: Reason for disconnect (NONE when connected)
-          - name: timestamp_ns
+          - name: timestamp_ms
             datatype: int64
 
       - name: queue_status_t
@@ -208,9 +208,9 @@ namespaces:
             datatype: uint64
           - name: bytes_received
             datatype: uint64
-          - name: last_send_timestamp_ns
+          - name: last_send_timestamp_ms
             datatype: int64
-          - name: last_receive_timestamp_ns
+          - name: last_receive_timestamp_ms
             datatype: int64
 
       - name: content_message_t

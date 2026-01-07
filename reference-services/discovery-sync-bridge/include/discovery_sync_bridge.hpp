@@ -3,15 +3,17 @@
  * @brief Bridge service for synchronizing Discovery state to cloud
  *
  * The DiscoverySyncBridge monitors the Discovery service and publishes
- * state changes to the cloud via Backend Transport. It maintains sync
- * state to minimize traffic by only sending deltas after initial full sync.
+ * schema hashes to the cloud via Backend Transport using a hash-based protocol.
  *
- * Design principles:
- * - Initialization delay: Wait for system to stabilize before syncing
- * - Delta sync: Track synced state, only publish changes
- * - Sequence numbers: Enable cloud to detect missed events
- * - State checksum: Enable verification without full resync
- * - Batching: Combine multiple events to reduce MQTT messages
+ * Hash-based Protocol:
+ * 1. Vehicle sends list of schema hashes (SHA-256 of IFEX YAML)
+ * 2. Cloud requests full schemas only for unknown hashes
+ * 3. Vehicle sends requested schemas
+ *
+ * Benefits:
+ * - Minimal bandwidth: ~100 bytes per reconnect (just hashes)
+ * - Fleet deduplication: Same schema stored once across 100K vehicles
+ * - Efficient sync: Only new schemas transferred
  */
 
 #pragma once
@@ -24,13 +26,13 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
+#include <set>
 #include <string>
 #include <thread>
-#include <unordered_map>
+#include <vector>
 
 namespace grpc {
 class Channel;
@@ -73,48 +75,32 @@ struct DiscoverySyncBridgeConfig {
     std::string state_persistence_path;
 };
 
-/**
- * @brief Cached state of a synced service
- */
-struct SyncedServiceState {
-    std::string registration_id;
-    std::string name;
-    std::string version;
-    std::string address;
-    swdv::discovery_sync_envelope::service_status_t status;
-    uint64_t last_heartbeat_ms = 0;
-    uint64_t last_synced_sequence = 0;
-
-    /// Compute hash for change detection
-    uint64_t ComputeHash() const;
-};
 
 /**
  * @brief Statistics for monitoring sync bridge health
  */
 struct DiscoverySyncStats {
-    uint64_t events_sent = 0;
-    uint64_t full_syncs_sent = 0;
-    uint64_t delta_syncs_sent = 0;
+    uint64_t manifests_sent = 0;       ///< Hash manifest messages sent
+    uint64_t schema_responses_sent = 0; ///< Schema response messages sent
     uint64_t heartbeats_sent = 0;
     uint64_t bytes_sent = 0;
-    uint64_t services_tracked = 0;
-    uint64_t last_sync_timestamp_ns = 0;
-    uint64_t current_sequence = 0;
+    uint64_t hashes_tracked = 0;       ///< Number of schema hashes currently tracked
+    uint64_t last_sync_timestamp_ms = 0;
     bool is_initialized = false;
     bool is_connected = false;
 };
 
 /**
- * @brief Bridge for synchronizing Discovery state to cloud
+ * @brief Bridge for synchronizing Discovery state to cloud via hash-based protocol
  *
  * Lifecycle:
  * 1. Start() - begins initialization phase
- * 2. After initialization_delay_ms, captures initial state
- * 3. Publishes FULL_SYNC event with all services
- * 4. Polls Discovery at poll_interval_ms
- * 5. Publishes delta events for any changes
- * 6. Stop() - graceful shutdown
+ * 2. After initialization_delay_ms, queries Discovery for schema hashes
+ * 3. Publishes hash manifest (list of SHA-256 hashes)
+ * 4. Polls Discovery at poll_interval_ms for hash changes
+ * 5. Republishes manifest when hashes change
+ * 6. Responds to cloud schema requests with full IFEX YAML
+ * 7. Stop() - graceful shutdown
  */
 class DiscoverySyncBridge {
 public:
@@ -157,14 +143,9 @@ public:
     DiscoverySyncStats GetStats() const;
 
     /**
-     * @brief Force a full sync (for testing or recovery)
+     * @brief Force sending hash manifest (for testing or recovery)
      */
-    void ForceFullSync();
-
-    /**
-     * @brief Get current state checksum
-     */
-    uint32_t GetStateChecksum() const;
+    void ForceManifestSync();
 
 private:
     /// Configuration
@@ -176,23 +157,13 @@ private:
     /// gRPC channel to Discovery service
     std::shared_ptr<grpc::Channel> discovery_channel_;
 
-    /// Discovery service stub
-    std::unique_ptr<swdv::service_discovery::query_services_service::Stub> query_stub_;
-
-    /// Cached sync state (registration_id -> state)
-    std::unordered_map<std::string, SyncedServiceState> synced_state_;
-    mutable std::mutex state_mutex_;
-
-    /// Pending events to batch
-    std::vector<swdv::discovery_sync_envelope::sync_event_t> pending_events_;
-    mutable std::mutex events_mutex_;
+    /// Discovery service stubs for hash-based protocol
+    std::unique_ptr<swdv::service_discovery::get_service_hashes_service::Stub> hash_stub_;
+    std::unique_ptr<swdv::service_discovery::get_schemas_by_hash_service::Stub> schema_stub_;
 
     /// Statistics
     mutable DiscoverySyncStats stats_;
     mutable std::mutex stats_mutex_;
-
-    /// Monotonic sequence number
-    std::atomic<uint64_t> sequence_number_{0};
 
     /// Unique instance ID (for restart detection)
     std::string instance_id_;
@@ -202,9 +173,8 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> stop_requested_{false};
 
-    /// Worker threads
+    /// Worker thread
     std::thread poll_thread_;
-    std::thread batch_thread_;
 
     /// Condition variable for signaling
     std::condition_variable cv_;
@@ -213,38 +183,32 @@ private:
     /// Last heartbeat time
     std::chrono::steady_clock::time_point last_activity_time_;
 
+    /// Currently tracked hashes (for stats)
+    std::set<std::string> current_hashes_;
+    mutable std::mutex hashes_mutex_;
+
     // Internal methods
 
     /// Main polling loop
     void PollLoop();
 
-    /// Batch sending loop
-    void BatchLoop();
+    /// Query Discovery for schema hashes
+    std::vector<std::pair<std::string, std::string>> QueryServiceHashes();
 
-    /// Query Discovery for current services
-    std::vector<SyncedServiceState> QueryDiscoveryServices();
+    /// Query Discovery for schemas by hash
+    std::map<std::string, std::string> QuerySchemasByHash(const std::vector<std::string>& hashes);
 
-    /// Compare current state with synced state, generate events
-    void DetectChanges(const std::vector<SyncedServiceState>& current);
+    /// Send schema manifest (hash list) to cloud
+    void SendHashManifest(const std::vector<std::pair<std::string, std::string>>& hashes);
 
-    /// Queue an event for sending
-    void QueueEvent(swdv::discovery_sync_envelope::sync_event_t event);
+    /// Send schemas to cloud (response to schema request)
+    void SendSchemas(const std::map<std::string, std::string>& schemas);
 
-    /// Send queued events
-    void FlushEvents();
-
-    /// Send a full sync message
-    void SendFullSync(const std::vector<SyncedServiceState>& services);
+    /// Handle incoming c2v message (schema request from cloud)
+    void HandleC2vMessage(const std::vector<uint8_t>& payload);
 
     /// Send heartbeat if no recent activity
     void MaybeSendHeartbeat();
-
-    /// Build service_info_t from cached state
-    swdv::discovery_sync_envelope::service_info_t BuildServiceInfo(
-        const SyncedServiceState& state);
-
-    /// Compute CRC32 checksum of current state
-    uint32_t ComputeStateChecksum() const;
 
     /// Generate unique instance ID
     static std::string GenerateInstanceId();
@@ -256,7 +220,7 @@ private:
     void PersistState();
 
     /// Update statistics
-    void UpdateStats(uint64_t bytes_sent, bool is_full_sync);
+    void UpdateStats(uint64_t bytes_sent, bool is_manifest);
 };
 
 }  // namespace ifex::reference

@@ -185,7 +185,7 @@ private:
     void BroadcastAck(uint32_t content_id, uint64_t sequence);
 
     // Helpers
-    int64_t NowNs() const;
+    int64_t NowMs() const;
     swdv::backend_transport_service::connection_state_t CurrentConnectionState() const;
 
     /// Extract content_id from gRPC metadata (channel-bound model)
@@ -200,7 +200,7 @@ private:
     std::atomic<bool> connected_{false};
     swdv::backend_transport_service::disconnect_reason_t disconnect_reason_ =
         swdv::backend_transport_service::NONE;
-    std::atomic<int64_t> last_status_change_ns_{0};
+    std::atomic<int64_t> last_status_change_ms_{0};
 
     // Statistics
     std::atomic<uint64_t> messages_sent_{0};
@@ -208,8 +208,8 @@ private:
     std::atomic<uint64_t> bytes_sent_{0};
     std::atomic<uint64_t> messages_received_{0};
     std::atomic<uint64_t> bytes_received_{0};
-    std::atomic<int64_t> last_send_timestamp_ns_{0};
-    std::atomic<int64_t> last_receive_timestamp_ns_{0};
+    std::atomic<int64_t> last_send_timestamp_ms_{0};
+    std::atomic<int64_t> last_receive_timestamp_ms_{0};
 
     // C2V content subscriptions (which content_ids we're subscribed to)
     std::shared_mutex subscriptions_mutex_;

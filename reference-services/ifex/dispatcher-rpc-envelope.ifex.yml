@@ -68,10 +68,10 @@ namespaces:
               Request timeout in milliseconds. Vehicle SHOULD complete
               or fail the request within this time.
             default: 30000
-          - name: request_timestamp_ns
+          - name: request_timestamp_ms
             datatype: int64
             description: >
-              Cloud timestamp when request was sent (nanoseconds since Unix epoch).
+              Cloud timestamp when request was sent (milliseconds since Unix epoch).
               Used for latency measurement and stale request detection.
 
       - name: rpc_response_t
@@ -102,6 +102,6 @@ namespaces:
             datatype: string
             description: Resolved onboard endpoint (for debugging)
             mandatory: false
-          - name: response_timestamp_ns
+          - name: response_timestamp_ms
             datatype: int64
-            description: Vehicle timestamp when response was sent (nanoseconds since Unix epoch)
+            description: Vehicle timestamp when response was sent (milliseconds since Unix epoch)

@@ -20,11 +20,14 @@ struct ServiceRegistration {
     std::string transport;
     std::chrono::system_clock::time_point last_heartbeat;
     swdv::service_discovery::service_status_t status;
-    
+
     // Store IFEX interface definition
     std::vector<swdv::service_discovery::namespace_info_t> namespaces;
     std::string ifex_schema;
-    
+
+    // SHA-256 hash of ifex_schema (64 hex chars) for efficient cloud sync
+    std::string schema_hash;
+
     // Helper to check if service is available for new requests
     bool is_available() const {
         return status == swdv::service_discovery::service_status_t::AVAILABLE ||
@@ -33,12 +36,14 @@ struct ServiceRegistration {
 };
 
 // Combined service that implements multiple IFEX-generated services
-class DiscoveryServer final : 
+class DiscoveryServer final :
     public swdv::service_discovery::get_service_service::Service,
     public swdv::service_discovery::register_service_service::Service,
     public swdv::service_discovery::unregister_service_service::Service,
     public swdv::service_discovery::query_services_service::Service,
-    public swdv::service_discovery::heartbeat_service::Service {
+    public swdv::service_discovery::heartbeat_service::Service,
+    public swdv::service_discovery::get_service_hashes_service::Service,
+    public swdv::service_discovery::get_schemas_by_hash_service::Service {
 public:
     DiscoveryServer();
     ~DiscoveryServer();
@@ -73,6 +78,16 @@ public:
                         const swdv::service_discovery::heartbeat_request* request,
                         swdv::service_discovery::heartbeat_response* response) override;
 
+    // get_service_hashes_service methods (for efficient cloud sync)
+    grpc::Status get_service_hashes(grpc::ServerContext* context,
+                        const swdv::service_discovery::get_service_hashes_request* request,
+                        swdv::service_discovery::get_service_hashes_response* response) override;
+
+    // get_schemas_by_hash_service methods (for efficient cloud sync)
+    grpc::Status get_schemas_by_hash(grpc::ServerContext* context,
+                        const swdv::service_discovery::get_schemas_by_hash_request* request,
+                        swdv::service_discovery::get_schemas_by_hash_response* response) override;
+
 
 private:
     std::unique_ptr<grpc::Server> server_;
@@ -84,13 +99,19 @@ private:
     
     // Secondary index by service name
     std::unordered_multimap<std::string, std::string> services_by_name_;
-    
+
+    // Index by schema hash for efficient hash-based lookups
+    std::unordered_multimap<std::string, std::string> services_by_hash_;
+
     // Helper methods
     std::string generate_registration_id();
-    bool matches_filter(const ServiceRegistration& service, 
+    bool matches_filter(const ServiceRegistration& service,
                        const swdv::service_discovery::service_filter_t& filter);
-    bool check_extension_path(const std::string& ifex_yaml, 
+    bool check_extension_path(const std::string& ifex_yaml,
                             const std::string& extension_path);
+
+    // Compute SHA-256 hash of schema (returns 64 hex chars)
+    static std::string compute_schema_hash(const std::string& ifex_schema);
 };
 
 } // namespace ifex::reference

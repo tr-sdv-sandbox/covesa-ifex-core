@@ -167,7 +167,7 @@ grpc::Status BackendTransportServer::get_connection_status(
     auto* status = response->mutable_status();
     status->set_state(CurrentConnectionState());
     status->set_reason(disconnect_reason_);
-    status->set_timestamp_ns(last_status_change_ns_.load());
+    status->set_timestamp_ms(last_status_change_ms_.load());
 
     return grpc::Status::OK;
 }
@@ -198,8 +198,8 @@ grpc::Status BackendTransportServer::get_stats(
     stats->set_bytes_sent(bytes_sent_.load());
     stats->set_messages_received(messages_received_.load());
     stats->set_bytes_received(bytes_received_.load());
-    stats->set_last_send_timestamp_ns(last_send_timestamp_ns_.load());
-    stats->set_last_receive_timestamp_ns(last_receive_timestamp_ns_.load());
+    stats->set_last_send_timestamp_ms(last_send_timestamp_ms_.load());
+    stats->set_last_receive_timestamp_ms(last_receive_timestamp_ms_.load());
 
     return grpc::Status::OK;
 }
@@ -319,7 +319,7 @@ grpc::Status BackendTransportServer::subscribe(
     auto* status = event.mutable_status();
     status->set_state(CurrentConnectionState());
     status->set_reason(disconnect_reason_);  // Now using enum
-    status->set_timestamp_ns(last_status_change_ns_.load());
+    status->set_timestamp_ms(last_status_change_ms_.load());
     writer->Write(event);
 
     // Keep stream open until client disconnects
@@ -362,7 +362,7 @@ void BackendTransportServer::OnMqttConnected() {
 
     connected_ = true;
     disconnect_reason_ = swdv::backend_transport_service::NONE;
-    last_status_change_ns_ = NowNs();
+    last_status_change_ms_ = NowMs();
 
     // Resubscribe to all c2v topics
     {
@@ -396,7 +396,7 @@ void BackendTransportServer::OnMqttDisconnected(int reason) {
             disconnect_reason_ = swdv::backend_transport_service::NETWORK_ERROR;
             break;
     }
-    last_status_change_ns_ = NowNs();
+    last_status_change_ms_ = NowMs();
 
     BroadcastConnectionStatus();
 }
@@ -411,7 +411,7 @@ void BackendTransportServer::OnMqttMessage(const std::string& topic, const std::
 
     messages_received_++;
     bytes_received_ += payload.size();
-    last_receive_timestamp_ns_ = NowNs();
+    last_receive_timestamp_ms_ = NowMs();
 
     // Queue message if no handler registered yet, otherwise deliver immediately
     DeliverOrQueueC2v(content_id, payload);
@@ -423,7 +423,7 @@ bool BackendTransportServer::SendToMqtt(uint32_t content_id, const std::vector<u
     if (success) {
         messages_sent_++;
         bytes_sent_ += payload.size();
-        last_send_timestamp_ns_ = NowNs();
+        last_send_timestamp_ms_ = NowMs();
     }
     return success;
 }
@@ -503,7 +503,7 @@ void BackendTransportServer::BroadcastConnectionStatus() {
     auto* status = event.mutable_status();
     status->set_state(CurrentConnectionState());
     status->set_reason(disconnect_reason_);  // Now using enum
-    status->set_timestamp_ns(last_status_change_ns_.load());
+    status->set_timestamp_ms(last_status_change_ms_.load());
 
     std::shared_lock<std::shared_mutex> lock(connection_streams_mutex_);
     for (auto* writer : connection_streams_) {
@@ -547,8 +547,8 @@ void BackendTransportServer::BroadcastQueueStatus() {
     }
 }
 
-int64_t BackendTransportServer::NowNs() const {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+int64_t BackendTransportServer::NowMs() const {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 

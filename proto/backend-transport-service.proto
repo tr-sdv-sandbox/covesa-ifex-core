@@ -80,7 +80,7 @@ message delivery_ack_t {
 message connection_status_t {
   connection_state_t state = 1;
   disconnect_reason_t reason = 2;
-  sint64 timestamp_ns = 3;
+  sint64 timestamp_ms = 3;
 }
 
 // Outbound queue status for adaptive throttling. Broadcast via on_queue_status_changed when level changes, enabling clients to resume sending after queue drains.
@@ -98,8 +98,8 @@ message transport_stats_t {
   uint64 bytes_sent = 3;
   uint64 messages_received = 4;
   uint64 bytes_received = 5;
-  sint64 last_send_timestamp_ns = 6;
-  sint64 last_receive_timestamp_ns = 7;
+  sint64 last_send_timestamp_ms = 6;
+  sint64 last_receive_timestamp_ms = 7;
 }
 
 // Incoming message from cloud (c2v). Content ID is implicit in the channel/handle this message arrives on.

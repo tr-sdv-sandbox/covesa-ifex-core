@@ -461,8 +461,8 @@ TEST_F(DispatcherBridgeIntegrationTest, EchoServiceRoundTrip) {
     request.set_method_name("echo");
     request.set_parameters_json(R"({"message": "Hello from cloud!"})");
     request.set_timeout_ms(5000);
-    request.set_request_timestamp_ns(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
+    request.set_request_timestamp_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
     // Start listening for response before sending request

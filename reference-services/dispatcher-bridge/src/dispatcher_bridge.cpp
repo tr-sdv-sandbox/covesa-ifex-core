@@ -24,9 +24,9 @@ namespace ifex::reference {
 
 namespace {
 
-/// Get current time in nanoseconds since epoch
-int64_t NowNs() {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+/// Get current time in milliseconds since epoch
+int64_t NowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
@@ -290,9 +290,8 @@ void DispatcherBridge::HandleIncomingRequest(const std::vector<uint8_t>& payload
         timeout_ms = config_.default_timeout_ms;
     }
 
-    if (request.request_timestamp_ns() > 0) {
-        int64_t age_ns = NowNs() - request.request_timestamp_ns();
-        int64_t age_ms = age_ns / 1000000;
+    if (request.request_timestamp_ms() > 0) {
+        int64_t age_ms = NowMs() - request.request_timestamp_ms();
         if (age_ms > static_cast<int64_t>(timeout_ms)) {
             LOG(WARNING) << "Request already expired: age=" << age_ms
                          << "ms, timeout=" << timeout_ms << "ms";
@@ -320,9 +319,9 @@ void DispatcherBridge::HandleIncomingRequest(const std::vector<uint8_t>& payload
                        service_name = request.service_name(),
                        method_name = request.method_name(),
                        parameters_json = request.parameters_json(),
-                       request_timestamp_ns = request.request_timestamp_ns()] {
+                       request_timestamp_ms = request.request_timestamp_ms()] {
         ExecuteRequest(pending, service_name, method_name,
-                      parameters_json, request_timestamp_ns);
+                      parameters_json, request_timestamp_ms);
     });
 }
 
@@ -331,7 +330,7 @@ void DispatcherBridge::ExecuteRequest(
     const std::string& service_name,
     const std::string& method_name,
     const std::string& parameters_json,
-    int64_t request_timestamp_ns) {
+    int64_t request_timestamp_ms) {
 
     // Check if already completed (timed out)
     if (pending->completed.exchange(true)) {
@@ -440,7 +439,7 @@ void DispatcherBridge::SendResponse(
     response.set_error_message(error_message);
     response.set_duration_ms(duration_ms);
     response.set_service_endpoint(service_endpoint);
-    response.set_response_timestamp_ns(NowNs());
+    response.set_response_timestamp_ms(NowMs());
 
     std::string serialized;
     if (!response.SerializeToString(&serialized)) {

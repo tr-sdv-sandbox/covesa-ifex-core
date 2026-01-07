@@ -71,7 +71,7 @@ enum class DisconnectReason : uint8_t {
 struct ConnectionStatus {
     ConnectionState state = ConnectionState::Unknown;
     DisconnectReason reason = DisconnectReason::None;
-    int64_t timestamp_ns = 0;
+    int64_t timestamp_ms = 0;
 };
 
 /// Queue status for adaptive throttling
@@ -88,8 +88,8 @@ struct TransportStats {
     uint64_t bytes_sent = 0;
     uint64_t messages_received = 0;
     uint64_t bytes_received = 0;
-    int64_t last_send_timestamp_ns = 0;
-    int64_t last_receive_timestamp_ns = 0;
+    int64_t last_send_timestamp_ms = 0;
+    int64_t last_receive_timestamp_ms = 0;
 };
 
 /// Result of a publish operation

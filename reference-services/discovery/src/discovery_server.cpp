@@ -3,10 +3,27 @@
 #include <glog/logging.h>
 #include <grpcpp/server_builder.h>
 #include <yaml-cpp/yaml.h>
+#include <openssl/sha.h>
 #include <sstream>
+#include <iomanip>
 #include <unordered_map>
+#include <algorithm>
 
 namespace ifex::reference {
+
+namespace {
+
+// Validate that a hash is a proper 64-character hex string (SHA-256)
+bool IsValidSchemaHash(const std::string& hash) {
+    if (hash.size() != 64) {
+        return false;
+    }
+    return std::all_of(hash.begin(), hash.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
+}
+
+}  // namespace
 
 DiscoveryServer::DiscoveryServer() {
     LOG(INFO) << "Initializing Discovery Server";
@@ -28,6 +45,8 @@ void DiscoveryServer::Start(const std::string& listen_address) {
     builder.RegisterService(static_cast<swdv::service_discovery::unregister_service_service::Service*>(this));
     builder.RegisterService(static_cast<swdv::service_discovery::query_services_service::Service*>(this));
     builder.RegisterService(static_cast<swdv::service_discovery::heartbeat_service::Service*>(this));
+    builder.RegisterService(static_cast<swdv::service_discovery::get_service_hashes_service::Service*>(this));
+    builder.RegisterService(static_cast<swdv::service_discovery::get_schemas_by_hash_service::Service*>(this));
     
     server_ = builder.BuildAndStart();
     LOG(INFO) << "Discovery server listening on " << listen_address;
@@ -158,6 +177,21 @@ grpc::Status DiscoveryServer::register_service(
     // Status is already set above
     registration.ifex_schema = service_info.ifex_schema();
 
+    // Compute and store schema hash for efficient cloud sync
+    if (!registration.ifex_schema.empty()) {
+        registration.schema_hash = compute_schema_hash(registration.ifex_schema);
+        // Sanity check: verify hash is valid SHA-256 (64 hex chars)
+        if (!IsValidSchemaHash(registration.schema_hash)) {
+            LOG(ERROR) << "BUG: compute_schema_hash produced invalid hash (length="
+                       << registration.schema_hash.size() << ") for service "
+                       << registration.name << " - clearing hash";
+            registration.schema_hash.clear();
+        } else {
+            VLOG(1) << "Computed schema hash: " << registration.schema_hash
+                    << " for service " << registration.name;
+        }
+    }
+
     // Copy namespaces from request if provided
     for (const auto& ns : service_info.namespaces()) {
         registration.namespaces.push_back(ns);
@@ -203,7 +237,12 @@ grpc::Status DiscoveryServer::register_service(
     std::lock_guard<std::mutex> lock(mutex_);
     registered_services_[registration.registration_id] = registration;
     services_by_name_.emplace(registration.name, registration.registration_id);
-    
+
+    // Add to hash index for efficient cloud sync lookups
+    if (!registration.schema_hash.empty()) {
+        services_by_hash_.emplace(registration.schema_hash, registration.registration_id);
+    }
+
     // Set response
     response->set_registration_id(registration.registration_id);
     
@@ -234,10 +273,22 @@ grpc::Status DiscoveryServer::unregister_service(
                 ++name_it;
             }
         }
-        
+
+        // Remove from hash index
+        if (!it->second.schema_hash.empty()) {
+            auto hash_range = services_by_hash_.equal_range(it->second.schema_hash);
+            for (auto hash_it = hash_range.first; hash_it != hash_range.second; ) {
+                if (hash_it->second == request->registration_id()) {
+                    hash_it = services_by_hash_.erase(hash_it);
+                } else {
+                    ++hash_it;
+                }
+            }
+        }
+
         // Remove from main registry
         registered_services_.erase(it);
-        
+
         LOG(INFO) << "Service unregistered successfully";
         return grpc::Status::OK;
     } else {
@@ -453,6 +504,95 @@ bool DiscoveryServer::check_extension_path(
         LOG(WARNING) << "Failed to check extension path: " << e.what();
         return false;
     }
+}
+
+// Compute SHA-256 hash of schema
+std::string DiscoveryServer::compute_schema_hash(const std::string& ifex_schema) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(ifex_schema.data()),
+           ifex_schema.size(), hash);
+
+    // Convert to hex string
+    std::ostringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        ss << std::setw(2) << static_cast<unsigned int>(hash[i]);
+    }
+    return ss.str();
+}
+
+// get_service_hashes implementation - returns all schema hashes for cloud sync
+grpc::Status DiscoveryServer::get_service_hashes(
+    grpc::ServerContext* context,
+    const swdv::service_discovery::get_service_hashes_request* request,
+    swdv::service_discovery::get_service_hashes_response* response) {
+
+    LOG(INFO) << "get_service_hashes called";
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Collect unique hashes (deduplicate within this vehicle)
+    std::unordered_map<std::string, const ServiceRegistration*> unique_hashes;
+    for (const auto& [reg_id, service] : registered_services_) {
+        if (!service.schema_hash.empty()) {
+            // Sanity check: only return valid SHA-256 hashes
+            if (!IsValidSchemaHash(service.schema_hash)) {
+                LOG(WARNING) << "Service '" << service.name
+                             << "' has invalid schema hash (length="
+                             << service.schema_hash.size() << ", expected 64)";
+                continue;
+            }
+            // Only keep one representative for each hash
+            if (unique_hashes.find(service.schema_hash) == unique_hashes.end()) {
+                unique_hashes[service.schema_hash] = &service;
+            }
+        }
+    }
+
+    // Build response
+    for (const auto& [hash, service] : unique_hashes) {
+        auto* entry = response->add_hashes();
+        entry->set_schema_hash(hash);
+        entry->set_service_name(service->name);
+        entry->set_version(service->version);
+        LOG(INFO) << "get_service_hashes: returning service_name='" << service->name
+                  << "' version='" << service->version
+                  << "' schema_hash='" << hash << "'";
+    }
+
+    LOG(INFO) << "Returning " << response->hashes_size() << " unique schema hashes";
+    return grpc::Status::OK;
+}
+
+// get_schemas_by_hash implementation - returns IFEX YAML for requested hashes
+grpc::Status DiscoveryServer::get_schemas_by_hash(
+    grpc::ServerContext* context,
+    const swdv::service_discovery::get_schemas_by_hash_request* request,
+    swdv::service_discovery::get_schemas_by_hash_response* response) {
+
+    LOG(INFO) << "get_schemas_by_hash called for " << request->hashes_size() << " hashes";
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    for (const auto& requested_hash : request->hashes()) {
+        // Find first service with this hash (they all have the same schema)
+        auto range = services_by_hash_.equal_range(requested_hash);
+        if (range.first != range.second) {
+            const auto& reg_id = range.first->second;
+            auto it = registered_services_.find(reg_id);
+            if (it != registered_services_.end()) {
+                auto* entry = response->add_schemas();
+                entry->set_schema_hash(requested_hash);
+                entry->set_ifex_schema(it->second.ifex_schema);
+                VLOG(1) << "Returning schema for hash " << requested_hash;
+            }
+        } else {
+            LOG(WARNING) << "Schema hash not found: " << requested_hash;
+        }
+    }
+
+    LOG(INFO) << "Returning " << response->schemas_size() << " schemas";
+    return grpc::Status::OK;
 }
 
 } // namespace ifex::reference

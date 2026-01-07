@@ -353,8 +353,8 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
             sync_pb::sync_event_t event;
             event.set_event_type(sync_pb::JOB_DELETED);
             event.set_sequence_number(++sequence_number_);
-            event.set_timestamp_ns(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
+            event.set_timestamp_ms(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count());
             event.set_job_id(job_id);
 
@@ -385,8 +385,8 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                 sync_pb::sync_event_t event;
                 event.set_event_type(sync_pb::JOB_EXECUTED);
                 event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ns(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                event.set_timestamp_ms(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
                 event.set_job_id(job.job_id);
 
@@ -409,8 +409,8 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                 sync_pb::sync_event_t event;
                 event.set_event_type(sync_pb::JOB_CREATED);
                 event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ns(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                event.set_timestamp_ms(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
                 event.set_job_id(job.job_id);
                 *event.mutable_job_info() = BuildJobInfo(job);
@@ -429,8 +429,8 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                 sync_pb::sync_event_t event;
                 event.set_event_type(sync_pb::JOB_EXECUTED);
                 event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ns(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                event.set_timestamp_ms(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count());
                 event.set_job_id(job.job_id);
 
@@ -460,8 +460,8 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                     sync_pb::sync_event_t event;
                     event.set_event_type(sync_pb::JOB_UPDATED);
                     event.set_sequence_number(++sequence_number_);
-                    event.set_timestamp_ns(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    event.set_timestamp_ms(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::system_clock::now().time_since_epoch()).count());
                     event.set_job_id(job.job_id);
                     *event.mutable_job_info() = BuildJobInfo(job);
@@ -548,8 +548,8 @@ void SchedulerSyncBridge::SendFullSync(const std::vector<SyncedJobState>& jobs) 
     sync_pb::sync_event_t event;
     event.set_event_type(sync_pb::FULL_SYNC);
     event.set_sequence_number(++sequence_number_);
-    event.set_timestamp_ns(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
+    event.set_timestamp_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
     *message.add_events() = event;
@@ -563,8 +563,8 @@ void SchedulerSyncBridge::SendFullSync(const std::vector<SyncedJobState>& jobs) 
         sync_pb::sync_event_t job_event;
         job_event.set_event_type(sync_pb::JOB_CREATED);
         job_event.set_sequence_number(++sequence_number_);
-        job_event.set_timestamp_ns(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
+        job_event.set_timestamp_ms(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
         job_event.set_job_id(job.job_id);
         *job_event.mutable_job_info() = BuildJobInfo(job);
@@ -617,8 +617,8 @@ void SchedulerSyncBridge::MaybeSendHeartbeat() {
         sync_pb::sync_event_t event;
         event.set_event_type(sync_pb::HEARTBEAT);
         event.set_sequence_number(++sequence_number_);
-        event.set_timestamp_ns(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
+        event.set_timestamp_ms(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
 
         *message.add_events() = std::move(event);
@@ -763,8 +763,8 @@ void SchedulerSyncBridge::UpdateStats(uint64_t bytes_sent, bool is_full_sync,
     std::lock_guard<std::mutex> lock(stats_mutex_);
     stats_.events_sent++;
     stats_.bytes_sent += bytes_sent;
-    stats_.last_sync_timestamp_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
+    stats_.last_sync_timestamp_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
 
     if (is_full_sync) {
@@ -1173,8 +1173,8 @@ void SchedulerSyncBridge::SendCommandAck(const std::string& command_id,
     if (!job_id.empty()) {
         ack.set_job_id(job_id);
     }
-    ack.set_timestamp_ns(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
+    ack.set_timestamp_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
     std::string serialized;

@@ -172,9 +172,9 @@ namespaces:
           - name: sequence_number
             datatype: uint64
             description: Monotonic sequence number
-          - name: timestamp_ns
+          - name: timestamp_ms
             datatype: uint64
-            description: Event timestamp (nanoseconds since epoch)
+            description: Event timestamp (milliseconds since epoch)
           - name: job_id
             datatype: string
             description: Related job ID (for job events)

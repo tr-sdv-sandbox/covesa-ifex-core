@@ -145,9 +145,9 @@ namespaces:
           - name: sequence_number
             datatype: uint64
             description: Monotonic sequence for ordering/gap detection
-          - name: timestamp_ns
+          - name: timestamp_ms
             datatype: uint64
-            description: Event timestamp (unix nanoseconds)
+            description: Event timestamp (milliseconds since Unix epoch)
           - name: registration_id
             datatype: string
             description: Affected service registration ID (empty for FULL_SYNC)
@@ -186,3 +186,71 @@ namespaces:
           - name: request_full_sync
             datatype: bool
             description: Cloud requests full resync
+
+      # Hash-based sync protocol types (bandwidth-efficient)
+
+      - name: hash_entry_t
+        description: Service name to schema hash mapping
+        members:
+          - name: service_name
+            datatype: string
+            description: Service name
+          - name: version
+            datatype: string
+            description: Service version
+          - name: schema_hash
+            datatype: string
+            description: SHA-256 hash of IFEX schema
+
+      - name: hash_list_t
+        description: List of service schema hashes (vehicle → cloud manifest)
+        members:
+          - name: hashes
+            datatype: hash_entry_t[]
+            description: Service name to hash mappings
+
+      - name: schema_request_t
+        description: Cloud request for unknown schemas
+        members:
+          - name: hashes
+            datatype: string[]
+            description: SHA-256 hashes cloud wants full schemas for
+
+      - name: schema_entry_t
+        description: Hash to full schema mapping
+        members:
+          - name: schema_hash
+            datatype: string
+            description: SHA-256 hash
+          - name: ifex_schema
+            datatype: string
+            description: Full IFEX YAML schema
+
+      - name: schema_map_t
+        description: Vehicle response with requested schemas
+        members:
+          - name: schemas
+            datatype: schema_entry_t[]
+            description: Hash to schema mappings
+
+      - name: discovery_envelope_t
+        description: Discovery sync envelope (hash-based protocol)
+        members:
+          - name: vehicle_id
+            datatype: string
+            description: Source vehicle identifier
+          - name: instance_id
+            datatype: string
+            description: Bridge instance ID (for restart detection)
+          - name: manifest
+            datatype: hash_list_t
+            description: Hash manifest (vehicle → cloud)
+            mandatory: false
+          - name: schema_request
+            datatype: schema_request_t
+            description: Schema request (cloud → vehicle)
+            mandatory: false
+          - name: schemas
+            datatype: schema_map_t
+            description: Schema response (vehicle → cloud)
+            mandatory: false

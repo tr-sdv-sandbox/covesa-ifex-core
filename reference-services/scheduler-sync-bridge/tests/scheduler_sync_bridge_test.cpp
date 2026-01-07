@@ -49,7 +49,7 @@ TEST_F(SchedulerSyncBridgeTest, SyncEventTypeSerialization) {
     swdv::scheduler_sync_envelope::sync_event_t event;
     event.set_event_type(swdv::scheduler_sync_envelope::JOB_CREATED);
     event.set_sequence_number(42);
-    event.set_timestamp_ns(1234567890000000000);
+    event.set_timestamp_ms(1234567890000);
     event.set_job_id("job_001");
 
     auto* info = event.mutable_job_info();
@@ -88,7 +88,7 @@ TEST_F(SchedulerSyncBridgeTest, SyncMessageSerialization) {
     auto* event = message.add_events();
     event->set_event_type(swdv::scheduler_sync_envelope::FULL_SYNC);
     event->set_sequence_number(1);
-    event->set_timestamp_ns(1234567890000000000);
+    event->set_timestamp_ms(1234567890000);
 
     std::string serialized;
     ASSERT_TRUE(message.SerializeToString(&serialized));

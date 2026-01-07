@@ -135,7 +135,7 @@ private:
                        const std::string& service_name,
                        const std::string& method_name,
                        const std::string& parameters_json,
-                       int64_t request_timestamp_ns);
+                       int64_t request_timestamp_ms);
 
     /// Send RPC response back via Backend Transport
     void SendResponse(const std::string& correlation_id,

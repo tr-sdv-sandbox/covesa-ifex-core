@@ -248,7 +248,7 @@ TEST_F(BackendTransportConformanceTest, ConnectionStatusIsConnected) {
 
     EXPECT_EQ(status.state, ConnectionState::Connected);
     EXPECT_EQ(status.reason, DisconnectReason::None);
-    EXPECT_GT(status.timestamp_ns, 0);
+    EXPECT_GT(status.timestamp_ms, 0);
 }
 
 TEST_F(BackendTransportConformanceTest, QueueStatusReturnsValidData) {
@@ -643,7 +643,7 @@ TEST_F(BackendTransportConformanceTest, StatsTimestampsUpdateAfterSend) {
     auto client = createClient(1100);
 
     auto initial = client.stats();
-    int64_t initial_send_ts = initial.last_send_timestamp_ns;
+    int64_t initial_send_ts = initial.last_send_timestamp_ms;
 
     // Small delay to ensure timestamp difference
     std::this_thread::sleep_for(10ms);
@@ -659,10 +659,10 @@ TEST_F(BackendTransportConformanceTest, StatsTimestampsUpdateAfterSend) {
 
     // Timestamp should have been updated (or be initially 0 and now > 0)
     if (initial_send_ts == 0) {
-        EXPECT_GT(after.last_send_timestamp_ns, 0)
+        EXPECT_GT(after.last_send_timestamp_ms, 0)
             << "last_send_timestamp should be set after first send";
     } else {
-        EXPECT_GT(after.last_send_timestamp_ns, initial_send_ts)
+        EXPECT_GT(after.last_send_timestamp_ms, initial_send_ts)
             << "last_send_timestamp should update after send";
     }
 }

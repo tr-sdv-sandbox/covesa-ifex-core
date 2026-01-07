@@ -103,11 +103,9 @@ bool MqttClient::Connect() {
 
     LOG(INFO) << "Connecting to MQTT broker at " << config_.host << ":" << config_.port;
 
-    // Start the network loop thread first
-    running_ = true;
-    loop_thread_ = std::thread(&MqttClient::LoopThread, this);
-
-    // Attempt initial connection (may fail, but loop thread will retry)
+    // Attempt initial connection BEFORE starting loop thread to avoid race condition
+    // where loop thread sees no connection and triggers a reconnect while the
+    // original connect is still in progress
     int rc = mosquitto_connect_async(mosq_.get(), config_.host.c_str(), config_.port, config_.keepalive_seconds);
     if (rc != MOSQ_ERR_SUCCESS) {
         std::lock_guard<std::mutex> lock(error_mutex_);
@@ -115,6 +113,10 @@ bool MqttClient::Connect() {
         LOG(WARNING) << "Initial MQTT connection failed (will retry): " << last_error_;
         // Don't return false - let loop thread handle reconnection
     }
+
+    // Start the network loop thread after initiating connection
+    running_ = true;
+    loop_thread_ = std::thread(&MqttClient::LoopThread, this);
 
     return true;
 }

@@ -9,39 +9,32 @@
 #include <glog/logging.h>
 #include <grpcpp/grpcpp.h>
 
-#include <algorithm>
 #include <chrono>
-#include <fstream>
-#include <functional>
 #include <iomanip>
 #include <random>
+#include <set>
 #include <sstream>
+#include <algorithm>
 
 namespace ifex::reference {
+
+namespace {
+
+// Validate that a hash is a proper 64-character hex string (SHA-256)
+bool IsValidSchemaHash(const std::string& hash) {
+    if (hash.size() != 64) {
+        return false;
+    }
+    return std::all_of(hash.begin(), hash.end(), [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
+}
+
+}  // namespace
 
 using namespace std::chrono_literals;
 namespace sync_pb = swdv::discovery_sync_envelope;
 namespace discovery_pb = swdv::service_discovery;
-
-// =============================================================================
-// SyncedServiceState
-// =============================================================================
-
-uint64_t SyncedServiceState::ComputeHash() const {
-    // Simple hash combining key fields
-    std::hash<std::string> str_hash;
-    std::hash<uint64_t> u64_hash;
-    std::hash<int> int_hash;
-
-    uint64_t h = str_hash(registration_id);
-    h ^= str_hash(name) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(version) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(address) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= int_hash(static_cast<int>(status)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= u64_hash(last_heartbeat_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
-
-    return h;
-}
 
 // =============================================================================
 // DiscoverySyncBridge
@@ -77,12 +70,19 @@ bool DiscoverySyncBridge::Start() {
     transport_client_ = std::make_unique<client::BackendTransportClient>(
         bt_channel, config_.sync_content_id);
 
+    // Register c2v handler for cloud schema requests (hash-based protocol)
+    transport_client_->on_content([this](const std::vector<uint8_t>& payload) {
+        HandleC2vMessage(payload);
+    });
+
     // Connect to Discovery service
     discovery_channel_ = grpc::CreateChannel(
         config_.discovery_endpoint,
         grpc::InsecureChannelCredentials());
 
-    query_stub_ = discovery_pb::query_services_service::NewStub(discovery_channel_);
+    // Initialize hash-based query stubs
+    hash_stub_ = discovery_pb::get_service_hashes_service::NewStub(discovery_channel_);
+    schema_stub_ = discovery_pb::get_schemas_by_hash_service::NewStub(discovery_channel_);
 
     // Verify Discovery connection
     auto state = discovery_channel_->GetState(true);
@@ -99,12 +99,8 @@ bool DiscoverySyncBridge::Start() {
     stop_requested_.store(false);
     last_activity_time_ = std::chrono::steady_clock::now();
 
-    // Start worker threads
+    // Start worker thread
     poll_thread_ = std::thread(&DiscoverySyncBridge::PollLoop, this);
-
-    if (config_.batch_window_ms > 0) {
-        batch_thread_ = std::thread(&DiscoverySyncBridge::BatchLoop, this);
-    }
 
     LOG(INFO) << "DiscoverySyncBridge started";
     return true;
@@ -123,12 +119,9 @@ void DiscoverySyncBridge::Stop() {
     // Signal threads to wake up
     cv_.notify_all();
 
-    // Wait for threads
+    // Wait for thread
     if (poll_thread_.joinable()) {
         poll_thread_.join();
-    }
-    if (batch_thread_.joinable()) {
-        batch_thread_.join();
     }
 
     // Persist final state
@@ -136,7 +129,6 @@ void DiscoverySyncBridge::Stop() {
 
     // Cleanup
     transport_client_.reset();
-    query_stub_.reset();
 
     LOG(INFO) << "DiscoverySyncBridge stopped";
 }
@@ -149,24 +141,19 @@ bool DiscoverySyncBridge::IsConnected() const {
 DiscoverySyncStats DiscoverySyncBridge::GetStats() const {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     DiscoverySyncStats stats = stats_;
-    stats.current_sequence = sequence_number_.load();
     stats.is_initialized = initialized_.load();
     stats.is_connected = IsConnected();
 
-    std::lock_guard<std::mutex> state_lock(state_mutex_);
-    stats.services_tracked = synced_state_.size();
+    std::lock_guard<std::mutex> hashes_lock(hashes_mutex_);
+    stats.hashes_tracked = current_hashes_.size();
 
     return stats;
 }
 
-void DiscoverySyncBridge::ForceFullSync() {
-    LOG(INFO) << "Forcing full sync";
-    auto services = QueryDiscoveryServices();
-    SendFullSync(services);
-}
-
-uint32_t DiscoverySyncBridge::GetStateChecksum() const {
-    return ComputeStateChecksum();
+void DiscoverySyncBridge::ForceManifestSync() {
+    LOG(INFO) << "Forcing hash manifest sync";
+    auto hashes = QueryServiceHashes();
+    SendHashManifest(hashes);
 }
 
 // =============================================================================
@@ -177,7 +164,7 @@ void DiscoverySyncBridge::PollLoop() {
     LOG(INFO) << "Poll thread started, waiting " << config_.initialization_delay_ms
               << "ms for initialization";
 
-    // Initialization delay
+    // Initialization delay - allow services to register
     {
         std::unique_lock<std::mutex> lock(cv_mutex_);
         cv_.wait_for(lock, std::chrono::milliseconds(config_.initialization_delay_ms),
@@ -189,24 +176,27 @@ void DiscoverySyncBridge::PollLoop() {
         return;
     }
 
-    // Initial full sync
-    LOG(INFO) << "Initialization complete, performing initial full sync";
-    auto services = QueryDiscoveryServices();
-    SendFullSync(services);
+    // Initial hash manifest sync (hash-based protocol)
+    LOG(INFO) << "Initialization complete, sending initial hash manifest";
+    auto hashes = QueryServiceHashes();
+    SendHashManifest(hashes);
 
-    // Update synced state
+    // Track last sent hashes for change detection
+    std::set<std::string> last_sent_hashes;
+    for (const auto& [hash, name] : hashes) {
+        last_sent_hashes.insert(hash);
+    }
+
+    // Update tracked hashes for stats
     {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        synced_state_.clear();
-        for (const auto& svc : services) {
-            synced_state_[svc.registration_id] = svc;
-        }
+        std::lock_guard<std::mutex> lock(hashes_mutex_);
+        current_hashes_ = last_sent_hashes;
     }
 
     initialized_.store(true);
-    LOG(INFO) << "Initial sync complete, " << services.size() << " services synced";
+    LOG(INFO) << "Initial sync complete, " << hashes.size() << " service hashes sent";
 
-    // Main poll loop
+    // Main poll loop - hash-based protocol
     while (!stop_requested_.load()) {
         {
             std::unique_lock<std::mutex> lock(cv_mutex_);
@@ -216,285 +206,40 @@ void DiscoverySyncBridge::PollLoop() {
 
         if (stop_requested_.load()) break;
 
-        VLOG(1) << "Polling Discovery for changes...";
+        VLOG(1) << "Polling Discovery for hash changes...";
 
-        // Query current state
-        auto current = QueryDiscoveryServices();
+        // Query current hashes
+        auto current_hashes = QueryServiceHashes();
 
-        VLOG(1) << "Found " << current.size() << " services in Discovery";
-
-        // Detect and publish changes
-        DetectChanges(current);
-
-        // Flush events if no batching (batch_window_ms == 0)
-        if (config_.batch_window_ms == 0) {
-            FlushEvents();
+        // Build set for comparison
+        std::set<std::string> current_hash_set;
+        for (const auto& [hash, name] : current_hashes) {
+            current_hash_set.insert(hash);
         }
 
-        // Send heartbeat if no activity
+        // Check if hashes changed
+        if (current_hash_set != last_sent_hashes) {
+            LOG(INFO) << "Service hashes changed, sending updated manifest";
+            SendHashManifest(current_hashes);
+            last_sent_hashes = current_hash_set;
+
+            // Update tracked hashes for stats
+            {
+                std::lock_guard<std::mutex> lock(hashes_mutex_);
+                current_hashes_ = current_hash_set;
+            }
+        } else {
+            VLOG(1) << "No hash changes detected";
+        }
+
+        // Send heartbeat if no activity (optional)
         MaybeSendHeartbeat();
     }
 
     LOG(INFO) << "Poll thread stopped";
 }
 
-void DiscoverySyncBridge::BatchLoop() {
-    LOG(INFO) << "Batch thread started";
-
-    while (!stop_requested_.load()) {
-        {
-            std::unique_lock<std::mutex> lock(cv_mutex_);
-            cv_.wait_for(lock, std::chrono::milliseconds(config_.batch_window_ms),
-                         [this]() { return stop_requested_.load(); });
-        }
-
-        if (stop_requested_.load()) break;
-
-        FlushEvents();
-    }
-
-    // Final flush
-    FlushEvents();
-
-    LOG(INFO) << "Batch thread stopped";
-}
-
-std::vector<SyncedServiceState> DiscoverySyncBridge::QueryDiscoveryServices() {
-    std::vector<SyncedServiceState> result;
-
-    grpc::ClientContext context;
-    context.set_deadline(std::chrono::system_clock::now() + 5s);
-
-    discovery_pb::query_services_request request;
-    // Empty filter = return all services
-
-    discovery_pb::query_services_response response;
-    auto status = query_stub_->query_services(&context, request, &response);
-
-    if (!status.ok()) {
-        LOG(WARNING) << "Failed to query Discovery: " << status.error_message();
-        return result;
-    }
-
-    for (const auto& svc : response.services()) {
-        SyncedServiceState state;
-        // Use name as the unique identifier (Discovery doesn't return registration_id in query)
-        state.registration_id = svc.name();  // Using name as ID
-        state.name = svc.name();
-        state.version = svc.version();
-
-        if (svc.has_endpoint()) {
-            state.address = svc.endpoint().address();
-        }
-
-        // Map status (Discovery proto uses unprefixed enum values)
-        switch (svc.status()) {
-            case discovery_pb::AVAILABLE:
-                state.status = sync_pb::AVAILABLE;
-                break;
-            case discovery_pb::UNAVAILABLE:
-                state.status = sync_pb::UNAVAILABLE;
-                break;
-            case discovery_pb::STARTING:
-                state.status = sync_pb::STARTING;
-                break;
-            case discovery_pb::STOPPING:
-                state.status = sync_pb::STOPPING;
-                break;
-            case discovery_pb::ERROR:
-                state.status = sync_pb::ERROR;
-                break;
-            default:
-                state.status = sync_pb::UNAVAILABLE;
-        }
-
-        state.last_heartbeat_ms = svc.last_heartbeat();
-
-        result.push_back(std::move(state));
-    }
-
-    return result;
-}
-
-void DiscoverySyncBridge::DetectChanges(const std::vector<SyncedServiceState>& current) {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-
-    // Build map of current services
-    std::unordered_map<std::string, const SyncedServiceState*> current_map;
-    for (const auto& svc : current) {
-        current_map[svc.registration_id] = &svc;
-    }
-
-    // Check for unregistered services
-    std::vector<std::string> to_remove;
-    for (const auto& [reg_id, synced] : synced_state_) {
-        if (current_map.find(reg_id) == current_map.end()) {
-            // Service was unregistered
-            sync_pb::sync_event_t event;
-            event.set_event_type(sync_pb::SERVICE_UNREGISTERED);
-            event.set_sequence_number(++sequence_number_);
-            event.set_timestamp_ns(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
-            event.set_registration_id(reg_id);
-
-            QueueEvent(std::move(event));
-            to_remove.push_back(reg_id);
-
-            LOG(INFO) << "Service unregistered: " << synced.name
-                      << " (id=" << reg_id << ")";
-        }
-    }
-
-    for (const auto& reg_id : to_remove) {
-        synced_state_.erase(reg_id);
-    }
-
-    // Check for new or changed services
-    for (const auto& svc : current) {
-        auto it = synced_state_.find(svc.registration_id);
-
-        if (it == synced_state_.end()) {
-            // New service registered
-            sync_pb::sync_event_t event;
-            event.set_event_type(sync_pb::SERVICE_REGISTERED);
-            event.set_sequence_number(++sequence_number_);
-            event.set_timestamp_ns(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
-            event.set_registration_id(svc.registration_id);
-            *event.mutable_service_info() = BuildServiceInfo(svc);
-
-            QueueEvent(std::move(event));
-            synced_state_[svc.registration_id] = svc;
-
-            LOG(INFO) << "Service registered: " << svc.name
-                      << " (id=" << svc.registration_id << ")";
-        } else {
-            // Check if changed
-            if (svc.ComputeHash() != it->second.ComputeHash()) {
-                sync_pb::sync_event_t event;
-                event.set_event_type(sync_pb::SERVICE_STATUS_CHANGED);
-                event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ns(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-                event.set_registration_id(svc.registration_id);
-                *event.mutable_service_info() = BuildServiceInfo(svc);
-
-                QueueEvent(std::move(event));
-                it->second = svc;
-
-                VLOG(1) << "Service status changed: " << svc.name;
-            }
-        }
-    }
-}
-
-void DiscoverySyncBridge::QueueEvent(sync_pb::sync_event_t event) {
-    std::lock_guard<std::mutex> lock(events_mutex_);
-    pending_events_.push_back(std::move(event));
-    last_activity_time_ = std::chrono::steady_clock::now();
-    // Note: FlushEvents is called from the poll loop to avoid deadlock
-    // since DetectChanges holds state_mutex_ when calling this
-}
-
-void DiscoverySyncBridge::FlushEvents() {
-    std::vector<sync_pb::sync_event_t> events;
-    {
-        std::lock_guard<std::mutex> lock(events_mutex_);
-        if (pending_events_.empty()) return;
-        events.swap(pending_events_);
-    }
-
-    // Build sync message
-    sync_pb::sync_message_t message;
-    message.set_vehicle_id(config_.vehicle_id);
-    message.set_bridge_instance_id(instance_id_);
-    message.set_state_checksum(ComputeStateChecksum());
-
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        message.set_total_services(static_cast<uint32_t>(synced_state_.size()));
-    }
-
-    for (auto& event : events) {
-        *message.add_events() = std::move(event);
-    }
-
-    // Serialize and publish
-    std::string serialized;
-    if (!message.SerializeToString(&serialized)) {
-        LOG(ERROR) << "Failed to serialize sync message";
-        return;
-    }
-
-    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-    auto result = transport_client_->publish(payload, client::Persistence::Volatile);
-
-    if (result.ok()) {
-        UpdateStats(serialized.size(), false);
-        VLOG(1) << "Published " << events.size() << " sync events ("
-                << serialized.size() << " bytes)";
-    } else {
-        LOG(WARNING) << "Failed to publish sync events: status="
-                     << static_cast<int>(result.status);
-    }
-}
-
-void DiscoverySyncBridge::SendFullSync(const std::vector<SyncedServiceState>& services) {
-    sync_pb::sync_message_t message;
-    message.set_vehicle_id(config_.vehicle_id);
-    message.set_bridge_instance_id(instance_id_);
-    message.set_total_services(static_cast<uint32_t>(services.size()));
-
-    // Create FULL_SYNC event with all services
-    sync_pb::sync_event_t event;
-    event.set_event_type(sync_pb::FULL_SYNC);
-    event.set_sequence_number(++sequence_number_);
-    event.set_timestamp_ns(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
-
-    // For FULL_SYNC, we send multiple events, one per service
-    *message.add_events() = event;
-
-    for (const auto& svc : services) {
-        sync_pb::sync_event_t svc_event;
-        svc_event.set_event_type(sync_pb::SERVICE_REGISTERED);
-        svc_event.set_sequence_number(++sequence_number_);
-        svc_event.set_timestamp_ns(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-        svc_event.set_registration_id(svc.registration_id);
-        *svc_event.mutable_service_info() = BuildServiceInfo(svc);
-
-        *message.add_events() = std::move(svc_event);
-    }
-
-    message.set_state_checksum(ComputeStateChecksum());
-
-    // Serialize and publish
-    std::string serialized;
-    if (!message.SerializeToString(&serialized)) {
-        LOG(ERROR) << "Failed to serialize full sync message";
-        return;
-    }
-
-    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-    auto result = transport_client_->publish(payload, client::Persistence::BestEffort);
-
-    if (result.ok()) {
-        UpdateStats(serialized.size(), true);
-        LOG(INFO) << "Published FULL_SYNC with " << services.size()
-                  << " services (" << serialized.size() << " bytes)";
-    } else {
-        LOG(WARNING) << "Failed to publish full sync: status="
-                     << static_cast<int>(result.status);
-    }
-
-    last_activity_time_ = std::chrono::steady_clock::now();
-}
+// Legacy methods removed - using hash-based protocol only
 
 void DiscoverySyncBridge::MaybeSendHeartbeat() {
     if (config_.heartbeat_interval_ms == 0) return;
@@ -504,27 +249,22 @@ void DiscoverySyncBridge::MaybeSendHeartbeat() {
         now - last_activity_time_).count();
 
     if (elapsed >= config_.heartbeat_interval_ms) {
-        sync_pb::sync_message_t message;
-        message.set_vehicle_id(config_.vehicle_id);
-        message.set_bridge_instance_id(instance_id_);
-        message.set_state_checksum(ComputeStateChecksum());
+        // For hash-based protocol, heartbeat is just re-sending the current manifest
+        // This confirms the vehicle is alive and its service set hasn't changed
+        auto hashes = QueryServiceHashes();
 
-        {
-            std::lock_guard<std::mutex> lock(state_mutex_);
-            message.set_total_services(static_cast<uint32_t>(synced_state_.size()));
+        sync_pb::discovery_envelope_t envelope;
+        envelope.set_vehicle_id(config_.vehicle_id);
+
+        auto* manifest = envelope.mutable_manifest();
+        for (const auto& [hash, name] : hashes) {
+            auto* entry = manifest->add_hashes();
+            entry->set_service_name(name);
+            entry->set_schema_hash(hash);
         }
 
-        sync_pb::sync_event_t event;
-        event.set_event_type(sync_pb::HEARTBEAT);
-        event.set_sequence_number(++sequence_number_);
-        event.set_timestamp_ns(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-
-        *message.add_events() = std::move(event);
-
         std::string serialized;
-        if (message.SerializeToString(&serialized)) {
+        if (envelope.SerializeToString(&serialized)) {
             std::vector<uint8_t> payload(serialized.begin(), serialized.end());
             auto result = transport_client_->publish(payload, client::Persistence::Volatile);
 
@@ -532,57 +272,12 @@ void DiscoverySyncBridge::MaybeSendHeartbeat() {
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 stats_.heartbeats_sent++;
                 stats_.bytes_sent += serialized.size();
-                VLOG(1) << "Sent heartbeat";
+                VLOG(1) << "Sent heartbeat (hash manifest with " << hashes.size() << " hashes)";
             }
         }
 
         last_activity_time_ = now;
     }
-}
-
-sync_pb::service_info_t DiscoverySyncBridge::BuildServiceInfo(
-    const SyncedServiceState& state) {
-
-    sync_pb::service_info_t info;
-    info.set_registration_id(state.registration_id);
-    info.set_name(state.name);
-    info.set_version(state.version);
-    info.mutable_endpoint()->set_address(state.address);
-    info.mutable_endpoint()->set_transport(sync_pb::GRPC);  // Default to gRPC
-    info.set_status(state.status);
-    info.set_last_heartbeat_ms(state.last_heartbeat_ms);
-
-    return info;
-}
-
-uint32_t DiscoverySyncBridge::ComputeStateChecksum() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-
-    // Simple CRC32-like checksum
-    uint32_t crc = 0xFFFFFFFF;
-
-    // Sort by registration_id for deterministic ordering
-    std::vector<std::string> sorted_ids;
-    for (const auto& [id, _] : synced_state_) {
-        sorted_ids.push_back(id);
-    }
-    std::sort(sorted_ids.begin(), sorted_ids.end());
-
-    for (const auto& id : sorted_ids) {
-        const auto& state = synced_state_.at(id);
-        uint64_t hash = state.ComputeHash();
-
-        // Mix hash into CRC
-        for (int i = 0; i < 8; ++i) {
-            uint8_t byte = (hash >> (i * 8)) & 0xFF;
-            crc ^= byte;
-            for (int j = 0; j < 8; ++j) {
-                crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
-            }
-        }
-    }
-
-    return crc ^ 0xFFFFFFFF;
 }
 
 std::string DiscoverySyncBridge::GenerateInstanceId() {
@@ -596,55 +291,185 @@ std::string DiscoverySyncBridge::GenerateInstanceId() {
 }
 
 void DiscoverySyncBridge::LoadPersistedState() {
+    // Hash-based protocol doesn't need to persist state - hashes are always fresh from Discovery
     if (config_.state_persistence_path.empty()) return;
-
-    std::ifstream file(config_.state_persistence_path, std::ios::binary);
-    if (!file.is_open()) {
-        LOG(INFO) << "No persisted state found at " << config_.state_persistence_path;
-        return;
-    }
-
-    // Read sequence number
-    uint64_t seq;
-    file.read(reinterpret_cast<char*>(&seq), sizeof(seq));
-    if (file.gcount() == sizeof(seq)) {
-        sequence_number_.store(seq);
-        LOG(INFO) << "Loaded persisted sequence number: " << seq;
-    }
-
-    file.close();
+    LOG(INFO) << "Persistence configured but not used for hash-based protocol";
 }
 
 void DiscoverySyncBridge::PersistState() {
-    if (config_.state_persistence_path.empty()) return;
+    // Hash-based protocol doesn't need to persist state
+}
 
-    std::ofstream file(config_.state_persistence_path, std::ios::binary | std::ios::trunc);
-    if (!file.is_open()) {
-        LOG(WARNING) << "Failed to open state file for writing: "
-                     << config_.state_persistence_path;
+void DiscoverySyncBridge::UpdateStats(uint64_t bytes_sent, bool is_manifest) {
+    std::lock_guard<std::mutex> lock(stats_mutex_);
+    stats_.bytes_sent += bytes_sent;
+    stats_.last_sync_timestamp_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+    if (is_manifest) {
+        stats_.manifests_sent++;
+    } else {
+        stats_.schema_responses_sent++;
+    }
+}
+
+// =============================================================================
+// Hash-based sync protocol (new, bandwidth-efficient)
+// =============================================================================
+
+std::vector<std::pair<std::string, std::string>> DiscoverySyncBridge::QueryServiceHashes() {
+    std::vector<std::pair<std::string, std::string>> result;
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + 5s);
+
+    discovery_pb::get_service_hashes_request request;
+    discovery_pb::get_service_hashes_response response;
+
+    auto status = hash_stub_->get_service_hashes(&context, request, &response);
+
+    if (!status.ok()) {
+        LOG(WARNING) << "Failed to query service hashes: " << status.error_message();
+        return result;
+    }
+
+    for (const auto& entry : response.hashes()) {
+        // Sanity check: only accept valid SHA-256 hashes (64 hex chars)
+        if (!IsValidSchemaHash(entry.schema_hash())) {
+            LOG(WARNING) << "Skipping invalid hash entry:"
+                         << " service_name='" << entry.service_name() << "'"
+                         << " schema_hash='" << entry.schema_hash() << "'"
+                         << " (hash length=" << entry.schema_hash().size() << ", expected 64)";
+            continue;
+        }
+        result.emplace_back(entry.schema_hash(), entry.service_name());
+    }
+
+    VLOG(1) << "Queried " << result.size() << " valid service hashes from Discovery";
+    return result;
+}
+
+std::map<std::string, std::string> DiscoverySyncBridge::QuerySchemasByHash(
+    const std::vector<std::string>& hashes) {
+    std::map<std::string, std::string> result;
+
+    if (hashes.empty()) return result;
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + 10s);
+
+    discovery_pb::get_schemas_by_hash_request request;
+    for (const auto& hash : hashes) {
+        request.add_hashes(hash);
+    }
+
+    discovery_pb::get_schemas_by_hash_response response;
+    auto status = schema_stub_->get_schemas_by_hash(&context, request, &response);
+
+    if (!status.ok()) {
+        LOG(WARNING) << "Failed to query schemas by hash: " << status.error_message();
+        return result;
+    }
+
+    for (const auto& entry : response.schemas()) {
+        result[entry.schema_hash()] = entry.ifex_schema();
+    }
+
+    VLOG(1) << "Retrieved " << result.size() << " schemas by hash";
+    return result;
+}
+
+void DiscoverySyncBridge::SendHashManifest(
+    const std::vector<std::pair<std::string, std::string>>& hashes) {
+
+    sync_pb::discovery_envelope_t envelope;
+    envelope.set_vehicle_id(config_.vehicle_id);
+
+    auto* manifest = envelope.mutable_manifest();
+    for (const auto& [hash, name] : hashes) {
+        auto* entry = manifest->add_hashes();
+        entry->set_service_name(name);
+        entry->set_schema_hash(hash);
+    }
+
+    std::string serialized;
+    if (!envelope.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize hash manifest";
         return;
     }
 
-    // Write sequence number
-    uint64_t seq = sequence_number_.load();
-    file.write(reinterpret_cast<const char*>(&seq), sizeof(seq));
+    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
+    auto result = transport_client_->publish(payload, client::Persistence::Volatile);
 
-    file.close();
-    LOG(INFO) << "Persisted sync state (sequence=" << seq << ")";
+    if (result.ok()) {
+        UpdateStats(serialized.size(), true);
+        LOG(INFO) << "Published hash manifest with " << hashes.size()
+                  << " hashes (" << serialized.size() << " bytes)";
+    } else {
+        LOG(WARNING) << "Failed to publish hash manifest: status="
+                     << static_cast<int>(result.status);
+    }
+
+    last_activity_time_ = std::chrono::steady_clock::now();
 }
 
-void DiscoverySyncBridge::UpdateStats(uint64_t bytes_sent, bool is_full_sync) {
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    stats_.events_sent++;
-    stats_.bytes_sent += bytes_sent;
-    stats_.last_sync_timestamp_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+void DiscoverySyncBridge::SendSchemas(const std::map<std::string, std::string>& schemas) {
+    if (schemas.empty()) return;
 
-    if (is_full_sync) {
-        stats_.full_syncs_sent++;
+    sync_pb::discovery_envelope_t envelope;
+    envelope.set_vehicle_id(config_.vehicle_id);
+
+    auto* schema_map = envelope.mutable_schemas();
+    for (const auto& [hash, yaml] : schemas) {
+        auto* entry = schema_map->add_schemas();
+        entry->set_schema_hash(hash);
+        entry->set_ifex_schema(yaml);
+    }
+
+    std::string serialized;
+    if (!envelope.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize schema response";
+        return;
+    }
+
+    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
+    auto result = transport_client_->publish(payload, client::Persistence::Volatile);
+
+    if (result.ok()) {
+        UpdateStats(serialized.size(), false);
+        LOG(INFO) << "Published " << schemas.size()
+                  << " schemas (" << serialized.size() << " bytes)";
     } else {
-        stats_.delta_syncs_sent++;
+        LOG(WARNING) << "Failed to publish schemas: status="
+                     << static_cast<int>(result.status);
+    }
+
+    last_activity_time_ = std::chrono::steady_clock::now();
+}
+
+void DiscoverySyncBridge::HandleC2vMessage(const std::vector<uint8_t>& payload) {
+    sync_pb::discovery_envelope_t envelope;
+    if (!envelope.ParseFromArray(payload.data(), payload.size())) {
+        LOG(WARNING) << "Failed to parse c2v discovery envelope";
+        return;
+    }
+
+    if (envelope.has_schema_request()) {
+        // Cloud is requesting specific schemas
+        const auto& request = envelope.schema_request();
+        LOG(INFO) << "Cloud requested " << request.hashes_size() << " schemas";
+
+        std::vector<std::string> requested_hashes;
+        for (const auto& hash : request.hashes()) {
+            requested_hashes.push_back(hash);
+        }
+
+        // Query Discovery for the requested schemas
+        auto schemas = QuerySchemasByHash(requested_hashes);
+
+        // Send the schemas back to cloud
+        SendSchemas(schemas);
     }
 }
 

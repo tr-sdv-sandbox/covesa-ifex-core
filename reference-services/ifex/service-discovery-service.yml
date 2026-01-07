@@ -188,6 +188,29 @@ namespaces:
             datatype: uint64
             description: Unix timestamp of last heartbeat
             
+      - name: service_hash_t
+        description: Service name to schema hash mapping
+        members:
+          - name: service_name
+            datatype: string
+            description: Service name
+          - name: version
+            datatype: string
+            description: Service version
+          - name: schema_hash
+            datatype: string
+            description: SHA-256 hash of IFEX schema
+
+      - name: schema_entry_t
+        description: Schema hash to full schema mapping
+        members:
+          - name: schema_hash
+            datatype: string
+            description: SHA-256 hash of IFEX schema
+          - name: ifex_schema
+            datatype: string
+            description: Full IFEX YAML schema
+
       - name: service_filter_t
         description: Filter criteria for service queries
         members:
@@ -290,4 +313,22 @@ namespaces:
           - name: status
             datatype: service_status_t
             description: Current service status
-            
+
+      - name: get_service_hashes
+        description: Get SHA-256 hashes of all registered service schemas (for sync protocol)
+        output:
+          - name: hashes
+            datatype: service_hash_t[]
+            description: List of service name to schema hash mappings
+
+      - name: get_schemas_by_hash
+        description: Get full IFEX schemas for the requested hashes
+        input:
+          - name: hashes
+            datatype: string[]
+            description: SHA-256 hashes to retrieve
+        output:
+          - name: schemas
+            datatype: schema_entry_t[]
+            description: Hash to schema mappings
+
