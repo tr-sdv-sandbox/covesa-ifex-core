@@ -288,9 +288,85 @@ SCHEDULER_PERSISTENCE_DIR=/var/lib/ifex/scheduler ./ifex-scheduler-service --dis
 - **CLI flags:** gflags for command-line parsing
 - **Config/Schema files:** YAML via yaml-cpp, JSON via nlohmann_json
 - **Proto generation:** IFEX YAML → .proto via Docker-based ifexgen tool
+- **Timestamps:** All timestamp fields use **milliseconds** with `_ms` suffix (e.g., `timestamp_ms`, `last_heartbeat_ms`)
+
+### Timestamp Convention
+
+All timestamp fields across the codebase use **milliseconds since Unix epoch**:
+
+| Field Pattern | Unit | Example |
+|---------------|------|---------|
+| `*_ms` | milliseconds | `timestamp_ms`, `last_sync_timestamp_ms` |
+| `*_timestamp_ms` | milliseconds | `last_heartbeat_ms`, `executed_at_ms` |
+
+**Do not use nanoseconds.** The `_ns` suffix is reserved for internal conversions only.
+
+### Schema Hash Validation
+
+Service schemas are identified by SHA-256 hashes (64-character lowercase hex strings):
+
+```cpp
+// Valid hash: 64 hex characters
+"72ec7e49f668c318c766c492969d4448648bc303cf83288f0cfb32e89b81caed"
+
+// Invalid: too short, wrong characters, etc.
+"hash1"  // Placeholder - will be rejected
+```
+
+The discovery sync bridge validates hashes before sending to cloud:
+- Hashes must be exactly 64 characters
+- Only hex characters (0-9, a-f, A-F) allowed
+- Invalid hashes are logged as warnings and skipped
 
 ## Key Files
 
 - `generate_proto.sh` - Converts IFEX YAML → .proto files (requires ifex-tools Docker image)
 - `start-all-bg.sh` / `stop_services.sh` - Service lifecycle management
 - `tests/integration/test_fixture.cpp` - Test fixture managing service lifecycle (spawns/kills services automatically)
+
+## Testing
+
+### Running Tests
+
+```bash
+# All tests (from build directory)
+ctest --output-on-failure
+
+# Parallel execution (MQTT tests are serialized via RESOURCE_LOCK)
+ctest --output-on-failure -j4
+
+# Specific test suite
+ctest -R "discovery_sync" --output-on-failure
+
+# Single test binary
+./reference-services/backend-transport/ifex-backend-transport-integration-test
+```
+
+### Test Categories
+
+| Test | Label | Description |
+|------|-------|-------------|
+| `backend_transport_conformance_test` | conformance | API contract verification |
+| `backend_transport_integration_test` | integration, mqtt | End-to-end with MQTT broker |
+| `backend_transport_resilience_test` | resilience, mqtt | Broker disconnect/reconnect |
+| `discovery_sync_bridge_integration_test` | integration, mqtt | Hash-based sync protocol |
+| `dispatcher_bridge_integration_test` | integration, mqtt | RPC request/response |
+| `scheduler_sync_bridge_integration_test` | integration, mqtt | Job sync to cloud |
+
+### MQTT Test Notes
+
+MQTT-based tests use Docker containers and share a broker resource:
+
+- All MQTT tests have `RESOURCE_LOCK mqtt_broker` in CMakeLists.txt
+- This prevents parallel execution conflicts when running `ctest -j`
+- Tests automatically start/stop `eclipse-mosquitto:2` container on port 11883
+- Container name: `ifex-mqtt-test-broker`
+
+If tests fail with "Connection refused" or container conflicts:
+```bash
+# Clean up stale containers
+docker rm -f ifex-mqtt-test-broker 2>/dev/null
+
+# Check for stale processes
+pgrep -af ifex-discovery
+```
