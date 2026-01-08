@@ -495,7 +495,15 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, SchemaRequestResponse) {
     ASSERT_TRUE(initial_envelopes[0].has_manifest());
     ASSERT_GE(initial_envelopes[0].manifest().hashes_size(), 1);
 
-    std::string service_hash = initial_envelopes[0].manifest().hashes(0).schema_hash();
+    // Find the hash for the service we registered (not just hashes(0) which could be any service)
+    std::string service_hash;
+    for (const auto& entry : initial_envelopes[0].manifest().hashes()) {
+        if (entry.service_name() == "schema-request-test-service") {
+            service_hash = entry.schema_hash();
+            break;
+        }
+    }
+    ASSERT_FALSE(service_hash.empty()) << "Should find hash for schema-request-test-service";
     LOG(INFO) << "Got service hash: " << service_hash;
 
     // Simulate cloud sending a schema request via c2v MQTT
