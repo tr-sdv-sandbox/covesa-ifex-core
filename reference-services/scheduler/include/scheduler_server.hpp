@@ -41,6 +41,11 @@ struct Job {
     // Status tracking
     swdv::ifex_scheduler::job_status_t status = swdv::ifex_scheduler::PENDING;
 
+    // Wake/Sleep policies
+    swdv::ifex_scheduler::wake_policy_t wake_policy = swdv::ifex_scheduler::NO_WAKE;
+    swdv::ifex_scheduler::sleep_policy_t sleep_policy = swdv::ifex_scheduler::SLEEP_NORMAL;
+    uint32_t wake_lead_time_s = 0;
+
     // Timestamps
     std::chrono::system_clock::time_point created_at;
     std::chrono::system_clock::time_point updated_at;

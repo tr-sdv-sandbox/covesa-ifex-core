@@ -32,7 +32,7 @@ mkdir -p /app/logs
 # Start Discovery Service
 log_info "Starting Discovery Service..."
 /app/bin/ifex-discovery-service \
-    --port=$DISCOVERY_PORT \
+    --listen=0.0.0.0:$DISCOVERY_PORT \
     > /app/logs/discovery.log 2>&1 &
 DISCOVERY_PID=$!
 sleep 1
@@ -47,7 +47,7 @@ fi
 # Start Scheduler Service
 log_info "Starting Scheduler Service..."
 /app/bin/ifex-scheduler-service \
-    --port=$SCHEDULER_PORT \
+    --listen=0.0.0.0:$SCHEDULER_PORT \
     --discovery=localhost:$DISCOVERY_PORT \
     --persistence-dir=/app/data \
     > /app/logs/scheduler.log 2>&1 &
@@ -76,7 +76,7 @@ fi
 # Start Dispatcher Service
 log_info "Starting Dispatcher Service..."
 /app/bin/ifex-dispatcher-service \
-    --port=$DISPATCHER_PORT \
+    --listen=0.0.0.0:$DISPATCHER_PORT \
     --discovery=localhost:$DISCOVERY_PORT \
     --ifex-schema=/app/ifex/ifex-dispatcher-service.yml \
     > /app/logs/dispatcher.log 2>&1 &
@@ -116,7 +116,7 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
 
     if [ -x /app/bin/ifex-echo-service ]; then
         /app/bin/ifex-echo-service \
-            --port=50064 \
+            --listen=0.0.0.0:50064 \
             --discovery=localhost:$DISCOVERY_PORT \
             --ifex-schema=/app/ifex/echo_service.ifex.yml \
             > /app/logs/echo.log 2>&1 &
@@ -125,7 +125,7 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
 
     if [ -x /app/bin/beverage-service ]; then
         /app/bin/beverage-service \
-            --port=50061 \
+            --listen=0.0.0.0:50061 \
             --discovery=localhost:$DISCOVERY_PORT \
             --ifex-schema=/app/ifex/beverage-service.ifex.yml \
             > /app/logs/beverage.log 2>&1 &
@@ -133,7 +133,7 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
 
     if [ -x /app/bin/climate-comfort-service ]; then
         /app/bin/climate-comfort-service \
-            --port=50062 \
+            --listen=0.0.0.0:50062 \
             --discovery=localhost:$DISCOVERY_PORT \
             --ifex-schema=/app/ifex/climate-comfort-service.ifex.yml \
             > /app/logs/climate-comfort.log 2>&1 &
@@ -141,7 +141,7 @@ if [ "${START_TEST_SERVICES:-true}" = "true" ]; then
 
     if [ -x /app/bin/defrost-service ]; then
         /app/bin/defrost-service \
-            --port=50063 \
+            --listen=0.0.0.0:50063 \
             --ifex-schema=/app/ifex/defrost-service.ifex.yml \
             --discovery=localhost:$DISCOVERY_PORT \
             > /app/logs/defrost.log 2>&1 &

@@ -76,6 +76,15 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     if (!service_address.empty()) {
         proto->set_service_address(service_address);
     }
+
+    proto->set_wake_policy(wake_policy);
+    proto->set_sleep_policy(sleep_policy);
+    proto->set_wake_lead_time_s(wake_lead_time_s);
+
+    LOG(INFO) << "DEBUG Job::ToProto: job=" << id
+              << " wake_policy=" << static_cast<int>(wake_policy)
+              << " sleep_policy=" << static_cast<int>(sleep_policy)
+              << " wake_lead_time_s=" << wake_lead_time_s;
 }
 
 std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& proto) {
@@ -108,6 +117,10 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
     if (!proto.service_address().empty()) {
         job->service_address = proto.service_address();
     }
+
+    job->wake_policy = proto.wake_policy();
+    job->sleep_policy = proto.sleep_policy();
+    job->wake_lead_time_s = proto.wake_lead_time_s();
 
     auto now = std::chrono::system_clock::now();
     job->created_at = now;
@@ -146,6 +159,10 @@ json Job::ToJson() const {
         j["result"] = result.value();
     }
 
+    j["wake_policy"] = static_cast<int>(wake_policy);
+    j["sleep_policy"] = static_cast<int>(sleep_policy);
+    j["wake_lead_time_s"] = wake_lead_time_s;
+
     return j;
 }
 
@@ -179,6 +196,13 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     if (j.contains("result")) {
         job->result = j.at("result").get<std::string>();
     }
+
+    // Wake/Sleep policies (with defaults for backward compatibility)
+    job->wake_policy = static_cast<swdv::ifex_scheduler::wake_policy_t>(
+        j.value("wake_policy", 0));
+    job->sleep_policy = static_cast<swdv::ifex_scheduler::sleep_policy_t>(
+        j.value("sleep_policy", 0));
+    job->wake_lead_time_s = j.value("wake_lead_time_s", 0u);
 
     return job;
 }
@@ -320,7 +344,12 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
     try {
         // Create job from request
         auto job = Job::FromProto(request->job());
-        job->id = GenerateJobId();
+        // Use provided job_id if present, otherwise generate one
+        if (!request->job().job_id().empty()) {
+            job->id = request->job().job_id();
+        } else {
+            job->id = GenerateJobId();
+        }
 
         // Validate that the service exists via discovery
         // Note: For POC, we skip x-scheduling validation - any discoverable service can be scheduled

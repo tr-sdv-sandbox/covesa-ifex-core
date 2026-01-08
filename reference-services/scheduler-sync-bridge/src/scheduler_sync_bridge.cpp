@@ -322,6 +322,14 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
         state.recurrence_rule = job.recurrence_rule();
         state.next_run_time = job.next_run_time();
         state.status = MapStatus(job.status());
+        state.wake_policy = MapWakePolicy(job.wake_policy());
+        state.sleep_policy = MapSleepPolicy(job.sleep_policy());
+        state.wake_lead_time_s = job.wake_lead_time_s();
+
+        LOG(INFO) << "DEBUG FetchJobsFromScheduler: job=" << job.id()
+                  << " wake_policy=" << static_cast<int>(job.wake_policy())
+                  << " sleep_policy=" << static_cast<int>(job.sleep_policy())
+                  << " wake_lead_time_s=" << job.wake_lead_time_s();
 
         // Parse timestamps (assuming ISO format or ms)
         // For simplicity, use current time if not available
@@ -641,6 +649,11 @@ void SchedulerSyncBridge::MaybeSendHeartbeat() {
 }
 
 sync_pb::job_info_t SchedulerSyncBridge::BuildJobInfo(const SyncedJobState& state) {
+    LOG(INFO) << "DEBUG BuildJobInfo: job=" << state.job_id
+              << " state.wake_policy=" << static_cast<int>(state.wake_policy)
+              << " state.sleep_policy=" << static_cast<int>(state.sleep_policy)
+              << " state.wake_lead_time_s=" << state.wake_lead_time_s;
+
     sync_pb::job_info_t info;
     info.set_job_id(state.job_id);
     info.set_title(state.title);
@@ -651,8 +664,13 @@ sync_pb::job_info_t SchedulerSyncBridge::BuildJobInfo(const SyncedJobState& stat
     info.set_recurrence_rule(state.recurrence_rule);
     info.set_next_run_time(state.next_run_time);
     info.set_status(state.status);
+    info.set_wake_policy(state.wake_policy);
+    info.set_sleep_policy(state.sleep_policy);
+    info.set_wake_lead_time_s(state.wake_lead_time_s);
     info.set_created_at_ms(state.created_at_ms);
     info.set_updated_at_ms(state.updated_at_ms);
+
+    LOG(INFO) << "DEBUG BuildJobInfo: info.wake_lead_time_s=" << info.wake_lead_time_s();
 
     return info;
 }
@@ -794,6 +812,28 @@ sync_pb::job_sync_status_t SchedulerSyncBridge::MapStatus(
     }
 }
 
+sync_pb::wake_policy_t SchedulerSyncBridge::MapWakePolicy(
+    scheduler_pb::wake_policy_t policy) {
+    switch (policy) {
+        case scheduler_pb::WAKE_REQUIRED:
+            return sync_pb::WAKE_REQUIRED;
+        case scheduler_pb::NO_WAKE:
+        default:
+            return sync_pb::NO_WAKE;
+    }
+}
+
+sync_pb::sleep_policy_t SchedulerSyncBridge::MapSleepPolicy(
+    scheduler_pb::sleep_policy_t policy) {
+    switch (policy) {
+        case scheduler_pb::INHIBIT_UNTIL_COMPLETE:
+            return sync_pb::INHIBIT_UNTIL_COMPLETE;
+        case scheduler_pb::SLEEP_NORMAL:
+        default:
+            return sync_pb::SLEEP_NORMAL;
+    }
+}
+
 // =============================================================================
 // Cloud Command Handling (c2v)
 // =============================================================================
@@ -926,6 +966,10 @@ SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteCreateJob(
     auto* job = request.mutable_job();
 
     // Map job definition to scheduler job_create_t
+    // Pass the cloud-provided job_id so vehicle uses the same ID
+    if (!def.job_id().empty()) {
+        job->set_job_id(def.job_id());
+    }
     job->set_title(def.title());
     job->set_service(def.service());
     job->set_method(def.method());

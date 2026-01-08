@@ -115,6 +115,11 @@ struct SyncedJobState {
     std::string recurrence_rule;
     std::string next_run_time;
     swdv::scheduler_sync_envelope::job_sync_status_t status;
+    swdv::scheduler_sync_envelope::wake_policy_t wake_policy =
+        swdv::scheduler_sync_envelope::NO_WAKE;
+    swdv::scheduler_sync_envelope::sleep_policy_t sleep_policy =
+        swdv::scheduler_sync_envelope::SLEEP_NORMAL;
+    uint32_t wake_lead_time_s = 0;
     uint64_t created_at_ms = 0;
     uint64_t updated_at_ms = 0;
     uint64_t last_synced_sequence = 0;
@@ -342,6 +347,14 @@ private:
     /// Map scheduler status to sync status
     static swdv::scheduler_sync_envelope::job_sync_status_t MapStatus(
         swdv::ifex_scheduler::job_status_t status);
+
+    /// Map scheduler wake policy to sync wake policy
+    static swdv::scheduler_sync_envelope::wake_policy_t MapWakePolicy(
+        swdv::ifex_scheduler::wake_policy_t policy);
+
+    /// Map scheduler sleep policy to sync sleep policy
+    static swdv::scheduler_sync_envelope::sleep_policy_t MapSleepPolicy(
+        swdv::ifex_scheduler::sleep_policy_t policy);
 
     // =========================================================================
     // Cloud Command Handling (c2v)

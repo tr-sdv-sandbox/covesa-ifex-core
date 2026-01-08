@@ -27,6 +27,18 @@ enum view_type_t {
   RANGE = 3;
 }
 
+// Vehicle wake behavior for scheduled jobs
+enum wake_policy_t {
+  NO_WAKE = 0;
+  WAKE_REQUIRED = 1;
+}
+
+// Vehicle sleep behavior during job execution
+enum sleep_policy_t {
+  SLEEP_NORMAL = 0;
+  INHIBIT_UNTIL_COMPLETE = 1;
+}
+
 // Complete job information
 message job_t {
   string id = 1;
@@ -45,6 +57,9 @@ message job_t {
   string error_message = 14;
   string result = 15;
   string service_address = 16;
+  wake_policy_t wake_policy = 17;
+  sleep_policy_t sleep_policy = 18;
+  uint32 wake_lead_time_s = 19;
 }
 
 // Filter criteria for retrieving jobs
@@ -59,14 +74,18 @@ message job_filter_t {
 
 // Information needed to create a new job
 message job_create_t {
-  string title = 1;
-  string service = 2;
-  string method = 3;
-  string parameters = 4;
-  string scheduled_time = 5;
-  string recurrence_rule = 6;
-  string end_time = 7;
-  string service_address = 8;
+  string job_id = 1;
+  string title = 2;
+  string service = 3;
+  string method = 4;
+  string parameters = 5;
+  string scheduled_time = 6;
+  string recurrence_rule = 7;
+  string end_time = 8;
+  string service_address = 9;
+  wake_policy_t wake_policy = 10;
+  sleep_policy_t sleep_policy = 11;
+  uint32 wake_lead_time_s = 12;
 }
 
 // Fields that can be updated in an existing job
@@ -77,6 +96,9 @@ message job_update_t {
   string end_time = 4;
   string parameters = 5;
   string service_address = 6;
+  wake_policy_t wake_policy = 7;
+  sleep_policy_t sleep_policy = 8;
+  uint32 wake_lead_time_s = 9;
 }
 
 // Method: create_job
