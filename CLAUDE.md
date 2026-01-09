@@ -147,6 +147,12 @@ Backend Transport publishes vehicle connection status to the cloud using MQTT LW
 │  │    │ 3. mosquitto_publish(status_topic, "1", QoS=1, retain)     │   │   │
 │  │    │    └─▶ Immediately marks vehicle as online                 │   │   │
 │  │    └────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                      │   │
+│  │  MqttClient::Disconnect():                                          │   │
+│  │    ┌────────────────────────────────────────────────────────────┐   │   │
+│  │    │ 4. mosquitto_publish(status_topic, "0", QoS=1, retain)     │   │   │
+│  │    │    └─▶ Marks vehicle as offline before graceful disconnect │   │   │
+│  │    └────────────────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                   │
@@ -164,6 +170,7 @@ Backend Transport publishes vehicle connection status to the cloud using MQTT LW
 | Config topic | `backend_transport_server.cpp` | ~43 | `status_topic = "v2c/" + vehicle_id + "/is_online"` |
 | Set LWT | `mqtt_client.cpp` | ~82 | `mosquitto_will_set(mosq_, topic, 1, "0", 1, true)` |
 | Publish online | `mqtt_client.cpp` | ~291 | `mosquitto_publish(mosq_, nullptr, topic, 1, "1", 1, true)` |
+| Publish offline | `mqtt_client.cpp` | ~131 | `mosquitto_publish(mosq_, nullptr, topic, 1, "0", 1, true)` |
 
 #### MQTT Message
 

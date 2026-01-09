@@ -304,7 +304,7 @@ ifex-backend-transport-service \
 
 ### Vehicle Online/Offline Status
 
-Backend Transport publishes connection status to the cloud using MQTT LWT (Last Will and Testament):
+Backend Transport publishes connection status to the cloud using MQTT retained messages and LWT (Last Will and Testament):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -318,13 +318,22 @@ Backend Transport publishes connection status to the cloud using MQTT LWT (Last 
 │  3. mosquitto_publish("v2c/{vehicle_id}/is_online", "1", retain)    │
 │     └─▶ Immediately marks vehicle as online                         │
 └─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    MqttClient::Disconnect()                          │
+│                                                                      │
+│  1. mosquitto_publish("v2c/{vehicle_id}/is_online", "0", retain)    │
+│     └─▶ Marks vehicle as offline before graceful disconnect         │
+│                                                                      │
+│  2. mosquitto_disconnect()                                          │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 | Event | MQTT Publish | Result |
 |-------|--------------|--------|
 | Vehicle connects | `v2c/{id}/is_online` = `1` (retained) | Cloud sees online |
+| Vehicle graceful stop | `v2c/{id}/is_online` = `0` (retained) | Cloud sees offline |
 | Vehicle crashes | Broker publishes LWT `0` (retained) | Cloud sees offline |
-| Vehicle graceful stop | (clean disconnect, no LWT) | Cloud relies on heartbeat timeout |
 
 The cloud side (`mqtt_kafka_bridge`) subscribes to `v2c/#`, detects `/is_online` topics, and updates PostgreSQL.
 

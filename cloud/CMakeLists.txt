@@ -17,4 +17,4 @@ file(MAKE_DIRECTORY ${CLOUD_PROTO_DIR})
 # Similar to reference-services/ifex generation
 
 # Cloud Backend Transport Reference Service
-# add_subdirectory(cloud-backend-transport)
+add_subdirectory(cloud-backend-transport)

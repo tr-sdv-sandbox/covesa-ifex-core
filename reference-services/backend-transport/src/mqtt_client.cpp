@@ -126,6 +126,21 @@ void MqttClient::Disconnect() {
 
     LOG(INFO) << "Disconnecting from MQTT broker";
 
+    // Publish offline status before graceful disconnect
+    // (LWT only triggers on ungraceful disconnect - TCP drop, process crash)
+    if (mosq_ && connected_ && !config_.status_topic.empty() && config_.publish_status) {
+        const char* offline_payload = "0";
+        int rc = mosquitto_publish(mosq_.get(), nullptr, config_.status_topic.c_str(),
+                                   1, offline_payload, 1, true);  // QoS 1, retain
+        if (rc == MOSQ_ERR_SUCCESS) {
+            LOG(INFO) << "Published offline status: " << config_.status_topic << " = 0";
+            // Give broker time to receive the message before disconnect
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        } else {
+            LOG(WARNING) << "Failed to publish offline status: " << mosquitto_strerror(rc);
+        }
+    }
+
     running_ = false;
     if (mosq_) {
         mosquitto_disconnect(mosq_.get());
