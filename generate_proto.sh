@@ -50,6 +50,7 @@ declare -A IFEX_SOURCES=(
     ["test-services"]="*.ifex.yml"
     ["lua-orchestration"]="*.ifex.yml"
     ["lua-orchestration2/test"]="*.ifex.yml"
+    ["cloud/ifex"]="*.yml"
 )
 
 # Process IFEX files from all source directories
