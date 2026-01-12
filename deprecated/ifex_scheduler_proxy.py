@@ -416,7 +416,6 @@ def schedule_action():
         method_name = data.get('method')
         schedule_date = data.get('date')
         schedule_time = data.get('time')
-        service_address = data.get('service_address', '')
         parameters = data.get('parameters', {})
         
         print(f"📅 Scheduling: {service_name}.{method_name} at {schedule_date} {schedule_time}")
@@ -464,8 +463,7 @@ def schedule_action():
         job.service = service_name
         job.method = method_name
         job.parameters = json.dumps(parameters)
-        job.service_address = service_address
-        
+
         # Convert date and time to ISO format
         # Combine date and time into ISO 8601 format with seconds
         # Ensure time has seconds (HH:MM becomes HH:MM:00)

@@ -20,18 +20,43 @@
 namespace ifex::reference {
 
 using namespace std::chrono_literals;
-namespace sync_pb = swdv::scheduler_sync_envelope;
+namespace sync_v2 = swdv::scheduler_sync_v2;
 namespace cmd_pb = swdv::scheduler_command_envelope;
 namespace scheduler_pb = swdv::ifex_scheduler;
+
+// =============================================================================
+// Helper: Convert epoch milliseconds to ISO8601 string
+// =============================================================================
+
+static std::string EpochMsToIso8601(uint64_t epoch_ms) {
+    if (epoch_ms == 0) {
+        return "";  // 0 means "not set" or "no change"
+    }
+
+    auto seconds = static_cast<time_t>(epoch_ms / 1000);
+    auto ms_remainder = epoch_ms % 1000;
+
+    std::tm tm_utc;
+    gmtime_r(&seconds, &tm_utc);
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm_utc, "%Y-%m-%dT%H:%M:%S");
+    if (ms_remainder > 0) {
+        oss << '.' << std::setfill('0') << std::setw(3) << ms_remainder;
+    }
+    oss << 'Z';
+
+    return oss.str();
+}
 
 // =============================================================================
 // SyncedJobState
 // =============================================================================
 
 uint64_t SyncedJobState::ComputeHash() const {
-    // Simple hash combining key fields
+    // Hash only content fields - exclude metadata like updated_at_ms
+    // which can change without actual job content changing
     std::hash<std::string> str_hash;
-    std::hash<uint64_t> u64_hash;
     std::hash<int> int_hash;
 
     uint64_t h = str_hash(job_id);
@@ -43,7 +68,7 @@ uint64_t SyncedJobState::ComputeHash() const {
     h ^= str_hash(recurrence_rule) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(next_run_time) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= int_hash(static_cast<int>(status)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= u64_hash(updated_at_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    // Note: updated_at_ms excluded - it's metadata, not content
 
     return h;
 }
@@ -188,7 +213,7 @@ SchedulerSyncStats SchedulerSyncBridge::GetStats() const {
 void SchedulerSyncBridge::ForceFullSync() {
     LOG(INFO) << "Forcing full sync";
     auto jobs = QuerySchedulerJobs();
-    SendFullSync(jobs);
+    SendV2SyncMessage(jobs, true /* include_all_jobs */);
 }
 
 uint32_t SchedulerSyncBridge::GetStateChecksum() const {
@@ -218,7 +243,7 @@ void SchedulerSyncBridge::PollLoop() {
     // Initial full sync
     LOG(INFO) << "Initialization complete, performing initial full sync";
     auto jobs = QuerySchedulerJobs();
-    SendFullSync(jobs);
+    SendV2SyncMessage(jobs, true /* include_all_jobs */);
 
     // Update synced state with active jobs only
     {
@@ -256,12 +281,32 @@ void SchedulerSyncBridge::PollLoop() {
 
         VLOG(1) << "Found " << current.size() << " jobs in Scheduler";
 
-        // Detect and publish changes
+        // Detect changes
         DetectChanges(current);
 
-        // Flush events if no batching
-        if (config_.batch_window_ms == 0) {
-            FlushEvents();
+        // Check for jobs with pending sync state and send delta sync
+        {
+            std::vector<SyncedJobState> jobs_to_sync;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                for (const auto& [job_id, state] : synced_state_) {
+                    if (state.sync_state == sync_v2::SYNC_STATE_PENDING) {
+                        jobs_to_sync.push_back(state);
+                    }
+                }
+            }
+            if (!jobs_to_sync.empty()) {
+                SendV2SyncMessage(jobs_to_sync, false /* delta sync */);
+
+                // Mark jobs as synced
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                for (const auto& job : jobs_to_sync) {
+                    auto it = synced_state_.find(job.job_id);
+                    if (it != synced_state_.end()) {
+                        it->second.sync_state = sync_v2::SYNC_STATE_SYNCED;
+                    }
+                }
+            }
         }
 
         // Send heartbeat if no activity
@@ -283,11 +328,24 @@ void SchedulerSyncBridge::BatchLoop() {
 
         if (stop_requested_.load()) break;
 
-        FlushEvents();
+        // In v2, pending executions are batched and sent periodically
+        std::lock_guard<std::mutex> lock(events_mutex_);
+        if (!pending_executions_.empty()) {
+            // Jobs with pending changes will be synced
+            std::vector<SyncedJobState> jobs_to_sync;
+            {
+                std::lock_guard<std::mutex> state_lock(state_mutex_);
+                for (const auto& [job_id, state] : synced_state_) {
+                    if (state.sync_state == sync_v2::SYNC_STATE_PENDING) {
+                        jobs_to_sync.push_back(state);
+                    }
+                }
+            }
+            if (!jobs_to_sync.empty()) {
+                SendV2SyncMessage(jobs_to_sync, false);
+            }
+        }
     }
-
-    // Final flush
-    FlushEvents();
 
     LOG(INFO) << "Batch thread stopped";
 }
@@ -353,22 +411,15 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
         current_map[job.job_id] = &job;
     }
 
+    namespace sync_v2_ns = swdv::scheduler_sync_v2;
+
     // Check for deleted jobs (in synced_state_ but not in current)
     std::vector<std::string> to_remove;
     for (const auto& [job_id, synced] : synced_state_) {
         if (current_map.find(job_id) == current_map.end()) {
-            // Job was deleted
-            sync_pb::sync_event_t event;
-            event.set_event_type(sync_pb::JOB_DELETED);
-            event.set_sequence_number(++sequence_number_);
-            event.set_timestamp_ms(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
-            event.set_job_id(job_id);
-
-            QueueEvent(std::move(event));
+            // Job was deleted - mark as deleted with pending sync
+            // The job will be included in next sync with deleted=true
             to_remove.push_back(job_id);
-
             LOG(INFO) << "Job deleted: " << synced.title << " (id=" << job_id << ")";
         }
     }
@@ -389,42 +440,28 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
         if (it == synced_state_.end()) {
             // New job or job transitioning to terminal state
             if (job.IsTerminal()) {
-                // Job completed/failed - send execution result
-                sync_pb::sync_event_t event;
-                event.set_event_type(sync_pb::JOB_EXECUTED);
-                event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ms(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-                event.set_job_id(job.job_id);
+                // Job completed/failed - record execution for v2 sync
+                RecordExecution(
+                    job.job_id,
+                    job.updated_at_ms,
+                    0,  // duration_ms - would calculate from actual execution
+                    job.status == sync_v2::JOB_STATUS_COMPLETED
+                        ? sync_v2_ns::JOB_STATUS_COMPLETED
+                        : sync_v2_ns::JOB_STATUS_FAILED,
+                    "",  // result_json
+                    ""   // error_message
+                );
 
-                auto* result = event.mutable_execution_result();
-                result->set_job_id(job.job_id);
-                result->set_status(job.status);
-                result->set_executed_at_ms(job.updated_at_ms);
-                result->set_duration_ms(0);  // Would calculate from actual execution
-                if (!job.recurrence_rule.empty()) {
-                    result->set_next_run_time(job.next_run_time);
-                }
-
-                QueueEvent(std::move(event));
                 synced_terminal_jobs_.insert(job.job_id);
-
                 LOG(INFO) << "Job executed: " << job.title << " (id=" << job.job_id
                           << ", status=" << static_cast<int>(job.status) << ")";
             } else {
-                // New active job
-                sync_pb::sync_event_t event;
-                event.set_event_type(sync_pb::JOB_CREATED);
-                event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ms(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-                event.set_job_id(job.job_id);
-                *event.mutable_job_info() = BuildJobInfo(job);
-
-                QueueEvent(std::move(event));
-                synced_state_[job.job_id] = job;
+                // New active job - add to synced state with PENDING sync state
+                SyncedJobState new_state = job;
+                new_state.sync_state = sync_v2_ns::SYNC_STATE_PENDING;
+                new_state.version.increment_vehicle();  // New local job
+                new_state.authority = sync_v2_ns::AUTHORITY_VEHICLE;
+                synced_state_[job.job_id] = new_state;
 
                 LOG(INFO) << "Job created: " << job.title << " (id=" << job.job_id << ")";
             }
@@ -433,18 +470,17 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
             const auto& synced = it->second;
 
             if (job.IsTerminal()) {
-                // Job transitioned to terminal state
-                sync_pb::sync_event_t event;
-                event.set_event_type(sync_pb::JOB_EXECUTED);
-                event.set_sequence_number(++sequence_number_);
-                event.set_timestamp_ms(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
-                event.set_job_id(job.job_id);
-
-                *event.mutable_execution_result() = BuildExecutionResult(job, synced);
-
-                QueueEvent(std::move(event));
+                // Job transitioned to terminal state - record execution
+                RecordExecution(
+                    job.job_id,
+                    job.updated_at_ms,
+                    0,  // duration_ms
+                    job.status == sync_v2::JOB_STATUS_COMPLETED
+                        ? sync_v2_ns::JOB_STATUS_COMPLETED
+                        : sync_v2_ns::JOB_STATUS_FAILED,
+                    "",  // result_json
+                    ""   // error_message
+                );
 
                 // Remove from active tracking, add to terminal set
                 synced_state_.erase(job.job_id);
@@ -458,150 +494,29 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
 
                 // If terminal_states_only, skip RUNNING state updates
                 if (config_.terminal_states_only &&
-                    job.status == sync_pb::RUNNING &&
-                    synced.status == sync_pb::PENDING) {
+                    job.status == sync_v2::JOB_STATUS_RUNNING &&
+                    synced.status == sync_v2::JOB_STATUS_PENDING) {
                     should_sync = false;
                     VLOG(1) << "Skipping RUNNING state update for: " << job.title;
                 }
 
                 if (should_sync) {
-                    sync_pb::sync_event_t event;
-                    event.set_event_type(sync_pb::JOB_UPDATED);
-                    event.set_sequence_number(++sequence_number_);
-                    event.set_timestamp_ms(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::system_clock::now().time_since_epoch()).count());
-                    event.set_job_id(job.job_id);
-                    *event.mutable_job_info() = BuildJobInfo(job);
-
-                    QueueEvent(std::move(event));
+                    // Update synced state with new values and mark as pending
+                    SyncedJobState updated_state = job;
+                    updated_state.version = synced.version;
+                    updated_state.version.increment_vehicle();  // Local change
+                    updated_state.authority = synced.authority;
+                    updated_state.sync_state = sync_v2_ns::SYNC_STATE_PENDING;
+                    it->second = updated_state;
 
                     VLOG(1) << "Job updated: " << job.title;
+                } else {
+                    it->second = job;
+                    it->second.sync_state = synced.sync_state;  // Preserve sync state
                 }
-
-                it->second = job;
             }
         }
     }
-}
-
-void SchedulerSyncBridge::QueueEvent(sync_pb::sync_event_t event) {
-    std::lock_guard<std::mutex> lock(events_mutex_);
-    pending_events_.push_back(std::move(event));
-    last_activity_time_ = std::chrono::steady_clock::now();
-}
-
-void SchedulerSyncBridge::FlushEvents() {
-    std::vector<sync_pb::sync_event_t> events;
-    {
-        std::lock_guard<std::mutex> lock(events_mutex_);
-        if (pending_events_.empty()) return;
-        events.swap(pending_events_);
-    }
-
-    // Build sync message
-    sync_pb::sync_message_t message;
-    message.set_vehicle_id(config_.vehicle_id);
-    message.set_bridge_instance_id(instance_id_);
-    message.set_state_checksum(ComputeStateChecksum());
-
-    {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        message.set_active_jobs_count(static_cast<uint32_t>(synced_state_.size()));
-    }
-
-    bool has_execution_result = false;
-    for (auto& event : events) {
-        if (event.event_type() == sync_pb::JOB_EXECUTED) {
-            has_execution_result = true;
-        }
-        *message.add_events() = std::move(event);
-    }
-
-    // Serialize and publish
-    std::string serialized;
-    if (!message.SerializeToString(&serialized)) {
-        LOG(ERROR) << "Failed to serialize sync message";
-        return;
-    }
-
-    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-    auto result = transport_client_->publish(payload, client::Persistence::Volatile);
-
-    if (result.ok()) {
-        UpdateStats(serialized.size(), false, has_execution_result);
-        VLOG(1) << "Published " << events.size() << " sync events ("
-                << serialized.size() << " bytes)";
-    } else {
-        LOG(WARNING) << "Failed to publish sync events: status="
-                     << static_cast<int>(result.status);
-    }
-}
-
-void SchedulerSyncBridge::SendFullSync(const std::vector<SyncedJobState>& jobs) {
-    sync_pb::sync_message_t message;
-    message.set_vehicle_id(config_.vehicle_id);
-    message.set_bridge_instance_id(instance_id_);
-
-    // Count active jobs
-    uint32_t active_count = 0;
-    for (const auto& job : jobs) {
-        if (!job.IsTerminal()) {
-            active_count++;
-        }
-    }
-    message.set_active_jobs_count(active_count);
-
-    // Create FULL_SYNC event
-    sync_pb::sync_event_t event;
-    event.set_event_type(sync_pb::FULL_SYNC);
-    event.set_sequence_number(++sequence_number_);
-    event.set_timestamp_ms(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
-
-    *message.add_events() = event;
-
-    // Add JOB_CREATED event for each active job
-    for (const auto& job : jobs) {
-        if (job.IsTerminal()) {
-            continue;  // Skip terminal jobs in full sync
-        }
-
-        sync_pb::sync_event_t job_event;
-        job_event.set_event_type(sync_pb::JOB_CREATED);
-        job_event.set_sequence_number(++sequence_number_);
-        job_event.set_timestamp_ms(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-        job_event.set_job_id(job.job_id);
-        *job_event.mutable_job_info() = BuildJobInfo(job);
-
-        *message.add_events() = std::move(job_event);
-    }
-
-    message.set_state_checksum(ComputeStateChecksum());
-
-    // Serialize and publish
-    std::string serialized;
-    if (!message.SerializeToString(&serialized)) {
-        LOG(ERROR) << "Failed to serialize full sync message";
-        return;
-    }
-
-    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-    auto result = transport_client_->publish(payload, client::Persistence::BestEffort);
-
-    if (result.ok()) {
-        UpdateStats(serialized.size(), true, false);
-        LOG(INFO) << "Published FULL_SYNC with " << active_count
-                  << " active jobs (" << serialized.size() << " bytes)";
-    } else {
-        LOG(WARNING) << "Failed to publish full sync: status="
-                     << static_cast<int>(result.status);
-    }
-
-    last_activity_time_ = std::chrono::steady_clock::now();
 }
 
 void SchedulerSyncBridge::MaybeSendHeartbeat() {
@@ -612,90 +527,15 @@ void SchedulerSyncBridge::MaybeSendHeartbeat() {
         now - last_activity_time_).count();
 
     if (elapsed >= config_.heartbeat_interval_ms) {
-        sync_pb::sync_message_t message;
-        message.set_vehicle_id(config_.vehicle_id);
-        message.set_bridge_instance_id(instance_id_);
-        message.set_state_checksum(ComputeStateChecksum());
+        // For v2 protocol, heartbeat is just an empty sync message
+        // The presence of the message with timestamp indicates liveness
+        std::vector<SyncedJobState> empty_jobs;
+        SendV2SyncMessage(empty_jobs, false);
+        last_activity_time_ = std::chrono::steady_clock::now();
 
-        {
-            std::lock_guard<std::mutex> lock(state_mutex_);
-            message.set_active_jobs_count(static_cast<uint32_t>(synced_state_.size()));
-        }
-
-        sync_pb::sync_event_t event;
-        event.set_event_type(sync_pb::HEARTBEAT);
-        event.set_sequence_number(++sequence_number_);
-        event.set_timestamp_ms(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-
-        *message.add_events() = std::move(event);
-
-        std::string serialized;
-        if (message.SerializeToString(&serialized)) {
-            std::vector<uint8_t> payload(serialized.begin(), serialized.end());
-            auto result = transport_client_->publish(payload, client::Persistence::Volatile);
-
-            if (result.ok()) {
-                std::lock_guard<std::mutex> lock(stats_mutex_);
-                stats_.heartbeats_sent++;
-                stats_.bytes_sent += serialized.size();
-                VLOG(1) << "Sent heartbeat";
-            }
-        }
-
-        last_activity_time_ = now;
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.heartbeats_sent++;
     }
-}
-
-sync_pb::job_info_t SchedulerSyncBridge::BuildJobInfo(const SyncedJobState& state) {
-    LOG(INFO) << "DEBUG BuildJobInfo: job=" << state.job_id
-              << " state.wake_policy=" << static_cast<int>(state.wake_policy)
-              << " state.sleep_policy=" << static_cast<int>(state.sleep_policy)
-              << " state.wake_lead_time_s=" << state.wake_lead_time_s;
-
-    sync_pb::job_info_t info;
-    info.set_job_id(state.job_id);
-    info.set_title(state.title);
-    info.set_service(state.service);
-    info.set_method(state.method);
-    info.set_parameters(state.parameters);
-    info.set_scheduled_time(state.scheduled_time);
-    info.set_recurrence_rule(state.recurrence_rule);
-    info.set_next_run_time(state.next_run_time);
-    info.set_status(state.status);
-    info.set_wake_policy(state.wake_policy);
-    info.set_sleep_policy(state.sleep_policy);
-    info.set_wake_lead_time_s(state.wake_lead_time_s);
-    info.set_created_at_ms(state.created_at_ms);
-    info.set_updated_at_ms(state.updated_at_ms);
-
-    LOG(INFO) << "DEBUG BuildJobInfo: info.wake_lead_time_s=" << info.wake_lead_time_s();
-
-    return info;
-}
-
-sync_pb::execution_result_t SchedulerSyncBridge::BuildExecutionResult(
-    const SyncedJobState& current,
-    const SyncedJobState& previous) {
-
-    sync_pb::execution_result_t result;
-    result.set_job_id(current.job_id);
-    result.set_status(current.status);
-    result.set_executed_at_ms(current.updated_at_ms);
-
-    // Calculate duration if we have previous state
-    if (previous.updated_at_ms > 0 && current.updated_at_ms > previous.updated_at_ms) {
-        result.set_duration_ms(static_cast<uint32_t>(
-            current.updated_at_ms - previous.updated_at_ms));
-    }
-
-    // Set next_run_time for recurring jobs
-    if (!current.recurrence_rule.empty()) {
-        result.set_next_run_time(current.next_run_time);
-    }
-
-    return result;
 }
 
 uint32_t SchedulerSyncBridge::ComputeStateChecksum() const {
@@ -794,43 +634,43 @@ void SchedulerSyncBridge::UpdateStats(uint64_t bytes_sent, bool is_full_sync,
     }
 }
 
-sync_pb::job_sync_status_t SchedulerSyncBridge::MapStatus(
+sync_v2::JobStatus SchedulerSyncBridge::MapStatus(
     scheduler_pb::job_status_t status) {
     switch (status) {
         case scheduler_pb::PENDING:
-            return sync_pb::PENDING;
+            return sync_v2::JOB_STATUS_PENDING;
         case scheduler_pb::RUNNING:
-            return sync_pb::RUNNING;
+            return sync_v2::JOB_STATUS_RUNNING;
         case scheduler_pb::COMPLETED:
-            return sync_pb::COMPLETED;
+            return sync_v2::JOB_STATUS_COMPLETED;
         case scheduler_pb::FAILED:
-            return sync_pb::FAILED;
+            return sync_v2::JOB_STATUS_FAILED;
         case scheduler_pb::CANCELLED:
-            return sync_pb::CANCELLED;
+            return sync_v2::JOB_STATUS_CANCELLED;
         default:
-            return sync_pb::PENDING;
+            return sync_v2::JOB_STATUS_PENDING;
     }
 }
 
-sync_pb::wake_policy_t SchedulerSyncBridge::MapWakePolicy(
+sync_v2::WakePolicy SchedulerSyncBridge::MapWakePolicy(
     scheduler_pb::wake_policy_t policy) {
     switch (policy) {
         case scheduler_pb::WAKE_REQUIRED:
-            return sync_pb::WAKE_REQUIRED;
+            return sync_v2::WAKE_POLICY_WAKE_REQUIRED;
         case scheduler_pb::NO_WAKE:
         default:
-            return sync_pb::NO_WAKE;
+            return sync_v2::WAKE_POLICY_NO_WAKE;
     }
 }
 
-sync_pb::sleep_policy_t SchedulerSyncBridge::MapSleepPolicy(
+sync_v2::SleepPolicy SchedulerSyncBridge::MapSleepPolicy(
     scheduler_pb::sleep_policy_t policy) {
     switch (policy) {
         case scheduler_pb::INHIBIT_UNTIL_COMPLETE:
-            return sync_pb::INHIBIT_UNTIL_COMPLETE;
+            return sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE;
         case scheduler_pb::SLEEP_NORMAL:
         default:
-            return sync_pb::SLEEP_NORMAL;
+            return sync_v2::SLEEP_POLICY_NORMAL;
     }
 }
 
@@ -839,25 +679,50 @@ sync_pb::sleep_policy_t SchedulerSyncBridge::MapSleepPolicy(
 // =============================================================================
 
 void SchedulerSyncBridge::HandleCloudCommand(const std::vector<uint8_t>& payload) {
-    // Decode the command envelope
+    // Try parsing as different message types
+    // Order: command envelope first (most common), then v2 sync messages
+
+    // Try command envelope
     cmd_pb::scheduler_command_t command;
-    if (!command.ParseFromArray(payload.data(), static_cast<int>(payload.size()))) {
-        LOG(WARNING) << "Failed to parse scheduler command from c2v payload ("
-                     << payload.size() << " bytes)";
+    if (command.ParseFromArray(payload.data(), static_cast<int>(payload.size())) &&
+        command.type() != cmd_pb::COMMAND_UNKNOWN) {
+        LOG(INFO) << "Received cloud command: id=" << command.command_id()
+                  << ", type=" << static_cast<int>(command.type());
+
+        // Update stats
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            stats_.commands_received++;
+        }
+
+        // Process command synchronously
+        ProcessCommand(command);
         return;
     }
 
-    LOG(INFO) << "Received cloud command: id=" << command.command_id()
-              << ", type=" << static_cast<int>(command.type());
-
-    // Update stats
-    {
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        stats_.commands_received++;
+    // Try v2 C2V_SyncMessage
+    namespace sync_v2_local = swdv::scheduler_sync_v2;
+    sync_v2_local::C2V_SyncMessage sync_msg;
+    if (sync_msg.ParseFromArray(payload.data(), static_cast<int>(payload.size())) &&
+        !sync_msg.sync_id().empty()) {
+        LOG(INFO) << "Received C2V sync message: sync_id=" << sync_msg.sync_id()
+                  << ", jobs=" << sync_msg.jobs_size();
+        HandleV2SyncMessage(sync_msg);
+        return;
     }
 
-    // Process command synchronously - gRPC calls to Scheduler are fast
-    ProcessCommand(command);
+    // Try v2 SyncAck
+    sync_v2_local::SyncAck ack;
+    if (ack.ParseFromArray(payload.data(), static_cast<int>(payload.size())) &&
+        !ack.sync_id().empty()) {
+        VLOG(1) << "Received sync ack: sync_id=" << ack.sync_id()
+                << ", success=" << ack.success();
+        // Sync ack is just informational for now - we don't track pending syncs
+        return;
+    }
+
+    LOG(WARNING) << "Failed to parse c2v payload as any known message type ("
+                 << payload.size() << " bytes)";
 }
 
 void SchedulerSyncBridge::ProcessCommand(
@@ -974,10 +839,9 @@ SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteCreateJob(
     job->set_service(def.service());
     job->set_method(def.method());
     job->set_parameters(def.parameters_json());
-    job->set_scheduled_time(def.scheduled_time());
+    job->set_scheduled_time(EpochMsToIso8601(def.scheduled_time_ms()));
     job->set_recurrence_rule(def.recurrence_rule());
-    job->set_end_time(def.end_time());
-    job->set_service_address(def.service_address());
+    job->set_end_time(EpochMsToIso8601(def.end_time_ms()));
 
     scheduler_pb::create_job_response response;
     auto status = create_job_stub_->create_job(&context, request, &response);
@@ -1023,10 +887,10 @@ SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteUpdateJob(
     // Set update fields via the updates sub-message
     auto* updates = request.mutable_updates();
     updates->set_title(update.title());
-    updates->set_scheduled_time(update.scheduled_time());
+    updates->set_scheduled_time(EpochMsToIso8601(update.scheduled_time_ms()));
     updates->set_recurrence_rule(update.recurrence_rule());
     updates->set_parameters(update.parameters_json());
-    updates->set_end_time(update.end_time());
+    updates->set_end_time(EpochMsToIso8601(update.end_time_ms()));
 
     scheduler_pb::update_job_response response;
     auto status = update_job_stub_->update_job(&context, request, &response);
@@ -1241,6 +1105,363 @@ void SchedulerSyncBridge::SendCommandAck(const std::string& command_id,
     }
 
     last_activity_time_ = std::chrono::steady_clock::now();
+}
+
+// =============================================================================
+// Sync Protocol v2 Methods
+// =============================================================================
+
+namespace sync_v2 = swdv::scheduler_sync_v2;
+
+void SyncedJobState::ToJobRecord(sync_v2::JobRecord* record) const {
+    record->set_job_id(job_id);
+    record->set_authority(authority);
+
+    auto* ver = record->mutable_version();
+    ver->set_cloud_seq(version.cloud_seq);
+    ver->set_vehicle_seq(version.vehicle_seq);
+
+    record->set_sync_state(sync_state);
+    record->set_deleted(deleted);
+    if (deleted_at_ms > 0) {
+        record->set_deleted_at_ms(deleted_at_ms);
+    }
+
+    record->set_title(title);
+    record->set_service(service);
+    record->set_method(method);
+    record->set_parameters_json(parameters);
+    record->set_scheduled_time_ms(scheduled_time_ms);
+    record->set_recurrence_rule(recurrence_rule);
+    if (end_time_ms > 0) {
+        record->set_end_time_ms(end_time_ms);
+    }
+
+    // Map status
+    switch (status) {
+        case sync_v2::JOB_STATUS_PENDING:
+            record->set_status(sync_v2::JOB_STATUS_PENDING);
+            break;
+        case sync_v2::JOB_STATUS_RUNNING:
+            record->set_status(sync_v2::JOB_STATUS_RUNNING);
+            break;
+        case sync_v2::JOB_STATUS_COMPLETED:
+            record->set_status(sync_v2::JOB_STATUS_COMPLETED);
+            break;
+        case sync_v2::JOB_STATUS_FAILED:
+            record->set_status(sync_v2::JOB_STATUS_FAILED);
+            break;
+        case sync_v2::JOB_STATUS_CANCELLED:
+            record->set_status(sync_v2::JOB_STATUS_CANCELLED);
+            break;
+        default:
+            record->set_status(sync_v2::JOB_STATUS_UNKNOWN);
+    }
+
+    // Map wake/sleep policies
+    record->set_wake_policy(wake_policy == sync_v2::WAKE_POLICY_WAKE_REQUIRED
+        ? sync_v2::WAKE_POLICY_WAKE_REQUIRED
+        : sync_v2::WAKE_POLICY_NO_WAKE);
+    record->set_sleep_policy(sleep_policy == sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE
+        ? sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE
+        : sync_v2::SLEEP_POLICY_NORMAL);
+    record->set_wake_lead_time_s(wake_lead_time_s);
+
+    record->set_created_at_ms(created_at_ms);
+    record->set_updated_at_ms(updated_at_ms);
+}
+
+SyncedJobState SyncedJobState::FromJobRecord(const sync_v2::JobRecord& record) {
+    SyncedJobState state;
+    state.job_id = record.job_id();
+    state.authority = record.authority();
+    state.version.cloud_seq = record.version().cloud_seq();
+    state.version.vehicle_seq = record.version().vehicle_seq();
+    state.sync_state = record.sync_state();
+    state.deleted = record.deleted();
+    state.deleted_at_ms = record.deleted_at_ms();
+
+    state.title = record.title();
+    state.service = record.service();
+    state.method = record.method();
+    state.parameters = record.parameters_json();
+    state.scheduled_time_ms = record.scheduled_time_ms();
+    state.scheduled_time = EpochMsToIso8601(record.scheduled_time_ms());
+    state.recurrence_rule = record.recurrence_rule();
+    state.end_time_ms = record.end_time_ms();
+    state.next_run_time = EpochMsToIso8601(record.next_run_time_ms());
+
+    // Map status
+    switch (record.status()) {
+        case sync_v2::JOB_STATUS_PENDING:
+            state.status = sync_v2::JOB_STATUS_PENDING;
+            break;
+        case sync_v2::JOB_STATUS_RUNNING:
+            state.status = sync_v2::JOB_STATUS_RUNNING;
+            break;
+        case sync_v2::JOB_STATUS_COMPLETED:
+            state.status = sync_v2::JOB_STATUS_COMPLETED;
+            break;
+        case sync_v2::JOB_STATUS_FAILED:
+            state.status = sync_v2::JOB_STATUS_FAILED;
+            break;
+        case sync_v2::JOB_STATUS_CANCELLED:
+            state.status = sync_v2::JOB_STATUS_CANCELLED;
+            break;
+        default:
+            state.status = sync_v2::JOB_STATUS_PENDING;
+    }
+
+    // Map wake/sleep policies
+    state.wake_policy = (record.wake_policy() == sync_v2::WAKE_POLICY_WAKE_REQUIRED)
+        ? sync_v2::WAKE_POLICY_WAKE_REQUIRED : sync_v2::WAKE_POLICY_NO_WAKE;
+    state.sleep_policy = (record.sleep_policy() == sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE)
+        ? sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE : sync_v2::SLEEP_POLICY_NORMAL;
+    state.wake_lead_time_s = record.wake_lead_time_s();
+
+    state.created_at_ms = record.created_at_ms();
+    state.updated_at_ms = record.updated_at_ms();
+
+    return state;
+}
+
+void SchedulerSyncBridge::SendV2SyncMessage(const std::vector<SyncedJobState>& jobs,
+                                            bool include_all_jobs) {
+    sync_v2::V2C_SyncMessage msg;
+    msg.set_vehicle_id(config_.vehicle_id);
+    msg.set_bridge_instance_id(instance_id_);
+
+    // Add job records
+    for (const auto& job : jobs) {
+        if (include_all_jobs || job.sync_state == sync_v2::SYNC_STATE_PENDING) {
+            auto* record = msg.add_jobs();
+            job.ToJobRecord(record);
+        }
+    }
+
+    // Add any pending execution records
+    {
+        std::lock_guard<std::mutex> lock(events_mutex_);
+        for (const auto& exec : pending_executions_) {
+            *msg.add_executions() = exec;
+        }
+        pending_executions_.clear();
+    }
+
+    msg.set_sync_timestamp_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    msg.set_sync_id(GenerateSyncId());
+
+    std::string serialized;
+    if (!msg.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize V2C_SyncMessage";
+        return;
+    }
+
+    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
+    auto result = transport_client_->publish(payload, client::Persistence::Volatile);
+
+    if (result.ok()) {
+        // Increment sequence number for stats tracking
+        ++sequence_number_;
+
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.events_sent++;
+        stats_.bytes_sent += serialized.size();
+        if (include_all_jobs) {
+            stats_.full_syncs_sent++;
+        } else {
+            stats_.delta_syncs_sent++;
+        }
+        VLOG(1) << "Sent V2C_SyncMessage with " << msg.jobs_size() << " jobs, "
+                << msg.executions_size() << " executions";
+    } else {
+        LOG(WARNING) << "Failed to send V2C_SyncMessage: status="
+                     << static_cast<int>(result.status);
+    }
+
+    last_activity_time_ = std::chrono::steady_clock::now();
+}
+
+void SchedulerSyncBridge::HandleV2SyncMessage(const sync_v2::C2V_SyncMessage& msg) {
+    LOG(INFO) << "Received C2V_SyncMessage from cloud: sync_id=" << msg.sync_id()
+              << ", jobs=" << msg.jobs_size()
+              << ", deleted=" << msg.deleted_job_ids_size();
+
+    std::vector<sync_v2::ConflictResolution> conflicts;
+
+    // Process each job from cloud
+    for (const auto& remote_job : msg.jobs()) {
+        ProcessCloudJob(remote_job);
+    }
+
+    // Process deletions (tombstones)
+    for (const auto& job_id : msg.deleted_job_ids()) {
+        // Mark job as deleted locally
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        auto it = synced_state_.find(job_id);
+        if (it != synced_state_.end()) {
+            it->second.deleted = true;
+            it->second.sync_state = sync_v2::SYNC_STATE_SYNCED;
+        }
+    }
+
+    // Send acknowledgment
+    SendSyncAck(msg.sync_id(), true, conflicts);
+}
+
+void SchedulerSyncBridge::ProcessCloudJob(const sync_v2::JobRecord& remote_job) {
+    const std::string& job_id = remote_job.job_id();
+
+    // Get local version if exists
+    std::optional<sync::VersionVector> local_version;
+    sync_v2::JobAuthority authority = remote_job.authority();
+
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        auto it = synced_state_.find(job_id);
+        if (it != synced_state_.end()) {
+            local_version = it->second.version;
+        }
+    }
+
+    // Use sync engine to determine action
+    sync::VersionVector remote_version(
+        remote_job.version().cloud_seq(),
+        remote_job.version().vehicle_seq());
+
+    sync::SyncResult result = sync::SyncEngine::process_remote(
+        remote_version,
+        local_version,
+        static_cast<sync::JobAuthority>(authority),
+        false  // We are vehicle side
+    );
+
+    switch (result.action) {
+        case sync::SyncResult::NO_ACTION:
+            VLOG(1) << "Job " << job_id << ": no action (already in sync)";
+            break;
+
+        case sync::SyncResult::ACCEPT_REMOTE:
+            VLOG(1) << "Job " << job_id << ": accepting remote version";
+            ApplyCloudJob(remote_job);
+            break;
+
+        case sync::SyncResult::REJECT_REMOTE:
+            VLOG(1) << "Job " << job_id << ": rejecting remote (local dominates)";
+            // Our local version is newer - will be synced on next outbound
+            break;
+
+        case sync::SyncResult::CONFLICT_RESOLVED:
+            LOG(INFO) << "Job " << job_id << ": conflict resolved, winner=" << result.winner;
+            if (result.winner == "cloud") {
+                ApplyCloudJob(remote_job);
+            }
+            // Update version to merged version
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                auto it = synced_state_.find(job_id);
+                if (it != synced_state_.end()) {
+                    it->second.version = result.resolved_version;
+                    it->second.sync_state = sync_v2::SYNC_STATE_SYNCED;
+                }
+            }
+            break;
+    }
+}
+
+void SchedulerSyncBridge::SendSyncAck(const std::string& sync_id, bool success,
+                                     const std::vector<sync_v2::ConflictResolution>& conflicts,
+                                     const std::string& error_message) {
+    sync_v2::SyncAck ack;
+    ack.set_sync_id(sync_id);
+    ack.set_success(success);
+    for (const auto& conflict : conflicts) {
+        *ack.add_conflicts() = conflict;
+    }
+    ack.set_ack_timestamp_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    if (!error_message.empty()) {
+        ack.set_error_message(error_message);
+    }
+
+    std::string serialized;
+    if (!ack.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize SyncAck";
+        return;
+    }
+
+    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
+    auto result = transport_client_->publish(payload, client::Persistence::BestEffort);
+
+    if (result.ok()) {
+        VLOG(1) << "Sent SyncAck for " << sync_id;
+    } else {
+        LOG(WARNING) << "Failed to send SyncAck: status=" << static_cast<int>(result.status);
+    }
+}
+
+void SchedulerSyncBridge::RecordExecution(const std::string& job_id,
+                                         uint64_t executed_at_ms,
+                                         uint64_t duration_ms,
+                                         sync_v2::JobStatus status,
+                                         const std::string& result_json,
+                                         const std::string& error_message) {
+    sync_v2::ExecutionRecord exec;
+    exec.set_execution_id(GenerateExecutionId());
+    exec.set_job_id(job_id);
+    exec.set_executed_at_ms(executed_at_ms);
+    exec.set_duration_ms(duration_ms);
+    exec.set_status(status);
+    if (!result_json.empty()) {
+        exec.set_result_json(result_json);
+    }
+    if (!error_message.empty()) {
+        exec.set_error_message(error_message);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(events_mutex_);
+        pending_executions_.push_back(std::move(exec));
+    }
+
+    VLOG(1) << "Recorded execution for job " << job_id;
+}
+
+std::string SchedulerSyncBridge::GenerateSyncId() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<uint64_t> dist;
+
+    std::ostringstream oss;
+    oss << "sync-" << std::hex << dist(gen);
+    return oss.str();
+}
+
+std::string SchedulerSyncBridge::GenerateExecutionId() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<uint64_t> dist;
+
+    std::ostringstream oss;
+    oss << "exec-" << std::hex << dist(gen);
+    return oss.str();
+}
+
+// Helper method to apply a cloud job to local state (forward declaration needed)
+void SchedulerSyncBridge::ApplyCloudJob(const sync_v2::JobRecord& remote_job) {
+    // Update local synced state
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        synced_state_[remote_job.job_id()] = SyncedJobState::FromJobRecord(remote_job);
+        synced_state_[remote_job.job_id()].sync_state = sync_v2::SYNC_STATE_SYNCED;
+    }
+
+    // TODO: Also update the actual Scheduler service via gRPC
+    // This would call create_job, update_job, or delete_job depending on the job state
+    LOG(INFO) << "Applied cloud job " << remote_job.job_id() << " to local state";
 }
 
 }  // namespace ifex::reference

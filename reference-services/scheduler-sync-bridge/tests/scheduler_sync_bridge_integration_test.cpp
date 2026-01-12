@@ -11,7 +11,7 @@
 #include "backend_transport_server.hpp"
 #include "scheduler_sync_bridge.hpp"
 #include "ifex_content_ids.hpp"
-#include "scheduler-sync-envelope.pb.h"
+#include "scheduler-sync-v2.pb.h"
 #include "ifex-scheduler-service.grpc.pb.h"
 #include "service-discovery-service.grpc.pb.h"
 
@@ -66,7 +66,7 @@ namespace ifex::test {
 using namespace ifex::client;
 using namespace ifex::reference;
 using namespace std::chrono_literals;
-namespace sync_pb = swdv::scheduler_sync_envelope;
+namespace sync_v2 = swdv::scheduler_sync_v2;
 namespace scheduler_pb = swdv::ifex_scheduler;
 namespace discovery_pb = swdv::service_discovery;
 
@@ -196,15 +196,15 @@ protected:
         }
     }
 
-    /// Subscribe to MQTT and collect sync messages
-    std::vector<sync_pb::sync_message_t> collectSyncMessages(
+    /// Subscribe to MQTT and collect v2 sync messages
+    std::vector<sync_v2::V2C_SyncMessage> collectSyncMessages(
         int expected_count, std::chrono::seconds timeout) {
 
         std::string topic = "v2c/" + vehicle_id_ + "/" +
                             std::to_string(content_id::SCHEDULER_SYNC);
 
         struct Context {
-            std::vector<sync_pb::sync_message_t> messages;
+            std::vector<sync_v2::V2C_SyncMessage> messages;
             std::mutex mtx;
             std::condition_variable cv;
             int expected_count;
@@ -219,7 +219,7 @@ protected:
         mosquitto_message_callback_set(mosq, [](struct mosquitto*, void* userdata,
                                                  const struct mosquitto_message* msg) {
             auto* ctx = static_cast<Context*>(userdata);
-            sync_pb::sync_message_t message;
+            sync_v2::V2C_SyncMessage message;
             if (message.ParseFromArray(msg->payload, msg->payloadlen)) {
                 std::lock_guard<std::mutex> lock(ctx->mtx);
                 ctx->messages.push_back(std::move(message));
@@ -384,6 +384,8 @@ private:
             std::string listen_addr = "0.0.0.0:" + port_str;
 
             setenv("GLOG_logtostderr", "1", 1);
+            // Disable persistence for tests - start fresh each time
+            unsetenv("SCHEDULER_PERSISTENCE_DIR");
 
             std::string log_file = "/tmp/ifex_scheduler_sync_test_scheduler_" + port_str + ".log";
             freopen(log_file.c_str(), "w", stdout);
@@ -521,6 +523,37 @@ TEST_F(SchedulerSyncBridgeIntegrationTest, FullSyncOnStartup) {
     std::string job_id = createTestJob("test-sync-job", "echo_service", "echo");
     ASSERT_FALSE(job_id.empty());
 
+    // Verify job exists in scheduler before proceeding
+    {
+        auto channel = grpc::CreateChannel(TEST_SCHEDULER_ADDRESS,
+                                           grpc::InsecureChannelCredentials());
+        auto stub = scheduler_pb::get_jobs_service::NewStub(channel);
+
+        // Retry a few times to handle any race conditions
+        bool job_found = false;
+        for (int attempt = 0; attempt < 10 && !job_found; ++attempt) {
+            if (attempt > 0) {
+                std::this_thread::sleep_for(100ms);
+            }
+
+            grpc::ClientContext context;
+            context.set_deadline(std::chrono::system_clock::now() + 5s);
+            scheduler_pb::get_jobs_request request;
+            scheduler_pb::get_jobs_response response;
+
+            auto status = stub->get_jobs(&context, request, &response);
+            if (status.ok()) {
+                for (const auto& job : response.jobs()) {
+                    if (job.id() == job_id) {
+                        job_found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        ASSERT_TRUE(job_found) << "Job should exist in scheduler before sync bridge starts";
+    }
+
     // Start collecting messages
     auto collect_future = std::async(std::launch::async, [this]() {
         return collectSyncMessages(1, 5s);
@@ -550,26 +583,41 @@ TEST_F(SchedulerSyncBridgeIntegrationTest, FullSyncOnStartup) {
 
     ASSERT_GE(messages.size(), 1) << "Should receive at least one sync message";
 
-    // First message should contain FULL_SYNC event
+    // First message should contain job records (v2 protocol)
     const auto& first_msg = messages[0];
     EXPECT_EQ(first_msg.vehicle_id(), vehicle_id_);
     EXPECT_FALSE(first_msg.bridge_instance_id().empty());
-    EXPECT_GT(first_msg.events_size(), 0);
+    EXPECT_FALSE(first_msg.sync_id().empty()) << "Should have sync_id";
+    EXPECT_GT(first_msg.sync_timestamp_ms(), 0) << "Should have timestamp";
 
-    bool found_full_sync = false;
-    for (const auto& event : first_msg.events()) {
-        if (event.event_type() == sync_pb::FULL_SYNC) {
-            found_full_sync = true;
+    // Full sync includes all jobs - check that our job is present
+    bool found_job = false;
+    for (const auto& job : first_msg.jobs()) {
+        if (job.job_id() == job_id) {
+            found_job = true;
+            EXPECT_EQ(job.title(), "test-sync-job");
+            EXPECT_EQ(job.service(), "echo_service");
+            EXPECT_EQ(job.method(), "echo");
             break;
         }
     }
-    EXPECT_TRUE(found_full_sync) << "Should have FULL_SYNC event";
+    EXPECT_TRUE(found_job) << "Should have job record in sync message";
 
     // Cleanup
     deleteJob(job_id);
 }
 
 TEST_F(SchedulerSyncBridgeIntegrationTest, DeltaSyncOnJobCreation) {
+    // Start collecting messages FIRST before bridge starts
+    // This ensures we don't miss any messages including the initial full sync
+    auto collect_future = std::async(std::launch::async, [this]() {
+        // Collect up to 5 messages to handle any stale messages + initial sync + delta
+        return collectSyncMessages(5, 8s);
+    });
+
+    // Give the MQTT subscriber time to connect and subscribe
+    std::this_thread::sleep_for(300ms);
+
     SchedulerSyncBridgeConfig config;
     config.scheduler_endpoint = TEST_SCHEDULER_ADDRESS;
     config.backend_transport_endpoint = "localhost:" +
@@ -584,42 +632,46 @@ TEST_F(SchedulerSyncBridgeIntegrationTest, DeltaSyncOnJobCreation) {
     SchedulerSyncBridge bridge(config);
     ASSERT_TRUE(bridge.Start());
 
-    // Wait for initialization
+    // Wait for initialization to complete
     std::this_thread::sleep_for(200ms);
     ASSERT_TRUE(bridge.IsInitialized());
 
-    // Start collecting delta messages
-    auto collect_future = std::async(std::launch::async, [this]() {
-        return collectSyncMessages(1, 5s);
-    });
-
-    std::this_thread::sleep_for(50ms);  // Wait for subscriber to connect
-
-    // Create a NEW job (should trigger delta sync)
+    // Create a NEW job (this triggers the delta sync on next poll)
     std::string job_id = createTestJob("delta-test-job", "echo_service", "echo");
     ASSERT_FALSE(job_id.empty());
+    LOG(INFO) << "Created delta-test-job with id: " << job_id;
 
-    // Wait for delta sync message
-    auto messages = collect_future.get();
+    // Wait for delta sync - poll_interval_ms=100, so should happen quickly
+    // But give extra time in case of slower systems
+    std::this_thread::sleep_for(500ms);
 
+    // Stop bridge before getting messages to ensure all syncs are sent
     bridge.Stop();
 
-    // Should have received a delta message with JOB_CREATED
-    ASSERT_GE(messages.size(), 1) << "Should receive delta sync message";
+    // Get collected messages
+    auto messages = collect_future.get();
 
-    bool found_job_created = false;
-    for (const auto& msg : messages) {
-        for (const auto& event : msg.events()) {
-            if (event.event_type() == sync_pb::JOB_CREATED &&
-                event.job_id() == job_id) {
-                found_job_created = true;
-                EXPECT_EQ(event.job_info().title(), "delta-test-job");
-                EXPECT_EQ(event.job_info().service(), "echo_service");
+    // Should have received messages - look for our new job in ANY message
+    ASSERT_GE(messages.size(), 1) << "Should receive sync messages";
+
+    bool found_job = false;
+    for (size_t i = 0; i < messages.size(); ++i) {
+        const auto& msg = messages[i];
+        LOG(INFO) << "Checking message " << i << ": " << msg.jobs_size() << " jobs";
+        for (const auto& job : msg.jobs()) {
+            LOG(INFO) << "  Job: " << job.job_id() << " (" << job.title() << ")";
+            if (job.job_id() == job_id) {
+                found_job = true;
+                EXPECT_EQ(job.title(), "delta-test-job");
+                EXPECT_EQ(job.service(), "echo_service");
+                EXPECT_EQ(job.method(), "echo");
                 break;
             }
         }
+        if (found_job) break;
     }
-    EXPECT_TRUE(found_job_created) << "Should have JOB_CREATED event for new job";
+    EXPECT_TRUE(found_job) << "Should have job record in sync message, job_id=" << job_id
+                           << ", received " << messages.size() << " messages";
 
     // Cleanup
     deleteJob(job_id);

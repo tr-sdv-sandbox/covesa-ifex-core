@@ -81,3 +81,6 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/ifex-core-config-version.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ifex-core
 )
+
+# Sync library (version vectors for scheduler sync protocol v2)
+add_subdirectory(sync)

@@ -27,9 +27,11 @@
 #pragma once
 
 #include "backend_transport_client.hpp"
-#include "scheduler-sync-envelope.pb.h"
 #include "scheduler-command-envelope.pb.h"
+#include "scheduler-sync-v2.pb.h"
 #include "ifex-scheduler-service.grpc.pb.h"
+#include "version_vector.hpp"
+#include "sync_engine.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -103,7 +105,7 @@ struct SchedulerSyncBridgeConfig {
 };
 
 /**
- * @brief Cached state of a synced job
+ * @brief Cached state of a synced job (v2 protocol with version vectors)
  */
 struct SyncedJobState {
     std::string job_id;
@@ -114,25 +116,42 @@ struct SyncedJobState {
     std::string scheduled_time;
     std::string recurrence_rule;
     std::string next_run_time;
-    swdv::scheduler_sync_envelope::job_sync_status_t status;
-    swdv::scheduler_sync_envelope::wake_policy_t wake_policy =
-        swdv::scheduler_sync_envelope::NO_WAKE;
-    swdv::scheduler_sync_envelope::sleep_policy_t sleep_policy =
-        swdv::scheduler_sync_envelope::SLEEP_NORMAL;
+
+    // Job status and power management (v2 types)
+    swdv::scheduler_sync_v2::JobStatus status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
+    swdv::scheduler_sync_v2::WakePolicy wake_policy = swdv::scheduler_sync_v2::WAKE_POLICY_NO_WAKE;
+    swdv::scheduler_sync_v2::SleepPolicy sleep_policy = swdv::scheduler_sync_v2::SLEEP_POLICY_NORMAL;
     uint32_t wake_lead_time_s = 0;
     uint64_t created_at_ms = 0;
     uint64_t updated_at_ms = 0;
     uint64_t last_synced_sequence = 0;
+
+    // Sync Protocol v2 fields
+    sync::VersionVector version;
+    swdv::scheduler_sync_v2::JobAuthority authority =
+        swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
+    swdv::scheduler_sync_v2::SyncState sync_state =
+        swdv::scheduler_sync_v2::SYNC_STATE_PENDING;
+    bool deleted = false;
+    uint64_t deleted_at_ms = 0;
+    uint64_t scheduled_time_ms = 0;
+    uint64_t end_time_ms = 0;
 
     /// Compute hash for change detection
     uint64_t ComputeHash() const;
 
     /// Check if job is in terminal state
     bool IsTerminal() const {
-        return status == swdv::scheduler_sync_envelope::COMPLETED ||
-               status == swdv::scheduler_sync_envelope::FAILED ||
-               status == swdv::scheduler_sync_envelope::CANCELLED;
+        return status == swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED ||
+               status == swdv::scheduler_sync_v2::JOB_STATUS_FAILED ||
+               status == swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED;
     }
+
+    /// Convert to v2 JobRecord protobuf
+    void ToJobRecord(swdv::scheduler_sync_v2::JobRecord* record) const;
+
+    /// Create from v2 JobRecord protobuf
+    static SyncedJobState FromJobRecord(const swdv::scheduler_sync_v2::JobRecord& record);
 };
 
 /**
@@ -264,8 +283,7 @@ private:
     /// Jobs that have been synced in terminal state (to avoid re-syncing)
     std::unordered_set<std::string> synced_terminal_jobs_;
 
-    /// Pending events to batch
-    std::vector<swdv::scheduler_sync_envelope::sync_event_t> pending_events_;
+    /// Mutex for events
     mutable std::mutex events_mutex_;
 
     /// Statistics
@@ -305,29 +323,11 @@ private:
     /// Query Scheduler for current jobs
     std::vector<SyncedJobState> QuerySchedulerJobs();
 
-    /// Compare current state with synced state, generate events
+    /// Compare current state with synced state, detect changes
     void DetectChanges(const std::vector<SyncedJobState>& current);
-
-    /// Queue an event for sending
-    void QueueEvent(swdv::scheduler_sync_envelope::sync_event_t event);
-
-    /// Send queued events
-    void FlushEvents();
-
-    /// Send a full sync message
-    void SendFullSync(const std::vector<SyncedJobState>& jobs);
 
     /// Send heartbeat if no recent activity
     void MaybeSendHeartbeat();
-
-    /// Build job_info_t from cached state
-    swdv::scheduler_sync_envelope::job_info_t BuildJobInfo(
-        const SyncedJobState& state);
-
-    /// Build execution_result_t for a completed/failed job
-    swdv::scheduler_sync_envelope::execution_result_t BuildExecutionResult(
-        const SyncedJobState& current,
-        const SyncedJobState& previous);
 
     /// Compute CRC32 checksum of current active job state
     uint32_t ComputeStateChecksum() const;
@@ -344,16 +344,16 @@ private:
     /// Update statistics
     void UpdateStats(uint64_t bytes_sent, bool is_full_sync, bool is_execution_result);
 
-    /// Map scheduler status to sync status
-    static swdv::scheduler_sync_envelope::job_sync_status_t MapStatus(
+    /// Map scheduler status to v2 status
+    static swdv::scheduler_sync_v2::JobStatus MapStatus(
         swdv::ifex_scheduler::job_status_t status);
 
-    /// Map scheduler wake policy to sync wake policy
-    static swdv::scheduler_sync_envelope::wake_policy_t MapWakePolicy(
+    /// Map scheduler wake policy to v2 wake policy
+    static swdv::scheduler_sync_v2::WakePolicy MapWakePolicy(
         swdv::ifex_scheduler::wake_policy_t policy);
 
-    /// Map scheduler sleep policy to sync sleep policy
-    static swdv::scheduler_sync_envelope::sleep_policy_t MapSleepPolicy(
+    /// Map scheduler sleep policy to v2 sleep policy
+    static swdv::scheduler_sync_v2::SleepPolicy MapSleepPolicy(
         swdv::ifex_scheduler::sleep_policy_t policy);
 
     // =========================================================================
@@ -396,6 +396,45 @@ private:
     /// Send command acknowledgment to cloud
     void SendCommandAck(const std::string& command_id, bool success,
                        const std::string& error_message, const std::string& job_id);
+
+    // =========================================================================
+    // Sync Protocol v2 Methods
+    // =========================================================================
+
+    /// Pending execution records to send
+    std::vector<swdv::scheduler_sync_v2::ExecutionRecord> pending_executions_;
+
+    /// Send v2 sync message (V2C_SyncMessage)
+    void SendV2SyncMessage(const std::vector<SyncedJobState>& jobs,
+                           bool include_all_jobs = false);
+
+    /// Handle incoming v2 sync message from cloud (C2V_SyncMessage)
+    void HandleV2SyncMessage(const swdv::scheduler_sync_v2::C2V_SyncMessage& msg);
+
+    /// Process a single job from cloud using sync engine
+    void ProcessCloudJob(const swdv::scheduler_sync_v2::JobRecord& remote_job);
+
+    /// Send sync acknowledgment
+    void SendSyncAck(const std::string& sync_id, bool success,
+                    const std::vector<swdv::scheduler_sync_v2::ConflictResolution>& conflicts,
+                    const std::string& error_message = "");
+
+    /// Record an execution (for sending to cloud)
+    void RecordExecution(const std::string& job_id,
+                        uint64_t executed_at_ms,
+                        uint64_t duration_ms,
+                        swdv::scheduler_sync_v2::JobStatus status,
+                        const std::string& result_json,
+                        const std::string& error_message);
+
+    /// Generate unique sync ID
+    static std::string GenerateSyncId();
+
+    /// Generate unique execution ID
+    static std::string GenerateExecutionId();
+
+    /// Apply a cloud job to local state
+    void ApplyCloudJob(const swdv::scheduler_sync_v2::JobRecord& remote_job);
 };
 
 }  // namespace ifex::reference

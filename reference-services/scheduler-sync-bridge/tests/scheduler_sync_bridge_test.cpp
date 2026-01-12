@@ -1,6 +1,6 @@
 /**
  * @file scheduler_sync_bridge_test.cpp
- * @brief Unit tests for SchedulerSyncBridge
+ * @brief Unit tests for SchedulerSyncBridge (v2 protocol)
  */
 
 #include <gtest/gtest.h>
@@ -8,7 +8,7 @@
 
 #include "scheduler_sync_bridge.hpp"
 #include "ifex_content_ids.hpp"
-#include "scheduler-sync-envelope.pb.h"
+#include "scheduler-sync-v2.pb.h"
 
 namespace ifex::reference {
 namespace {
@@ -45,81 +45,114 @@ TEST_F(SchedulerSyncBridgeTest, ContentIdConstants) {
     EXPECT_EQ(ifex::content_id::SCHEDULER_SYNC, 202);
 }
 
-TEST_F(SchedulerSyncBridgeTest, SyncEventTypeSerialization) {
-    swdv::scheduler_sync_envelope::sync_event_t event;
-    event.set_event_type(swdv::scheduler_sync_envelope::JOB_CREATED);
-    event.set_sequence_number(42);
-    event.set_timestamp_ms(1234567890000);
-    event.set_job_id("job_001");
+// =============================================================================
+// V2 Protocol Message Tests
+// =============================================================================
 
-    auto* info = event.mutable_job_info();
-    info->set_job_id("job_001");
-    info->set_title("Test Job");
-    info->set_service("test-service");
-    info->set_method("test_method");
-    info->set_parameters("{}");
-    info->set_scheduled_time("2025-01-01T10:00:00Z");
-    info->set_status(swdv::scheduler_sync_envelope::PENDING);
-    info->set_created_at_ms(1234567890000);
-    info->set_updated_at_ms(1234567890000);
+TEST_F(SchedulerSyncBridgeTest, V2JobRecordSerialization) {
+    swdv::scheduler_sync_v2::JobRecord record;
+    record.set_job_id("job_001");
+    record.set_title("Test Job");
+    record.set_service("test-service");
+    record.set_method("test_method");
+    record.set_parameters_json("{}");
+    record.set_scheduled_time_ms(1234567890000);
+    record.set_status(swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
+    record.set_created_at_ms(1234567890000);
+    record.set_updated_at_ms(1234567890000);
+    record.set_authority(swdv::scheduler_sync_v2::AUTHORITY_VEHICLE);
+    record.set_sync_state(swdv::scheduler_sync_v2::SYNC_STATE_SYNCED);
+
+    // Set version vector
+    auto* version = record.mutable_version();
+    version->set_cloud_seq(1);
+    version->set_vehicle_seq(2);
 
     std::string serialized;
-    ASSERT_TRUE(event.SerializeToString(&serialized));
+    ASSERT_TRUE(record.SerializeToString(&serialized));
     EXPECT_GT(serialized.size(), 0);
 
-    swdv::scheduler_sync_envelope::sync_event_t parsed;
+    swdv::scheduler_sync_v2::JobRecord parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
-    EXPECT_EQ(parsed.event_type(), swdv::scheduler_sync_envelope::JOB_CREATED);
-    EXPECT_EQ(parsed.sequence_number(), 42);
     EXPECT_EQ(parsed.job_id(), "job_001");
-    EXPECT_EQ(parsed.job_info().title(), "Test Job");
-    EXPECT_EQ(parsed.job_info().service(), "test-service");
-    EXPECT_EQ(parsed.job_info().status(), swdv::scheduler_sync_envelope::PENDING);
+    EXPECT_EQ(parsed.title(), "Test Job");
+    EXPECT_EQ(parsed.service(), "test-service");
+    EXPECT_EQ(parsed.status(), swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
+    EXPECT_EQ(parsed.version().cloud_seq(), 1);
+    EXPECT_EQ(parsed.version().vehicle_seq(), 2);
 }
 
-TEST_F(SchedulerSyncBridgeTest, SyncMessageSerialization) {
-    swdv::scheduler_sync_envelope::sync_message_t message;
+TEST_F(SchedulerSyncBridgeTest, V2SyncMessageSerialization) {
+    swdv::scheduler_sync_v2::V2C_SyncMessage message;
+    message.set_sync_id("sync_001");
     message.set_vehicle_id("vehicle-001");
     message.set_bridge_instance_id("ssb_1234567890abcdef");
-    message.set_state_checksum(0xDEADBEEF);
-    message.set_active_jobs_count(5);
+    message.set_sync_timestamp_ms(1234567890000);
 
-    // Add FULL_SYNC event
-    auto* event = message.add_events();
-    event->set_event_type(swdv::scheduler_sync_envelope::FULL_SYNC);
-    event->set_sequence_number(1);
-    event->set_timestamp_ms(1234567890000);
+    // Add a job record
+    auto* job = message.add_jobs();
+    job->set_job_id("job_001");
+    job->set_title("Test Job");
+    job->set_status(swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
 
     std::string serialized;
     ASSERT_TRUE(message.SerializeToString(&serialized));
     EXPECT_GT(serialized.size(), 0);
 
-    swdv::scheduler_sync_envelope::sync_message_t parsed;
+    swdv::scheduler_sync_v2::V2C_SyncMessage parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
+    EXPECT_EQ(parsed.sync_id(), "sync_001");
     EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
     EXPECT_EQ(parsed.bridge_instance_id(), "ssb_1234567890abcdef");
-    EXPECT_EQ(parsed.state_checksum(), 0xDEADBEEF);
-    EXPECT_EQ(parsed.active_jobs_count(), 5);
-    EXPECT_EQ(parsed.events_size(), 1);
-    EXPECT_EQ(parsed.events(0).event_type(), swdv::scheduler_sync_envelope::FULL_SYNC);
+    EXPECT_EQ(parsed.jobs_size(), 1);
+    EXPECT_EQ(parsed.jobs(0).job_id(), "job_001");
 }
 
-TEST_F(SchedulerSyncBridgeTest, EventTypeValues) {
-    EXPECT_EQ(swdv::scheduler_sync_envelope::FULL_SYNC, 0);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::JOB_CREATED, 1);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::JOB_UPDATED, 2);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::JOB_DELETED, 3);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::JOB_EXECUTED, 4);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::HEARTBEAT, 5);
+TEST_F(SchedulerSyncBridgeTest, V2ExecutionRecordSerialization) {
+    swdv::scheduler_sync_v2::ExecutionRecord exec;
+    exec.set_execution_id("exec_001");
+    exec.set_job_id("job_001");
+    exec.set_executed_at_ms(1234567890000);
+    exec.set_duration_ms(500);
+    exec.set_status(swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
+    exec.set_result_json("{\"success\": true}");
+
+    std::string serialized;
+    ASSERT_TRUE(exec.SerializeToString(&serialized));
+
+    swdv::scheduler_sync_v2::ExecutionRecord parsed;
+    ASSERT_TRUE(parsed.ParseFromString(serialized));
+    EXPECT_EQ(parsed.job_id(), "job_001");
+    EXPECT_EQ(parsed.status(), swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
+    EXPECT_EQ(parsed.duration_ms(), 500);
+    EXPECT_EQ(parsed.result_json(), "{\"success\": true}");
 }
 
-TEST_F(SchedulerSyncBridgeTest, JobStatusValues) {
-    EXPECT_EQ(swdv::scheduler_sync_envelope::PENDING, 0);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::RUNNING, 1);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::COMPLETED, 2);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::FAILED, 3);
-    EXPECT_EQ(swdv::scheduler_sync_envelope::CANCELLED, 4);
+TEST_F(SchedulerSyncBridgeTest, V2JobStatusValues) {
+    EXPECT_EQ(swdv::scheduler_sync_v2::JOB_STATUS_UNKNOWN, 0);
+    EXPECT_EQ(swdv::scheduler_sync_v2::JOB_STATUS_PENDING, 1);
+    EXPECT_EQ(swdv::scheduler_sync_v2::JOB_STATUS_RUNNING, 2);
+    EXPECT_EQ(swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED, 3);
+    EXPECT_EQ(swdv::scheduler_sync_v2::JOB_STATUS_FAILED, 4);
+    EXPECT_EQ(swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED, 5);
 }
+
+TEST_F(SchedulerSyncBridgeTest, V2AuthorityValues) {
+    EXPECT_EQ(swdv::scheduler_sync_v2::AUTHORITY_UNKNOWN, 0);
+    EXPECT_EQ(swdv::scheduler_sync_v2::AUTHORITY_CLOUD, 1);
+    EXPECT_EQ(swdv::scheduler_sync_v2::AUTHORITY_VEHICLE, 2);
+}
+
+TEST_F(SchedulerSyncBridgeTest, V2SyncStateValues) {
+    EXPECT_EQ(swdv::scheduler_sync_v2::SYNC_STATE_UNKNOWN, 0);
+    EXPECT_EQ(swdv::scheduler_sync_v2::SYNC_STATE_PENDING, 1);
+    EXPECT_EQ(swdv::scheduler_sync_v2::SYNC_STATE_SYNCED, 2);
+    EXPECT_EQ(swdv::scheduler_sync_v2::SYNC_STATE_CONFLICT, 3);
+}
+
+// =============================================================================
+// SyncedJobState Tests (uses v2 types)
+// =============================================================================
 
 TEST_F(SchedulerSyncBridgeTest, SyncedJobStateHash) {
     SyncedJobState state1;
@@ -131,7 +164,7 @@ TEST_F(SchedulerSyncBridgeTest, SyncedJobStateHash) {
     state1.scheduled_time = "2025-01-01T10:00:00Z";
     state1.recurrence_rule = "";
     state1.next_run_time = "";
-    state1.status = swdv::scheduler_sync_envelope::PENDING;
+    state1.status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
     state1.created_at_ms = 1000;
     state1.updated_at_ms = 1000;
 
@@ -141,75 +174,152 @@ TEST_F(SchedulerSyncBridgeTest, SyncedJobStateHash) {
     EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
 
     // Different status should have different hash
-    state2.status = swdv::scheduler_sync_envelope::RUNNING;
+    state2.status = swdv::scheduler_sync_v2::JOB_STATUS_RUNNING;
     EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
 
-    // Different updated_at should have different hash
+    // Different scheduled_time should have different hash
     state2 = state1;
-    state2.updated_at_ms = 2000;
+    state2.scheduled_time = "2025-02-01T12:00:00Z";
     EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
 
     // Different title should have different hash
     state2 = state1;
     state2.title = "Other Job";
     EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
+
+    // updated_at_ms is excluded from hash (it's metadata, not content)
+    state2 = state1;
+    state2.updated_at_ms = 9999;
+    EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
 }
 
 TEST_F(SchedulerSyncBridgeTest, SyncedJobStateIsTerminal) {
     SyncedJobState state;
 
-    state.status = swdv::scheduler_sync_envelope::PENDING;
+    state.status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
     EXPECT_FALSE(state.IsTerminal());
 
-    state.status = swdv::scheduler_sync_envelope::RUNNING;
+    state.status = swdv::scheduler_sync_v2::JOB_STATUS_RUNNING;
     EXPECT_FALSE(state.IsTerminal());
 
-    state.status = swdv::scheduler_sync_envelope::COMPLETED;
+    state.status = swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED;
     EXPECT_TRUE(state.IsTerminal());
 
-    state.status = swdv::scheduler_sync_envelope::FAILED;
+    state.status = swdv::scheduler_sync_v2::JOB_STATUS_FAILED;
     EXPECT_TRUE(state.IsTerminal());
 
-    state.status = swdv::scheduler_sync_envelope::CANCELLED;
+    state.status = swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED;
     EXPECT_TRUE(state.IsTerminal());
 }
 
-TEST_F(SchedulerSyncBridgeTest, ExecutionResultSerialization) {
-    swdv::scheduler_sync_envelope::execution_result_t result;
-    result.set_job_id("job_001");
-    result.set_status(swdv::scheduler_sync_envelope::COMPLETED);
-    result.set_executed_at_ms(1234567890000);
-    result.set_duration_ms(500);
-    result.set_result("{\"success\": true}");
-    result.set_next_run_time("2025-01-02T10:00:00Z");
+TEST_F(SchedulerSyncBridgeTest, SyncedJobStateToJobRecord) {
+    SyncedJobState state;
+    state.job_id = "job_001";
+    state.title = "Test Job";
+    state.service = "test-service";
+    state.method = "test_method";
+    state.parameters = "{\"key\": \"value\"}";
+    state.scheduled_time_ms = 1234567890000;
+    state.status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
+    state.authority = swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
+    state.sync_state = swdv::scheduler_sync_v2::SYNC_STATE_SYNCED;
+    state.version = sync::VersionVector{1, 2};
+
+    swdv::scheduler_sync_v2::JobRecord record;
+    state.ToJobRecord(&record);
+
+    EXPECT_EQ(record.job_id(), "job_001");
+    EXPECT_EQ(record.title(), "Test Job");
+    EXPECT_EQ(record.service(), "test-service");
+    EXPECT_EQ(record.method(), "test_method");
+    EXPECT_EQ(record.parameters_json(), "{\"key\": \"value\"}");
+    EXPECT_EQ(record.scheduled_time_ms(), 1234567890000);
+    EXPECT_EQ(record.status(), swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
+    EXPECT_EQ(record.authority(), swdv::scheduler_sync_v2::AUTHORITY_VEHICLE);
+    EXPECT_EQ(record.sync_state(), swdv::scheduler_sync_v2::SYNC_STATE_SYNCED);
+    EXPECT_EQ(record.version().cloud_seq(), 1);
+    EXPECT_EQ(record.version().vehicle_seq(), 2);
+}
+
+TEST_F(SchedulerSyncBridgeTest, SyncedJobStateFromJobRecord) {
+    swdv::scheduler_sync_v2::JobRecord record;
+    record.set_job_id("job_002");
+    record.set_title("Cloud Job");
+    record.set_service("cloud-service");
+    record.set_method("cloud_method");
+    record.set_parameters_json("{\"cloud\": true}");
+    record.set_scheduled_time_ms(9876543210000);
+    record.set_status(swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
+    record.set_authority(swdv::scheduler_sync_v2::AUTHORITY_CLOUD);
+    record.set_sync_state(swdv::scheduler_sync_v2::SYNC_STATE_PENDING);
+    record.mutable_version()->set_cloud_seq(5);
+    record.mutable_version()->set_vehicle_seq(3);
+
+    SyncedJobState state = SyncedJobState::FromJobRecord(record);
+
+    EXPECT_EQ(state.job_id, "job_002");
+    EXPECT_EQ(state.title, "Cloud Job");
+    EXPECT_EQ(state.service, "cloud-service");
+    EXPECT_EQ(state.method, "cloud_method");
+    EXPECT_EQ(state.parameters, "{\"cloud\": true}");
+    EXPECT_EQ(state.scheduled_time_ms, 9876543210000);
+    EXPECT_EQ(state.status, swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
+    EXPECT_EQ(state.authority, swdv::scheduler_sync_v2::AUTHORITY_CLOUD);
+    EXPECT_EQ(state.sync_state, swdv::scheduler_sync_v2::SYNC_STATE_PENDING);
+    EXPECT_EQ(state.version.cloud_seq, 5);
+    EXPECT_EQ(state.version.vehicle_seq, 3);
+}
+
+// =============================================================================
+// V2 Cloud-to-Vehicle Message Tests
+// =============================================================================
+
+TEST_F(SchedulerSyncBridgeTest, V2C2VSyncMessageSerialization) {
+    swdv::scheduler_sync_v2::C2V_SyncMessage message;
+    message.set_sync_id("c2v_sync_001");
+    message.set_vehicle_id("vehicle-001");
+    message.set_sync_timestamp_ms(1234567890000);
+
+    // Add a job from cloud
+    auto* job = message.add_jobs();
+    job->set_job_id("cloud_job_001");
+    job->set_title("Cloud Scheduled Task");
+    job->set_status(swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
+    job->set_authority(swdv::scheduler_sync_v2::AUTHORITY_CLOUD);
 
     std::string serialized;
-    ASSERT_TRUE(result.SerializeToString(&serialized));
+    ASSERT_TRUE(message.SerializeToString(&serialized));
 
-    swdv::scheduler_sync_envelope::execution_result_t parsed;
+    swdv::scheduler_sync_v2::C2V_SyncMessage parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
-    EXPECT_EQ(parsed.job_id(), "job_001");
-    EXPECT_EQ(parsed.status(), swdv::scheduler_sync_envelope::COMPLETED);
-    EXPECT_EQ(parsed.executed_at_ms(), 1234567890000);
-    EXPECT_EQ(parsed.duration_ms(), 500);
-    EXPECT_EQ(parsed.result(), "{\"success\": true}");
-    EXPECT_EQ(parsed.next_run_time(), "2025-01-02T10:00:00Z");
+    EXPECT_EQ(parsed.sync_id(), "c2v_sync_001");
+    EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
+    EXPECT_EQ(parsed.jobs_size(), 1);
+    EXPECT_EQ(parsed.jobs(0).authority(), swdv::scheduler_sync_v2::AUTHORITY_CLOUD);
 }
 
-TEST_F(SchedulerSyncBridgeTest, SyncAckSerialization) {
-    swdv::scheduler_sync_envelope::sync_ack_t ack;
-    ack.set_last_sequence_received(100);
-    ack.set_checksum_match(true);
-    ack.set_request_full_sync(false);
+TEST_F(SchedulerSyncBridgeTest, V2SyncAckSerialization) {
+    swdv::scheduler_sync_v2::SyncAck ack;
+    ack.set_sync_id("sync_001");
+    ack.set_success(true);
+    ack.set_ack_timestamp_ms(1234567890000);
+
+    // Add a conflict resolution
+    auto* conflict = ack.add_conflicts();
+    conflict->set_job_id("job_001");
+    conflict->set_winner("cloud");
+    conflict->set_reason("authority");
 
     std::string serialized;
     ASSERT_TRUE(ack.SerializeToString(&serialized));
 
-    swdv::scheduler_sync_envelope::sync_ack_t parsed;
+    swdv::scheduler_sync_v2::SyncAck parsed;
     ASSERT_TRUE(parsed.ParseFromString(serialized));
-    EXPECT_EQ(parsed.last_sequence_received(), 100);
-    EXPECT_TRUE(parsed.checksum_match());
-    EXPECT_FALSE(parsed.request_full_sync());
+    EXPECT_EQ(parsed.sync_id(), "sync_001");
+    EXPECT_TRUE(parsed.success());
+    EXPECT_EQ(parsed.conflicts_size(), 1);
+    EXPECT_EQ(parsed.conflicts(0).winner(), "cloud");
+    EXPECT_EQ(parsed.conflicts(0).reason(), "authority");
 }
 
 // =============================================================================

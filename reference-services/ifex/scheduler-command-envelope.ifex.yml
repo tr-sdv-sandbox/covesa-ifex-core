@@ -89,20 +89,16 @@ namespaces:
             datatype: string
             description: JSON-encoded parameters for the method call
             mandatory: false
-          - name: scheduled_time
-            datatype: string
-            description: Scheduled execution time (ISO8601 format)
+          - name: scheduled_time_ms
+            datatype: uint64
+            description: Scheduled execution time (milliseconds since Unix epoch UTC)
           - name: recurrence_rule
             datatype: string
             description: Recurrence rule (iCal RRULE format, e.g., "FREQ=DAILY;INTERVAL=1")
             mandatory: false
-          - name: end_time
-            datatype: string
-            description: Stop recurring job after this time (ISO8601)
-            mandatory: false
-          - name: service_address
-            datatype: string
-            description: Direct service address (bypasses Discovery lookup)
+          - name: end_time_ms
+            datatype: uint64
+            description: Stop recurring job after this time (milliseconds since Unix epoch UTC, 0 = no end)
             mandatory: false
           - name: wake_policy
             datatype: wake_policy_t
@@ -127,9 +123,9 @@ namespaces:
             datatype: string
             description: New title (empty = no change)
             mandatory: false
-          - name: scheduled_time
-            datatype: string
-            description: New scheduled time (empty = no change)
+          - name: scheduled_time_ms
+            datatype: uint64
+            description: New scheduled time (milliseconds since epoch, 0 = no change)
             mandatory: false
           - name: recurrence_rule
             datatype: string
@@ -139,9 +135,9 @@ namespaces:
             datatype: string
             description: New parameters (empty = no change)
             mandatory: false
-          - name: end_time
-            datatype: string
-            description: New end time (empty = no change)
+          - name: end_time_ms
+            datatype: uint64
+            description: New end time (milliseconds since epoch, 0 = no change)
             mandatory: false
           - name: wake_policy
             datatype: wake_policy_t

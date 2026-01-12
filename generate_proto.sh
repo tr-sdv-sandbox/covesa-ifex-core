@@ -6,10 +6,13 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROTO_DIR="${SCRIPT_DIR}/proto"
+PROTO_DIR="${SCRIPT_DIR}/proto/ifex-generated"
 
 # Create output directory
 mkdir -p "${PROTO_DIR}"
+
+echo "Note: Generated protos go to proto/ifex-generated/"
+echo "      Hand-written protos remain in proto/api/ and proto/internal/"
 
 echo "Generating proto files from IFEX YAML definitions..."
 

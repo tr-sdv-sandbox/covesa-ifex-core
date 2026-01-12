@@ -126,10 +126,6 @@ namespaces:
             datatype: string
             description: JSON-encoded result from service call
             mandatory: false
-          - name: service_address
-            datatype: string
-            description: Service endpoint address
-            mandatory: false
           - name: wake_policy
             datatype: wake_policy_t
             description: Whether to wake vehicle for this job
@@ -202,10 +198,6 @@ namespaces:
             datatype: string
             description: End time for recurring jobs (ISO 8601)
             mandatory: false
-          - name: service_address
-            datatype: string
-            description: Override service discovery with specific address
-            mandatory: false
           - name: wake_policy
             datatype: wake_policy_t
             description: Whether to wake vehicle for this job
@@ -241,10 +233,6 @@ namespaces:
           - name: parameters
             datatype: string
             description: New JSON parameters
-            mandatory: false
-          - name: service_address
-            datatype: string
-            description: New service address
             mandatory: false
           - name: wake_policy
             datatype: wake_policy_t

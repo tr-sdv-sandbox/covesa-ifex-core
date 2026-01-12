@@ -51,12 +51,12 @@ Config ParseArgs(int argc, char* argv[]) {
         if (eq_pos != std::string::npos) {
             std::string key = arg.substr(0, eq_pos);
             std::string value = arg.substr(eq_pos + 1);
-            
-            if (key == "--address") {
+
+            if (key == "--address" || key == "--listen") {
                 config.address = value;
-            } else if (key == "--discovery_address") {
+            } else if (key == "--discovery_address" || key == "--discovery") {
                 config.discovery_address = value;
-            } else if (key == "--ifex_schema") {
+            } else if (key == "--ifex_schema" || key == "--ifex-schema") {
                 config.ifex_schema = value;
             }
         }

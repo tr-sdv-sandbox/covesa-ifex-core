@@ -18,6 +18,7 @@ target_link_libraries(ifex-scheduler-service
     PRIVATE
         ifex-proto-generated
         ifex-core
+        ifex-sync
         gRPC::grpc++
         gRPC::grpc++_reflection
         ${PROTOBUF_LIBRARIES}

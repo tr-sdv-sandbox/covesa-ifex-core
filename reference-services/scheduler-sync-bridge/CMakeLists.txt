@@ -16,6 +16,7 @@ target_link_libraries(ifex-scheduler-sync-bridge-lib
     PUBLIC
         ifex-proto-generated
         ifex-backend-transport-client
+        ifex-sync
         gRPC::grpc++
         glog::glog
     PRIVATE

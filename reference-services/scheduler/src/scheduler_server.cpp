@@ -73,10 +73,6 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
         proto->set_result(result.value());
     }
 
-    if (!service_address.empty()) {
-        proto->set_service_address(service_address);
-    }
-
     proto->set_wake_policy(wake_policy);
     proto->set_sleep_policy(sleep_policy);
     proto->set_wake_lead_time_s(wake_lead_time_s);
@@ -114,10 +110,6 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
         job->end_time = ISO8601ToTimePoint(proto.end_time());
     }
 
-    if (!proto.service_address().empty()) {
-        job->service_address = proto.service_address();
-    }
-
     job->wake_policy = proto.wake_policy();
     job->sleep_policy = proto.sleep_policy();
     job->wake_lead_time_s = proto.wake_lead_time_s();
@@ -136,7 +128,6 @@ json Job::ToJson() const {
     j["service_name"] = service_name;
     j["method_name"] = method_name;
     j["parameters"] = parameters;
-    j["service_address"] = service_address;
     j["scheduled_time"] = TimePointToISO8601(scheduled_time);
     j["recurrence_rule"] = recurrence_rule;
     j["status"] = static_cast<int>(status);
@@ -163,6 +154,16 @@ json Job::ToJson() const {
     j["sleep_policy"] = static_cast<int>(sleep_policy);
     j["wake_lead_time_s"] = wake_lead_time_s;
 
+    // Sync v2 fields
+    j["version_cloud_seq"] = version.cloud_seq;
+    j["version_vehicle_seq"] = version.vehicle_seq;
+    j["authority"] = static_cast<int>(authority);
+    j["sync_state"] = static_cast<int>(sync_state);
+    j["deleted"] = deleted;
+    if (deleted_at.has_value()) {
+        j["deleted_at"] = TimePointToISO8601(deleted_at.value());
+    }
+
     return j;
 }
 
@@ -174,7 +175,6 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     job->service_name = j.at("service_name").get<std::string>();
     job->method_name = j.at("method_name").get<std::string>();
     job->parameters = j.value("parameters", json::object());
-    job->service_address = j.value("service_address", "");
     job->scheduled_time = ISO8601ToTimePoint(j.at("scheduled_time").get<std::string>());
     job->recurrence_rule = j.value("recurrence_rule", "");
     job->status = static_cast<swdv::ifex_scheduler::job_status_t>(j.at("status").get<int>());
@@ -203,6 +203,179 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     job->sleep_policy = static_cast<swdv::ifex_scheduler::sleep_policy_t>(
         j.value("sleep_policy", 0));
     job->wake_lead_time_s = j.value("wake_lead_time_s", 0u);
+
+    // Sync v2 fields (with defaults for backward compatibility)
+    job->version.cloud_seq = j.value("version_cloud_seq", 0ULL);
+    job->version.vehicle_seq = j.value("version_vehicle_seq", 0ULL);
+    job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(
+        j.value("authority", static_cast<int>(swdv::scheduler_sync_v2::AUTHORITY_VEHICLE)));
+    job->sync_state = static_cast<swdv::scheduler_sync_v2::SyncState>(
+        j.value("sync_state", static_cast<int>(swdv::scheduler_sync_v2::SYNC_STATE_PENDING)));
+    job->deleted = j.value("deleted", false);
+    if (j.contains("deleted_at")) {
+        job->deleted_at = ISO8601ToTimePoint(j.at("deleted_at").get<std::string>());
+    }
+
+    return job;
+}
+
+// Helper to convert time_point to milliseconds since epoch
+static uint64_t TimePointToMs(const std::chrono::system_clock::time_point& tp) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        tp.time_since_epoch()).count();
+}
+
+// Helper to convert milliseconds since epoch to time_point
+static std::chrono::system_clock::time_point MsToTimePoint(uint64_t ms) {
+    return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
+}
+
+void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
+    proto->set_job_id(id);
+    proto->set_authority(authority);
+
+    // Version vector
+    auto* ver = proto->mutable_version();
+    ver->set_cloud_seq(version.cloud_seq);
+    ver->set_vehicle_seq(version.vehicle_seq);
+
+    proto->set_sync_state(sync_state);
+    proto->set_deleted(deleted);
+    if (deleted_at.has_value()) {
+        proto->set_deleted_at_ms(TimePointToMs(deleted_at.value()));
+    }
+
+    // Content
+    proto->set_title(title);
+    proto->set_service(service_name);
+    proto->set_method(method_name);
+    proto->set_parameters_json(parameters.dump());
+    proto->set_scheduled_time_ms(TimePointToMs(scheduled_time));
+    proto->set_recurrence_rule(recurrence_rule);
+    if (end_time.has_value()) {
+        proto->set_end_time_ms(TimePointToMs(end_time.value()));
+    }
+
+    // Execution state (map scheduler status to sync status)
+    switch (status) {
+        case swdv::ifex_scheduler::PENDING:
+            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
+            break;
+        case swdv::ifex_scheduler::RUNNING:
+            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_RUNNING);
+            break;
+        case swdv::ifex_scheduler::COMPLETED:
+            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
+            break;
+        case swdv::ifex_scheduler::FAILED:
+            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_FAILED);
+            break;
+        case swdv::ifex_scheduler::CANCELLED:
+            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED);
+            break;
+        default:
+            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_UNKNOWN);
+    }
+
+    if (next_run_time.has_value()) {
+        proto->set_next_run_time_ms(TimePointToMs(next_run_time.value()));
+    }
+    if (executed_at.has_value()) {
+        proto->set_last_executed_ms(TimePointToMs(executed_at.value()));
+    }
+
+    // Power management
+    proto->set_wake_policy(wake_policy == swdv::ifex_scheduler::WAKE_REQUIRED
+        ? swdv::scheduler_sync_v2::WAKE_POLICY_WAKE_REQUIRED
+        : swdv::scheduler_sync_v2::WAKE_POLICY_NO_WAKE);
+    proto->set_sleep_policy(sleep_policy == swdv::ifex_scheduler::INHIBIT_UNTIL_COMPLETE
+        ? swdv::scheduler_sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE
+        : swdv::scheduler_sync_v2::SLEEP_POLICY_NORMAL);
+    proto->set_wake_lead_time_s(wake_lead_time_s);
+
+    // Metadata
+    proto->set_created_at_ms(TimePointToMs(created_at));
+    proto->set_updated_at_ms(TimePointToMs(updated_at));
+}
+
+std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord& proto) {
+    auto job = std::make_unique<Job>();
+
+    job->id = proto.job_id();
+    job->authority = proto.authority();
+
+    // Version vector
+    job->version.cloud_seq = proto.version().cloud_seq();
+    job->version.vehicle_seq = proto.version().vehicle_seq();
+
+    job->sync_state = proto.sync_state();
+    job->deleted = proto.deleted();
+    if (proto.deleted_at_ms() > 0) {
+        job->deleted_at = MsToTimePoint(proto.deleted_at_ms());
+    }
+
+    // Content
+    job->title = proto.title();
+    job->service_name = proto.service();
+    job->method_name = proto.method();
+    if (!proto.parameters_json().empty()) {
+        try {
+            job->parameters = json::parse(proto.parameters_json());
+        } catch (const json::exception& e) {
+            LOG(ERROR) << "Failed to parse job parameters from sync: " << e.what();
+            job->parameters = json::object();
+        }
+    }
+    job->scheduled_time = MsToTimePoint(proto.scheduled_time_ms());
+    job->recurrence_rule = proto.recurrence_rule();
+    if (proto.end_time_ms() > 0) {
+        job->end_time = MsToTimePoint(proto.end_time_ms());
+    }
+
+    // Execution state (map sync status to scheduler status)
+    switch (proto.status()) {
+        case swdv::scheduler_sync_v2::JOB_STATUS_PENDING:
+            job->status = swdv::ifex_scheduler::PENDING;
+            break;
+        case swdv::scheduler_sync_v2::JOB_STATUS_RUNNING:
+            job->status = swdv::ifex_scheduler::RUNNING;
+            break;
+        case swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED:
+            job->status = swdv::ifex_scheduler::COMPLETED;
+            break;
+        case swdv::scheduler_sync_v2::JOB_STATUS_FAILED:
+            job->status = swdv::ifex_scheduler::FAILED;
+            break;
+        case swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED:
+            job->status = swdv::ifex_scheduler::CANCELLED;
+            break;
+        case swdv::scheduler_sync_v2::JOB_STATUS_PAUSED:
+            // Map PAUSED to PENDING for scheduler (scheduler doesn't have PAUSED)
+            job->status = swdv::ifex_scheduler::PENDING;
+            break;
+        default:
+            job->status = swdv::ifex_scheduler::PENDING;
+    }
+
+    if (proto.next_run_time_ms() > 0) {
+        job->next_run_time = MsToTimePoint(proto.next_run_time_ms());
+    }
+    if (proto.last_executed_ms() > 0) {
+        job->executed_at = MsToTimePoint(proto.last_executed_ms());
+    }
+
+    // Power management
+    job->wake_policy = (proto.wake_policy() == swdv::scheduler_sync_v2::WAKE_POLICY_WAKE_REQUIRED)
+        ? swdv::ifex_scheduler::WAKE_REQUIRED
+        : swdv::ifex_scheduler::NO_WAKE;
+    job->sleep_policy = (proto.sleep_policy() == swdv::scheduler_sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE)
+        ? swdv::ifex_scheduler::INHIBIT_UNTIL_COMPLETE
+        : swdv::ifex_scheduler::SLEEP_NORMAL;
+    job->wake_lead_time_s = proto.wake_lead_time_s();
+
+    // Metadata
+    job->created_at = MsToTimePoint(proto.created_at_ms());
+    job->updated_at = MsToTimePoint(proto.updated_at_ms());
 
     return job;
 }
@@ -512,10 +685,6 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
 
             if (!updates.parameters().empty()) {
                 job->parameters = json::parse(updates.parameters());
-            }
-
-            if (!updates.service_address().empty()) {
-                job->service_address = updates.service_address();
             }
 
             job->updated_at = std::chrono::system_clock::now();

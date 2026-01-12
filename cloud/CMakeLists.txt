@@ -18,3 +18,6 @@ file(MAKE_DIRECTORY ${CLOUD_PROTO_DIR})
 
 # Cloud Backend Transport Reference Service
 add_subdirectory(cloud-backend-transport)
+
+# Cloud Scheduler Reference Service (in-memory, for testing)
+add_subdirectory(cloud-scheduler-service)

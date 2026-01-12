@@ -17,7 +17,9 @@
 
 #include "ifex-scheduler-service.grpc.pb.h"
 #include "ifex-dispatcher-service.grpc.pb.h"
+#include "scheduler-sync-v2.pb.h"
 #include <ifex/discovery.hpp>
+#include "version_vector.hpp"
 
 namespace ifex::reference {
 
@@ -30,7 +32,6 @@ struct Job {
     std::string service_name;
     std::string method_name;
     json parameters;
-    std::string service_address;
 
     // Scheduling
     std::chrono::system_clock::time_point scheduled_time;
@@ -53,15 +54,44 @@ struct Job {
     std::optional<std::string> error_message;
     std::optional<std::string> result;  // Response from service call
 
+    // --- Sync Protocol v2 fields ---
+    // Version vector for conflict detection (see docs/scheduler-sync-protocol-v2.md)
+    sync::VersionVector version;
+
+    // Who created this job - determines conflict winner (immutable after creation)
+    swdv::scheduler_sync_v2::JobAuthority authority =
+        swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
+
+    // Current sync state
+    swdv::scheduler_sync_v2::SyncState sync_state =
+        swdv::scheduler_sync_v2::SYNC_STATE_PENDING;
+
+    // Soft delete flag (tombstone for sync)
+    bool deleted = false;
+    std::optional<std::chrono::system_clock::time_point> deleted_at;
+
     // Convert to protobuf message
     void ToProto(swdv::ifex_scheduler::job_t* proto) const;
+
+    // Convert to sync v2 JobRecord
+    void ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const;
 
     // Create from protobuf message
     static std::unique_ptr<Job> FromProto(const swdv::ifex_scheduler::job_create_t& proto);
 
+    // Create from sync v2 JobRecord (for receiving from cloud)
+    static std::unique_ptr<Job> FromSyncProto(const swdv::scheduler_sync_v2::JobRecord& proto);
+
     // JSON serialization for persistence
     json ToJson() const;
     static std::unique_ptr<Job> FromJson(const json& j);
+
+    // Increment version for local change (call before any modification)
+    void IncrementVersion() {
+        version.increment_vehicle();
+        updated_at = std::chrono::system_clock::now();
+        sync_state = swdv::scheduler_sync_v2::SYNC_STATE_PENDING;
+    }
 };
 
 class SchedulerServer final : public swdv::ifex_scheduler::create_job_service::Service,

@@ -41,9 +41,15 @@ int main(int argc, char** argv) {
         std::string arg = argv[i];
         if (arg.find("--address=") == 0) {
             address = arg.substr(10);
+        } else if (arg.find("--listen=") == 0) {
+            address = arg.substr(9);
         } else if (arg.find("--discovery_address=") == 0) {
             discovery_address = arg.substr(20);
+        } else if (arg.find("--discovery=") == 0) {
+            discovery_address = arg.substr(12);
         } else if (arg.find("--ifex_schema=") == 0) {
+            ifex_schema = arg.substr(14);
+        } else if (arg.find("--ifex-schema=") == 0) {
             ifex_schema = arg.substr(14);
         }
     }
