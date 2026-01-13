@@ -18,8 +18,8 @@ namespace ifex::test {
 class MqttTestFixture : public ::testing::Test {
 protected:
     static constexpr const char* MQTT_IMAGE = "eclipse-mosquitto:2";
-    static constexpr const char* CONTAINER_NAME = "ifex-mqtt-test-broker";
-    static constexpr const char* MQTT_PORT = "11883";  // Different port to avoid conflicts
+    static constexpr const char* CONTAINER_NAME = "ifex-mqtt-integration-broker";
+    static constexpr const char* MQTT_PORT = "11884";  // Different port to avoid conflicts
     static std::string mqtt_host;
     static int mqtt_port;
     static bool container_started;
@@ -138,7 +138,7 @@ private:
 
 // Static member definitions
 inline std::string MqttTestFixture::mqtt_host;
-inline int MqttTestFixture::mqtt_port = 11883;
+inline int MqttTestFixture::mqtt_port = 11884;
 inline bool MqttTestFixture::container_started = false;
 
 }  // namespace ifex::test

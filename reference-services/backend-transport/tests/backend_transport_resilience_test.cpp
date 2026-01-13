@@ -32,9 +32,9 @@ using namespace std::chrono_literals;
  */
 class BrokerControl {
 public:
-    static constexpr const char* CONTAINER_NAME = "ifex-mqtt-test-broker";
+    static constexpr const char* CONTAINER_NAME = "ifex-mqtt-resilience-broker";
     static constexpr const char* MQTT_IMAGE = "eclipse-mosquitto:2";
-    static constexpr int MQTT_PORT = 11883;
+    static constexpr int MQTT_PORT = 11887;
 
     static bool Start() {
         LOG(INFO) << "Starting MQTT broker...";
