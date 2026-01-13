@@ -215,7 +215,7 @@ private:
 
     // Get date range for calendar view
     std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>
-    GetCalendarViewRange(swdv::ifex_scheduler::view_type_t view_type, const std::string& date);
+    GetCalendarViewRange(swdv::ifex_scheduler::view_type_t view_type, uint64_t reference_time_ms);
 };
 
 } // namespace ifex::reference

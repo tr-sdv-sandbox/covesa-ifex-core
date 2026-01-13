@@ -37,32 +37,44 @@ std::chrono::system_clock::time_point ISO8601ToTimePoint(const std::string& iso_
     return std::chrono::system_clock::from_time_t(timegm(&tm));
 }
 
+// Helper to convert time_point to milliseconds since epoch
+static uint64_t TimePointToMs(const std::chrono::system_clock::time_point& tp) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        tp.time_since_epoch()).count();
+}
+
+// Helper to convert milliseconds since epoch to time_point
+static std::chrono::system_clock::time_point MsToTimePoint(uint64_t ms) {
+    return std::chrono::system_clock::time_point(
+        std::chrono::milliseconds(ms));
+}
+
 void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     proto->set_id(id);
     proto->set_title(title);
     proto->set_service(service_name);
     proto->set_method(method_name);
     proto->set_parameters(parameters.dump());
-    proto->set_scheduled_time(TimePointToISO8601(scheduled_time));
+    proto->set_scheduled_time_ms(TimePointToMs(scheduled_time));
 
     if (!recurrence_rule.empty()) {
         proto->set_recurrence_rule(recurrence_rule);
     }
 
     if (end_time.has_value()) {
-        proto->set_end_time(TimePointToISO8601(end_time.value()));
+        proto->set_end_time_ms(TimePointToMs(end_time.value()));
     }
 
     proto->set_status(status);
-    proto->set_created_at(TimePointToISO8601(created_at));
-    proto->set_updated_at(TimePointToISO8601(updated_at));
+    proto->set_created_at_ms(TimePointToMs(created_at));
+    proto->set_updated_at_ms(TimePointToMs(updated_at));
 
     if (executed_at.has_value()) {
-        proto->set_executed_at(TimePointToISO8601(executed_at.value()));
+        proto->set_executed_at_ms(TimePointToMs(executed_at.value()));
     }
 
     if (next_run_time.has_value()) {
-        proto->set_next_run_time(TimePointToISO8601(next_run_time.value()));
+        proto->set_next_run_time_ms(TimePointToMs(next_run_time.value()));
     }
 
     if (error_message.has_value()) {
@@ -77,10 +89,9 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     proto->set_sleep_policy(sleep_policy);
     proto->set_wake_lead_time_s(wake_lead_time_s);
 
-    LOG(INFO) << "DEBUG Job::ToProto: job=" << id
-              << " wake_policy=" << static_cast<int>(wake_policy)
-              << " sleep_policy=" << static_cast<int>(sleep_policy)
-              << " wake_lead_time_s=" << wake_lead_time_s;
+    VLOG(1) << "Job::ToProto: job=" << id
+            << " scheduled_time_ms=" << TimePointToMs(scheduled_time)
+            << " wake_policy=" << static_cast<int>(wake_policy);
 }
 
 std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& proto) {
@@ -100,14 +111,18 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
         }
     }
 
-    job->scheduled_time = ISO8601ToTimePoint(proto.scheduled_time());
+    // Convert epoch milliseconds to time_point
+    if (proto.scheduled_time_ms() == 0) {
+        throw std::runtime_error("scheduled_time_ms is required and must be non-zero");
+    }
+    job->scheduled_time = MsToTimePoint(proto.scheduled_time_ms());
 
     if (!proto.recurrence_rule().empty()) {
         job->recurrence_rule = proto.recurrence_rule();
     }
 
-    if (!proto.end_time().empty()) {
-        job->end_time = ISO8601ToTimePoint(proto.end_time());
+    if (proto.end_time_ms() > 0) {
+        job->end_time = MsToTimePoint(proto.end_time_ms());
     }
 
     job->wake_policy = proto.wake_policy();
@@ -128,20 +143,20 @@ json Job::ToJson() const {
     j["service_name"] = service_name;
     j["method_name"] = method_name;
     j["parameters"] = parameters;
-    j["scheduled_time"] = TimePointToISO8601(scheduled_time);
+    j["scheduled_time_ms"] = TimePointToMs(scheduled_time);
     j["recurrence_rule"] = recurrence_rule;
     j["status"] = static_cast<int>(status);
-    j["created_at"] = TimePointToISO8601(created_at);
-    j["updated_at"] = TimePointToISO8601(updated_at);
+    j["created_at_ms"] = TimePointToMs(created_at);
+    j["updated_at_ms"] = TimePointToMs(updated_at);
 
     if (end_time.has_value()) {
-        j["end_time"] = TimePointToISO8601(end_time.value());
+        j["end_time_ms"] = TimePointToMs(end_time.value());
     }
     if (next_run_time.has_value()) {
-        j["next_run_time"] = TimePointToISO8601(next_run_time.value());
+        j["next_run_time_ms"] = TimePointToMs(next_run_time.value());
     }
     if (executed_at.has_value()) {
-        j["executed_at"] = TimePointToISO8601(executed_at.value());
+        j["executed_at_ms"] = TimePointToMs(executed_at.value());
     }
     if (error_message.has_value()) {
         j["error_message"] = error_message.value();
@@ -161,7 +176,7 @@ json Job::ToJson() const {
     j["sync_state"] = static_cast<int>(sync_state);
     j["deleted"] = deleted;
     if (deleted_at.has_value()) {
-        j["deleted_at"] = TimePointToISO8601(deleted_at.value());
+        j["deleted_at_ms"] = TimePointToMs(deleted_at.value());
     }
 
     return j;
@@ -175,21 +190,47 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     job->service_name = j.at("service_name").get<std::string>();
     job->method_name = j.at("method_name").get<std::string>();
     job->parameters = j.value("parameters", json::object());
-    job->scheduled_time = ISO8601ToTimePoint(j.at("scheduled_time").get<std::string>());
+
+    // Support both old (string) and new (uint64) formats for backward compatibility
+    if (j.contains("scheduled_time_ms")) {
+        job->scheduled_time = MsToTimePoint(j.at("scheduled_time_ms").get<uint64_t>());
+    } else if (j.contains("scheduled_time")) {
+        job->scheduled_time = ISO8601ToTimePoint(j.at("scheduled_time").get<std::string>());
+    }
+
     job->recurrence_rule = j.value("recurrence_rule", "");
     job->status = static_cast<swdv::ifex_scheduler::job_status_t>(j.at("status").get<int>());
-    job->created_at = ISO8601ToTimePoint(j.at("created_at").get<std::string>());
-    job->updated_at = ISO8601ToTimePoint(j.at("updated_at").get<std::string>());
 
-    if (j.contains("end_time")) {
+    if (j.contains("created_at_ms")) {
+        job->created_at = MsToTimePoint(j.at("created_at_ms").get<uint64_t>());
+    } else if (j.contains("created_at")) {
+        job->created_at = ISO8601ToTimePoint(j.at("created_at").get<std::string>());
+    }
+
+    if (j.contains("updated_at_ms")) {
+        job->updated_at = MsToTimePoint(j.at("updated_at_ms").get<uint64_t>());
+    } else if (j.contains("updated_at")) {
+        job->updated_at = ISO8601ToTimePoint(j.at("updated_at").get<std::string>());
+    }
+
+    if (j.contains("end_time_ms")) {
+        job->end_time = MsToTimePoint(j.at("end_time_ms").get<uint64_t>());
+    } else if (j.contains("end_time")) {
         job->end_time = ISO8601ToTimePoint(j.at("end_time").get<std::string>());
     }
-    if (j.contains("next_run_time")) {
+
+    if (j.contains("next_run_time_ms")) {
+        job->next_run_time = MsToTimePoint(j.at("next_run_time_ms").get<uint64_t>());
+    } else if (j.contains("next_run_time")) {
         job->next_run_time = ISO8601ToTimePoint(j.at("next_run_time").get<std::string>());
     }
-    if (j.contains("executed_at")) {
+
+    if (j.contains("executed_at_ms")) {
+        job->executed_at = MsToTimePoint(j.at("executed_at_ms").get<uint64_t>());
+    } else if (j.contains("executed_at")) {
         job->executed_at = ISO8601ToTimePoint(j.at("executed_at").get<std::string>());
     }
+
     if (j.contains("error_message")) {
         job->error_message = j.at("error_message").get<std::string>();
     }
@@ -212,22 +253,13 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     job->sync_state = static_cast<swdv::scheduler_sync_v2::SyncState>(
         j.value("sync_state", static_cast<int>(swdv::scheduler_sync_v2::SYNC_STATE_PENDING)));
     job->deleted = j.value("deleted", false);
-    if (j.contains("deleted_at")) {
+    if (j.contains("deleted_at_ms")) {
+        job->deleted_at = MsToTimePoint(j.at("deleted_at_ms").get<uint64_t>());
+    } else if (j.contains("deleted_at")) {
         job->deleted_at = ISO8601ToTimePoint(j.at("deleted_at").get<std::string>());
     }
 
     return job;
-}
-
-// Helper to convert time_point to milliseconds since epoch
-static uint64_t TimePointToMs(const std::chrono::system_clock::time_point& tp) {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        tp.time_since_epoch()).count();
-}
-
-// Helper to convert milliseconds since epoch to time_point
-static std::chrono::system_clock::time_point MsToTimePoint(uint64_t ms) {
-    return std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
 }
 
 void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
@@ -511,7 +543,7 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
     LOG(INFO) << "CREATE JOB REQUEST:";
     LOG(INFO) << "  Title: " << request->job().title();
     LOG(INFO) << "  Service: " << request->job().service() << "." << request->job().method();
-    LOG(INFO) << "  Scheduled: " << request->job().scheduled_time();
+    LOG(INFO) << "  Scheduled (ms): " << request->job().scheduled_time_ms();
     LOG(INFO) << "  Recurrence: " << request->job().recurrence_rule();
 
     try {
@@ -669,8 +701,8 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
                 job->title = updates.title();
             }
 
-            if (!updates.scheduled_time().empty()) {
-                job->scheduled_time = ISO8601ToTimePoint(updates.scheduled_time());
+            if (updates.scheduled_time_ms() > 0) {
+                job->scheduled_time = MsToTimePoint(updates.scheduled_time_ms());
             }
 
             if (!updates.recurrence_rule().empty()) {
@@ -679,8 +711,8 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
                 job->next_run_time = CalculateNextRunTime(*job, std::chrono::system_clock::now());
             }
 
-            if (!updates.end_time().empty()) {
-                job->end_time = ISO8601ToTimePoint(updates.end_time());
+            if (updates.end_time_ms() > 0) {
+                job->end_time = MsToTimePoint(updates.end_time_ms());
             }
 
             if (!updates.parameters().empty()) {
@@ -918,14 +950,14 @@ grpc::Status SchedulerServer::get_calendar_view(grpc::ServerContext* context,
                                                 swdv::ifex_scheduler::get_calendar_view_response* response) {
     LOG(INFO) << "GET CALENDAR VIEW REQUEST:";
     LOG(INFO) << "  View type: " << request->view_type();
-    LOG(INFO) << "  Date: " << request->date();
+    LOG(INFO) << "  Reference time (ms): " << request->reference_time_ms();
 
     try {
         // Calculate date range based on view type
-        auto [start_time, end_time] = GetCalendarViewRange(request->view_type(), request->date());
+        auto [start_time, end_time] = GetCalendarViewRange(request->view_type(), request->reference_time_ms());
 
-        response->set_start_date(TimePointToISO8601(start_time));
-        response->set_end_date(TimePointToISO8601(end_time));
+        response->set_start_time_ms(TimePointToMs(start_time));
+        response->set_end_time_ms(TimePointToMs(end_time));
 
         std::lock_guard<std::mutex> lock(jobs_mutex_);
 
@@ -1210,16 +1242,16 @@ SchedulerServer::CalculateNextRunTime(const Job& job,
 
 bool SchedulerServer::MatchesFilter(const Job& job,
                                     const swdv::ifex_scheduler::job_filter_t& filter) {
-    // Check date range
-    if (!filter.start_date().empty()) {
-        auto start_time = ISO8601ToTimePoint(filter.start_date());
+    // Check date range using _ms fields
+    if (filter.start_time_ms() > 0) {
+        auto start_time = MsToTimePoint(filter.start_time_ms());
         if (job.scheduled_time < start_time) {
             return false;
         }
     }
 
-    if (!filter.end_date().empty()) {
-        auto end_time = ISO8601ToTimePoint(filter.end_date());
+    if (filter.end_time_ms() > 0) {
+        auto end_time = MsToTimePoint(filter.end_time_ms());
         if (job.scheduled_time >= end_time) {
             return false;
         }
@@ -1245,8 +1277,8 @@ bool SchedulerServer::MatchesFilter(const Job& job,
 
 std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>
 SchedulerServer::GetCalendarViewRange(swdv::ifex_scheduler::view_type_t view_type,
-                                      const std::string& date) {
-    auto reference_time = ISO8601ToTimePoint(date);
+                                      uint64_t reference_time_ms) {
+    auto reference_time = MsToTimePoint(reference_time_ms);
 
     // Get start of day
     auto time_t = std::chrono::system_clock::to_time_t(reference_time);

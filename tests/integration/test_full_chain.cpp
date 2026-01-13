@@ -26,6 +26,14 @@ protected:
         IntegrationTestFixture::TearDown();
     }
 
+    // Returns epoch milliseconds for a time seconds from now
+    uint64_t get_future_time_ms(int seconds_from_now) {
+        auto now = std::chrono::system_clock::now();
+        auto future = now + std::chrono::seconds(seconds_from_now);
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            future.time_since_epoch()).count();
+    }
+
     std::string get_future_time(int seconds_from_now) {
         auto now = std::chrono::system_clock::now();
         auto future = now + std::chrono::seconds(seconds_from_now);
@@ -129,7 +137,7 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
 
     json params = {{"message", "scheduled execution test"}};
     job->set_parameters(params.dump());
-    job->set_scheduled_time(get_future_time(1));  // 1 second from now
+    job->set_scheduled_time_ms(get_future_time_ms(1));  // 1 second from now
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -266,7 +274,7 @@ TEST_F(FullChainIntegrationTest, SchedulerValidatesServiceViaDiscovery) {
     job->set_service("this_service_does_not_exist");
     job->set_method("some_method");
     job->set_parameters("{}");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response response;
     grpc::ClientContext context;
@@ -294,7 +302,7 @@ TEST_F(FullChainIntegrationTest, MultipleJobsExecuteInOrder) {
 
         json params = {{"message", "job " + std::to_string(i)}};
         job->set_parameters(params.dump());
-        job->set_scheduled_time(get_future_time(1 + i));  // 1, 2, 3 seconds
+        job->set_scheduled_time_ms(get_future_time_ms(1 + i));  // 1, 2, 3 seconds
 
         swdv::ifex_scheduler::create_job_response response;
         grpc::ClientContext context;
@@ -350,7 +358,7 @@ TEST_F(FullChainIntegrationTest, CompleteJobLifecycle) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "lifecycle test"})");
-    job->set_scheduled_time(get_future_time(3600));  // Far future - won't execute
+    job->set_scheduled_time_ms(get_future_time_ms(3600));  // Far future - won't execute
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;

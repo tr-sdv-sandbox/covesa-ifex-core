@@ -265,8 +265,8 @@ protected:
         request.mutable_job()->set_service(service);
         request.mutable_job()->set_method(method);
         request.mutable_job()->set_parameters("{}");
-        // Schedule for the future to keep it in PENDING
-        request.mutable_job()->set_scheduled_time("2099-12-31T23:59:59Z");
+        // Schedule for the future to keep it in PENDING (year 2099 in epoch ms)
+        request.mutable_job()->set_scheduled_time_ms(4102444799000ULL);
 
         scheduler_pb::create_job_response response;
         auto status = stub->create_job(&context, request, &response);

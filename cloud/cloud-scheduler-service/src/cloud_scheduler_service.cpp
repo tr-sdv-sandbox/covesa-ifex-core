@@ -1,4 +1,5 @@
 #include "cloud_scheduler_service.hpp"
+#include "time_utils.hpp"
 
 #include <chrono>
 #include <iomanip>
@@ -208,9 +209,9 @@ grpc::Status CloudSchedulerService::CreateJob(
     job_def->set_service(request->service());
     job_def->set_method(request->method());
     job_def->set_parameters_json(request->parameters_json());
-    job_def->set_scheduled_time_ms(Iso8601ToEpochMs(request->scheduled_time()));
+    job_def->set_scheduled_time_ms(request->scheduled_time_ms());
     job_def->set_recurrence_rule(request->recurrence_rule());
-    job_def->set_end_time_ms(Iso8601ToEpochMs(request->end_time()));
+    job_def->set_end_time_ms(request->end_time_ms());
 
     // Send command to vehicle
     if (!SendCommand(request->vehicle_id(), command)) {
@@ -229,7 +230,7 @@ grpc::Status CloudSchedulerService::CreateJob(
         job.set_service(request->service());
         job.set_method(request->method());
         job.set_parameters_json(request->parameters_json());
-        job.set_scheduled_time(request->scheduled_time());
+        job.set_scheduled_time_ms(request->scheduled_time_ms());
         job.set_recurrence_rule(request->recurrence_rule());
         job.set_status(sched::CLOUD_JOB_PENDING);
         job.set_created_at_ms(now_ms);
@@ -271,10 +272,10 @@ grpc::Status CloudSchedulerService::UpdateJob(
     auto* job_upd = command.mutable_update_job();
     job_upd->set_job_id(request->job_id());
     job_upd->set_title(request->title());
-    job_upd->set_scheduled_time_ms(Iso8601ToEpochMs(request->scheduled_time()));
+    job_upd->set_scheduled_time_ms(request->scheduled_time_ms());
     job_upd->set_recurrence_rule(request->recurrence_rule());
     job_upd->set_parameters_json(request->parameters_json());
-    job_upd->set_end_time_ms(Iso8601ToEpochMs(request->end_time()));
+    job_upd->set_end_time_ms(request->end_time_ms());
 
     if (!SendCommand(request->vehicle_id(), command)) {
         response->set_success(false);
@@ -540,9 +541,9 @@ grpc::Status CloudSchedulerService::CreateFleetJob(
         single_request.set_service(request->service());
         single_request.set_method(request->method());
         single_request.set_parameters_json(request->parameters_json());
-        single_request.set_scheduled_time(request->scheduled_time());
+        single_request.set_scheduled_time_ms(request->scheduled_time_ms());
         single_request.set_recurrence_rule(request->recurrence_rule());
-        single_request.set_end_time(request->end_time());
+        single_request.set_end_time_ms(request->end_time_ms());
         single_request.set_created_by(request->created_by());
 
         sched::CreateJobResponse single_response;
@@ -686,39 +687,43 @@ void CloudSchedulerService::HandleV2SyncMessage(
               << " executions=" << msg.executions_size()
               << " deleted=" << msg.deleted_job_ids_size();
 
-    std::lock_guard<std::mutex> lock(jobs_mutex_);
-
-    // Process each job record using sync engine
-    for (const auto& job_record : msg.jobs()) {
-        ProcessVehicleJob(vehicle_id, job_record);
-    }
-
-    // Process explicit deletions (tombstones)
-    for (const auto& deleted_id : msg.deleted_job_ids()) {
-        jobs_[vehicle_id].erase(deleted_id);
-        job_versions_[vehicle_id].erase(deleted_id);
-        job_sync_states_[vehicle_id].erase(deleted_id);
-        LOG(INFO) << "Deleted job " << deleted_id << " from " << vehicle_id
-                  << " (tombstone)";
-    }
-
-    // Process execution records (append-only)
-    ProcessVehicleExecutions(vehicle_id, msg.executions());
-
-    // Send acknowledgment
-    SendSyncAck(vehicle_id, msg.sync_id(), true);
-
-    // Check if we need to send back any cloud changes
-    // (jobs with higher cloud sequence that vehicle hasn't seen)
     bool need_push = false;
-    for (const auto& [job_id, version] : job_versions_[vehicle_id]) {
-        auto sync_state_it = job_sync_states_[vehicle_id].find(job_id);
-        if (sync_state_it != job_sync_states_[vehicle_id].end() &&
-            sync_state_it->second == sync_v2::SYNC_STATE_PENDING) {
-            need_push = true;
-            break;
+
+    // Scope the mutex to avoid deadlock with SendV2SyncMessage
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+        // Process each job record using sync engine
+        for (const auto& job_record : msg.jobs()) {
+            ProcessVehicleJob(vehicle_id, job_record);
         }
-    }
+
+        // Process explicit deletions (tombstones)
+        for (const auto& deleted_id : msg.deleted_job_ids()) {
+            jobs_[vehicle_id].erase(deleted_id);
+            job_versions_[vehicle_id].erase(deleted_id);
+            job_sync_states_[vehicle_id].erase(deleted_id);
+            LOG(INFO) << "Deleted job " << deleted_id << " from " << vehicle_id
+                      << " (tombstone)";
+        }
+
+        // Process execution records (append-only)
+        ProcessVehicleExecutions(vehicle_id, msg.executions());
+
+        // Send acknowledgment (does not need mutex)
+        SendSyncAck(vehicle_id, msg.sync_id(), true);
+
+        // Check if we need to send back any cloud changes
+        // (jobs with higher cloud sequence that vehicle hasn't seen)
+        for (const auto& [job_id, version] : job_versions_[vehicle_id]) {
+            auto sync_state_it = job_sync_states_[vehicle_id].find(job_id);
+            if (sync_state_it != job_sync_states_[vehicle_id].end() &&
+                sync_state_it->second == sync_v2::SYNC_STATE_PENDING) {
+                need_push = true;
+                break;
+            }
+        }
+    }  // Release mutex before calling SendV2SyncMessage
 
     if (need_push) {
         SendV2SyncMessage(vehicle_id);
@@ -959,9 +964,9 @@ void CloudSchedulerService::JobInfoToRecord(
     record->set_recurrence_rule(job.recurrence_rule());
     record->set_created_at_ms(job.created_at_ms());
     record->set_updated_at_ms(job.updated_at_ms());
-    record->set_scheduled_time_ms(Iso8601ToEpochMs(job.scheduled_time()));
-    if (!job.next_run_time().empty()) {
-        record->set_next_run_time_ms(Iso8601ToEpochMs(job.next_run_time()));
+    record->set_scheduled_time_ms(job.scheduled_time_ms());
+    if (job.next_run_time_ms() > 0) {
+        record->set_next_run_time_ms(job.next_run_time_ms());
     }
 
     // Set version
@@ -1009,14 +1014,8 @@ void CloudSchedulerService::RecordToJobInfo(
     job->set_recurrence_rule(record.recurrence_rule());
     job->set_created_at_ms(record.created_at_ms());
     job->set_updated_at_ms(record.updated_at_ms());
-
-    if (record.scheduled_time_ms() > 0) {
-        job->set_scheduled_time(EpochMsToIso8601(record.scheduled_time_ms()));
-    }
-    if (record.next_run_time_ms() > 0) {
-        job->set_next_run_time(EpochMsToIso8601(record.next_run_time_ms()));
-    }
-    // Note: end_time_ms not mapped as JobInfo doesn't have this field
+    job->set_scheduled_time_ms(record.scheduled_time_ms());
+    job->set_next_run_time_ms(record.next_run_time_ms());
 
     // Map status
     switch (record.status()) {

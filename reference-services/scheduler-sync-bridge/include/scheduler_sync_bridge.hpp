@@ -408,6 +408,9 @@ private:
     void SendV2SyncMessage(const std::vector<SyncedJobState>& jobs,
                            bool include_all_jobs = false);
 
+    /// Send a deletion sync message (V2C_SyncMessage with deleted_job_ids)
+    void SendDeleteSyncMessage(const std::string& job_id);
+
     /// Handle incoming v2 sync message from cloud (C2V_SyncMessage)
     void HandleV2SyncMessage(const swdv::scheduler_sync_v2::C2V_SyncMessage& msg);
 

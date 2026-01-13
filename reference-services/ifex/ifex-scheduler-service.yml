@@ -90,33 +90,33 @@ namespaces:
           - name: parameters
             datatype: string
             description: JSON-encoded method parameters
-          - name: scheduled_time
-            datatype: string
-            description: ISO 8601 datetime (e.g., 2025-06-16T09:00:00)
+          - name: scheduled_time_ms
+            datatype: uint64
+            description: Scheduled execution time (epoch milliseconds UTC)
           - name: recurrence_rule
             datatype: string
             description: Cron expression or RFC 5545 RRULE
             mandatory: false
-          - name: end_time
-            datatype: string
-            description: End time for recurring jobs (ISO 8601)
+          - name: end_time_ms
+            datatype: uint64
+            description: End time for recurring jobs (epoch milliseconds UTC)
             mandatory: false
           - name: status
             datatype: job_status_t
             description: Current job status
-          - name: created_at
-            datatype: string
-            description: ISO 8601 creation timestamp
-          - name: updated_at
-            datatype: string
-            description: ISO 8601 last update timestamp
-          - name: executed_at
-            datatype: string
-            description: ISO 8601 last execution timestamp
+          - name: created_at_ms
+            datatype: uint64
+            description: Creation timestamp (epoch milliseconds UTC)
+          - name: updated_at_ms
+            datatype: uint64
+            description: Last update timestamp (epoch milliseconds UTC)
+          - name: executed_at_ms
+            datatype: uint64
+            description: Last execution timestamp (epoch milliseconds UTC)
             mandatory: false
-          - name: next_run_time
-            datatype: string
-            description: ISO 8601 next scheduled run (for recurring)
+          - name: next_run_time_ms
+            datatype: uint64
+            description: Next scheduled run time (epoch milliseconds UTC)
             mandatory: false
           - name: error_message
             datatype: string
@@ -142,13 +142,13 @@ namespaces:
       - name: job_filter_t
         description: Filter criteria for retrieving jobs
         members:
-          - name: start_date
-            datatype: string
-            description: ISO date for range start
+          - name: start_time_ms
+            datatype: uint64
+            description: Range start (epoch milliseconds UTC)
             mandatory: false
-          - name: end_date
-            datatype: string
-            description: ISO date for range end
+          - name: end_time_ms
+            datatype: uint64
+            description: Range end (epoch milliseconds UTC)
             mandatory: false
           - name: service
             datatype: string
@@ -187,16 +187,16 @@ namespaces:
           - name: parameters
             datatype: string
             description: JSON-encoded method parameters
-          - name: scheduled_time
-            datatype: string
-            description: ISO 8601 datetime for first execution
+          - name: scheduled_time_ms
+            datatype: uint64
+            description: Scheduled execution time (epoch milliseconds UTC)
           - name: recurrence_rule
             datatype: string
             description: Cron expression (e.g., "0 8 * * MON-FRI") or RRULE
             mandatory: false
-          - name: end_time
-            datatype: string
-            description: End time for recurring jobs (ISO 8601)
+          - name: end_time_ms
+            datatype: uint64
+            description: End time for recurring jobs (epoch milliseconds UTC)
             mandatory: false
           - name: wake_policy
             datatype: wake_policy_t
@@ -218,17 +218,17 @@ namespaces:
             datatype: string
             description: New title
             mandatory: false
-          - name: scheduled_time
-            datatype: string
-            description: New scheduled time (ISO 8601)
+          - name: scheduled_time_ms
+            datatype: uint64
+            description: New scheduled time (epoch milliseconds UTC)
             mandatory: false
           - name: recurrence_rule
             datatype: string
             description: New recurrence rule
             mandatory: false
-          - name: end_time
-            datatype: string
-            description: New end time for recurring
+          - name: end_time_ms
+            datatype: uint64
+            description: New end time for recurring (epoch milliseconds UTC)
             mandatory: false
           - name: parameters
             datatype: string
@@ -391,9 +391,9 @@ namespaces:
             datatype: view_type_t
             description: Type of calendar view
             mandatory: true
-          - name: date
-            datatype: string
-            description: Reference date (ISO format)
+          - name: reference_time_ms
+            datatype: uint64
+            description: Reference time (epoch milliseconds UTC)
             mandatory: true
           - name: timezone
             datatype: string
@@ -404,12 +404,12 @@ namespaces:
           - name: success
             datatype: boolean
             description: Whether request succeeded
-          - name: start_date
-            datatype: string
-            description: Actual start date of the view
-          - name: end_date
-            datatype: string
-            description: Actual end date of the view
+          - name: start_time_ms
+            datatype: uint64
+            description: Actual start time of the view (epoch milliseconds UTC)
+          - name: end_time_ms
+            datatype: uint64
+            description: Actual end time of the view (epoch milliseconds UTC)
           - name: jobs
             datatype: job_t[]
             description: Jobs within the date range

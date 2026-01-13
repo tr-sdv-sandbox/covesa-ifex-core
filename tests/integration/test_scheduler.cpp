@@ -52,6 +52,19 @@ protected:
         IntegrationTestFixture::TearDown();
     }
 
+    // Returns epoch milliseconds for a time seconds from now
+    uint64_t get_future_time_ms(int seconds_from_now) {
+        auto now = std::chrono::system_clock::now();
+        auto future = now + std::chrono::seconds(seconds_from_now);
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            future.time_since_epoch()).count();
+    }
+
+    uint64_t get_current_time_ms() {
+        return get_future_time_ms(0);
+    }
+
+    // Keep for backward compatibility with any remaining string usages
     std::string get_future_time(int seconds_from_now) {
         auto now = std::chrono::system_clock::now();
         auto future = now + std::chrono::seconds(seconds_from_now);
@@ -59,10 +72,6 @@ protected:
         std::stringstream ss;
         ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%SZ");
         return ss.str();
-    }
-
-    std::string get_current_time() {
-        return get_future_time(0);
     }
 
     void delete_job(const std::string& job_id) {
@@ -94,7 +103,7 @@ TEST_F(SchedulerIntegrationTest, CreateAndGetJob) {
     job->set_parameters(params.dump());
 
     // Schedule for 1 hour from now (won't execute during test)
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -141,7 +150,7 @@ TEST_F(SchedulerIntegrationTest, ListJobs) {
         job->set_service("echo_service");
         job->set_method("echo");
         job->set_parameters(R"({"message": "test"})");
-        job->set_scheduled_time(get_future_time(3600 + i));
+        job->set_scheduled_time_ms(get_future_time_ms(3600 + i));
 
         swdv::ifex_scheduler::create_job_response response;
         grpc::ClientContext context;
@@ -188,7 +197,7 @@ TEST_F(SchedulerIntegrationTest, UpdateJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "original"})");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -240,7 +249,7 @@ TEST_F(SchedulerIntegrationTest, DeleteJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "delete me"})");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -290,7 +299,7 @@ TEST_F(SchedulerIntegrationTest, GetCalendarView) {
         job->set_method("echo");
         job->set_parameters(R"({"message": "calendar test"})");
         // Schedule within the next hour
-        job->set_scheduled_time(get_future_time(60 * (i + 1)));
+        job->set_scheduled_time_ms(get_future_time_ms(60 * (i + 1)));
 
         swdv::ifex_scheduler::create_job_response response;
         grpc::ClientContext context;
@@ -305,7 +314,7 @@ TEST_F(SchedulerIntegrationTest, GetCalendarView) {
 
     swdv::ifex_scheduler::get_calendar_view_request request;
     request.set_view_type(swdv::ifex_scheduler::DAY);
-    request.set_date(get_current_time());
+    request.set_reference_time_ms(get_current_time_ms());
 
     swdv::ifex_scheduler::get_calendar_view_response response;
     grpc::ClientContext context;
@@ -333,7 +342,7 @@ TEST_F(SchedulerIntegrationTest, CreateJobForNonExistentService) {
     job->set_service("non_existent_service");
     job->set_method("some_method");
     job->set_parameters("{}");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response response;
     grpc::ClientContext context;
@@ -355,7 +364,7 @@ TEST_F(SchedulerIntegrationTest, CreateRecurringJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "recurring"})");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
     job->set_recurrence_rule("daily");
 
     swdv::ifex_scheduler::create_job_response response;
@@ -403,7 +412,7 @@ TEST_F(SchedulerIntegrationTest, JobsSurviveRestart) {
         job->set_service("echo_service");
         job->set_method("echo");
         job->set_parameters(R"({"message": "persist me"})");
-        job->set_scheduled_time(get_future_time(3600));  // Far future
+        job->set_scheduled_time_ms(get_future_time_ms(3600));  // Far future
 
         swdv::ifex_scheduler::create_job_response response;
         grpc::ClientContext context;
@@ -485,7 +494,7 @@ TEST_F(SchedulerIntegrationTest, PauseJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "pause me"})");
-    job->set_scheduled_time(get_future_time(3600));  // Far future
+    job->set_scheduled_time_ms(get_future_time_ms(3600));  // Far future
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -547,7 +556,7 @@ TEST_F(SchedulerIntegrationTest, PauseJobInvalidStatus) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "invalid pause"})");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -596,7 +605,7 @@ TEST_F(SchedulerIntegrationTest, ResumeJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "resume me"})");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -658,7 +667,7 @@ TEST_F(SchedulerIntegrationTest, ResumeJobInvalidStatus) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "invalid resume"})");
-    job->set_scheduled_time(get_future_time(3600));
+    job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -696,7 +705,7 @@ TEST_F(SchedulerIntegrationTest, TriggerJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "triggered execution"})");
-    job->set_scheduled_time(get_future_time(86400));  // Tomorrow
+    job->set_scheduled_time_ms(get_future_time_ms(86400));  // Tomorrow
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -742,9 +751,9 @@ TEST_F(SchedulerIntegrationTest, TriggerJob) {
         status = get_stub->get_job(&get_context, get_request, &get_response);
         ASSERT_TRUE(status.ok() && get_response.success());
 
-        // Should have executed_at timestamp
-        EXPECT_FALSE(get_response.job().executed_at().empty())
-            << "Triggered job should have executed_at timestamp";
+        // Should have executed_at_ms timestamp (non-zero)
+        EXPECT_GT(get_response.job().executed_at_ms(), 0u)
+            << "Triggered job should have executed_at_ms timestamp";
     }
 }
 
@@ -758,7 +767,7 @@ TEST_F(SchedulerIntegrationTest, TriggerPausedJob) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "trigger paused"})");
-    job->set_scheduled_time(get_future_time(86400));
+    job->set_scheduled_time_ms(get_future_time_ms(86400));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;
@@ -812,7 +821,7 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
     job->set_service("echo_service");
     job->set_method("echo");
     job->set_parameters(R"({"message": "workflow test"})");
-    job->set_scheduled_time(get_future_time(86400));
+    job->set_scheduled_time_ms(get_future_time_ms(86400));
 
     swdv::ifex_scheduler::create_job_response create_response;
     grpc::ClientContext create_context;

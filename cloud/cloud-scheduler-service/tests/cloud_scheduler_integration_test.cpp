@@ -27,6 +27,7 @@
 #include "backend_transport_client.hpp"
 #include "scheduler_sync_bridge.hpp"
 #include "ifex_content_ids.hpp"
+#include "time_utils.hpp"
 
 #include <gtest/gtest.h>
 #include <glog/logging.h>
@@ -819,7 +820,8 @@ TEST_F(SchedulerBidirectionalSyncTest, CreateJobSendsCommandToVehicle) {
     request.set_service("echo_service");
     request.set_method("echo");
     request.set_parameters_json(R"({"message": "Hello from scheduled job"})");
-    request.set_scheduled_time("2099-01-15T10:30:00Z");  // Far future to keep PENDING
+    request.set_scheduled_time_ms(
+        ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-01-15T10:30:00Z"));  // Far future
     request.set_recurrence_rule("FREQ=DAILY;BYHOUR=10;BYMINUTE=30");
 
     ::ifex::cloud::scheduler::CreateJobResponse response;
@@ -866,8 +868,10 @@ TEST_F(SchedulerBidirectionalSyncTest, EpochMillisecondsFlowCorrectly) {
     request.set_service("echo_service");
     request.set_method("echo");
     request.set_parameters_json(R"({"message": "Epoch test"})");
-    request.set_scheduled_time("2099-01-15T10:30:00Z");
-    request.set_end_time("2099-12-31T23:59:59Z");
+    request.set_scheduled_time_ms(
+        ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-01-15T10:30:00Z"));
+    request.set_end_time_ms(
+        ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-12-31T23:59:59Z"));
 
     ::ifex::cloud::scheduler::CreateJobResponse response;
     grpc::ClientContext context;
@@ -918,7 +922,8 @@ TEST_F(SchedulerBidirectionalSyncTest, ListJobsReturnsCreatedJobs) {
         request.set_service("echo_service");
         request.set_method("echo");
         request.set_parameters_json(R"({"message": "List test"})");
-        request.set_scheduled_time("2099-01-20T00:00:00Z");
+        request.set_scheduled_time_ms(
+            ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-01-20T00:00:00Z"));
 
         ::ifex::cloud::scheduler::CreateJobResponse response;
         grpc::ClientContext context;
@@ -954,7 +959,8 @@ TEST_F(SchedulerBidirectionalSyncTest, DeleteJobRemovesFromCloud) {
     create_request.set_service("echo_service");
     create_request.set_method("echo");
     create_request.set_parameters_json(R"({"message": "Delete test"})");
-    create_request.set_scheduled_time("2099-02-01T12:00:00Z");
+    create_request.set_scheduled_time_ms(
+        ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-02-01T12:00:00Z"));
 
     ::ifex::cloud::scheduler::CreateJobResponse create_response;
     grpc::ClientContext create_context;

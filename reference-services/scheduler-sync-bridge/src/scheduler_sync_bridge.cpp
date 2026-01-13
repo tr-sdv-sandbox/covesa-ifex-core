@@ -376,25 +376,22 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
         state.service = job.service();
         state.method = job.method();
         state.parameters = job.parameters();
-        state.scheduled_time = job.scheduled_time();
+        state.scheduled_time_ms = job.scheduled_time_ms();
+        state.scheduled_time = EpochMsToIso8601(job.scheduled_time_ms());  // For display/hash
         state.recurrence_rule = job.recurrence_rule();
-        state.next_run_time = job.next_run_time();
+        state.next_run_time = EpochMsToIso8601(job.next_run_time_ms());  // For display/hash
         state.status = MapStatus(job.status());
         state.wake_policy = MapWakePolicy(job.wake_policy());
         state.sleep_policy = MapSleepPolicy(job.sleep_policy());
         state.wake_lead_time_s = job.wake_lead_time_s();
 
-        LOG(INFO) << "DEBUG FetchJobsFromScheduler: job=" << job.id()
-                  << " wake_policy=" << static_cast<int>(job.wake_policy())
-                  << " sleep_policy=" << static_cast<int>(job.sleep_policy())
-                  << " wake_lead_time_s=" << job.wake_lead_time_s();
+        VLOG(1) << "FetchJobsFromScheduler: job=" << job.id()
+                << " scheduled_time_ms=" << job.scheduled_time_ms()
+                << " wake_policy=" << static_cast<int>(job.wake_policy());
 
-        // Parse timestamps (assuming ISO format or ms)
-        // For simplicity, use current time if not available
-        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        state.created_at_ms = now_ms;  // Would parse from job.created_at()
-        state.updated_at_ms = now_ms;  // Would parse from job.updated_at()
+        // Use actual timestamps from job
+        state.created_at_ms = job.created_at_ms();
+        state.updated_at_ms = job.updated_at_ms();
 
         result.push_back(std::move(state));
     }
@@ -761,8 +758,14 @@ void SchedulerSyncBridge::ProcessCommand(
         case cmd_pb::COMMAND_DELETE_JOB: {
             command_type_str = "DELETE_JOB";
             result = ExecuteDeleteJob(command.delete_job_id());
-            std::lock_guard<std::mutex> lock(stats_mutex_);
-            stats_.commands_delete++;
+            {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                stats_.commands_delete++;
+            }
+            // Send proper V2C_SyncMessage with deleted_job_ids after successful delete
+            if (result.success) {
+                SendDeleteSyncMessage(command.delete_job_id());
+            }
             break;
         }
 
@@ -839,9 +842,9 @@ SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteCreateJob(
     job->set_service(def.service());
     job->set_method(def.method());
     job->set_parameters(def.parameters_json());
-    job->set_scheduled_time(EpochMsToIso8601(def.scheduled_time_ms()));
+    job->set_scheduled_time_ms(def.scheduled_time_ms());
     job->set_recurrence_rule(def.recurrence_rule());
-    job->set_end_time(EpochMsToIso8601(def.end_time_ms()));
+    job->set_end_time_ms(def.end_time_ms());
 
     scheduler_pb::create_job_response response;
     auto status = create_job_stub_->create_job(&context, request, &response);
@@ -887,10 +890,10 @@ SchedulerSyncBridge::CommandResult SchedulerSyncBridge::ExecuteUpdateJob(
     // Set update fields via the updates sub-message
     auto* updates = request.mutable_updates();
     updates->set_title(update.title());
-    updates->set_scheduled_time(EpochMsToIso8601(update.scheduled_time_ms()));
+    updates->set_scheduled_time_ms(update.scheduled_time_ms());
     updates->set_recurrence_rule(update.recurrence_rule());
     updates->set_parameters(update.parameters_json());
-    updates->set_end_time(EpochMsToIso8601(update.end_time_ms()));
+    updates->set_end_time_ms(update.end_time_ms());
 
     scheduler_pb::update_job_response response;
     auto status = update_job_stub_->update_job(&context, request, &response);
@@ -1279,6 +1282,45 @@ void SchedulerSyncBridge::SendV2SyncMessage(const std::vector<SyncedJobState>& j
     } else {
         LOG(WARNING) << "Failed to send V2C_SyncMessage: status="
                      << static_cast<int>(result.status);
+    }
+
+    last_activity_time_ = std::chrono::steady_clock::now();
+}
+
+void SchedulerSyncBridge::SendDeleteSyncMessage(const std::string& job_id) {
+    sync_v2::V2C_SyncMessage msg;
+    msg.set_vehicle_id(config_.vehicle_id);
+    msg.set_bridge_instance_id(instance_id_);
+
+    // Add the deleted job ID
+    msg.add_deleted_job_ids(job_id);
+
+    msg.set_sync_timestamp_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    msg.set_sync_id(GenerateSyncId());
+
+    std::string serialized;
+    if (!msg.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize delete V2C_SyncMessage";
+        return;
+    }
+
+    std::vector<uint8_t> payload(serialized.begin(), serialized.end());
+    auto result = transport_client_->publish(payload, client::Persistence::Volatile);
+
+    if (result.ok()) {
+        ++sequence_number_;
+
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.events_sent++;
+        stats_.bytes_sent += serialized.size();
+        stats_.delta_syncs_sent++;
+        LOG(INFO) << "Sent delete sync for job " << job_id
+                  << " with vehicle_id=" << config_.vehicle_id;
+    } else {
+        LOG(WARNING) << "Failed to send delete sync for job " << job_id
+                     << ": status=" << static_cast<int>(result.status);
     }
 
     last_activity_time_ = std::chrono::steady_clock::now();

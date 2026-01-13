@@ -49,9 +49,9 @@ message JobInfo {
     string method = 7;
     string parameters_json = 8;
     CloudJobStatus status = 9;
-    string scheduled_time = 10;        // ISO8601 format
+    uint64 scheduled_time_ms = 10;     // Epoch milliseconds UTC
     string recurrence_rule = 11;       // iCal RRULE format
-    string next_run_time = 12;
+    uint64 next_run_time_ms = 12;      // Epoch milliseconds UTC
     uint64 created_at_ms = 13;
     uint64 updated_at_ms = 14;
     string created_by = 15;            // Who created this job
@@ -66,7 +66,7 @@ message ExecutionInfo {
     uint32 duration_ms = 4;
     string result_json = 5;
     string error_message = 6;
-    string next_run_time = 7;
+    uint64 next_run_time_ms = 7;       // Epoch milliseconds UTC
 }
 
 // === Create Job ===
@@ -77,9 +77,9 @@ message CreateJobRequest {
     string service = 3;                // Target service name
     string method = 4;                 // Method to invoke
     string parameters_json = 5;        // JSON-encoded parameters
-    string scheduled_time = 6;         // When to first run (ISO8601)
+    uint64 scheduled_time_ms = 6;      // When to first run (epoch ms UTC)
     string recurrence_rule = 7;        // Optional: cron/iCal RRULE for recurring
-    string end_time = 8;               // Optional: when to stop recurring
+    uint64 end_time_ms = 8;            // Optional: when to stop recurring (epoch ms UTC)
     string created_by = 9;             // Who is creating this job
 }
 
@@ -95,10 +95,10 @@ message UpdateJobRequest {
     string vehicle_id = 1;
     string job_id = 2;
     string title = 3;                  // Empty = no change
-    string scheduled_time = 4;         // Empty = no change
+    uint64 scheduled_time_ms = 4;      // 0 = no change (epoch ms UTC)
     string recurrence_rule = 5;        // Empty = no change
     string parameters_json = 6;        // Empty = no change
-    string end_time = 7;               // Empty = no change
+    uint64 end_time_ms = 7;            // 0 = no change (epoch ms UTC)
 }
 
 message UpdateJobResponse {
@@ -211,9 +211,9 @@ message CreateFleetJobRequest {
     string service = 6;
     string method = 7;
     string parameters_json = 8;
-    string scheduled_time = 9;
+    uint64 scheduled_time_ms = 9;      // Epoch milliseconds UTC
     string recurrence_rule = 10;
-    string end_time = 11;
+    uint64 end_time_ms = 11;           // Epoch milliseconds UTC
     string created_by = 12;
 }
 
