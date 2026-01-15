@@ -1,17 +1,17 @@
 ---
 name: ifex_scheduler
 major_version: 2
-minor_version: 0
+minor_version: 1
 description: Calendar-style scheduler for IFEX-defined services
 
 namespaces:
   - name: core
     description: Core scheduling functionality
-    
+
     enumerations:
       - name: job_status_t
         datatype: uint8
-        description: Job execution status
+        description: Job execution status (vehicle-authoritative)
         options:
           - name: PENDING
             value: 0
@@ -28,10 +28,7 @@ namespaces:
           - name: CANCELLED
             value: 4
             description: Job was cancelled
-          - name: PAUSED
-            value: 5
-            description: Job is paused (will not execute until resumed)
-            
+
       - name: view_type_t
         datatype: uint8
         description: Calendar view types
@@ -64,10 +61,10 @@ namespaces:
         datatype: uint8
         description: Vehicle sleep behavior during job execution
         options:
-          - name: SLEEP_NORMAL
+          - name: NORMAL
             value: 0
             description: Normal sleep behavior after job completes
-          - name: INHIBIT_UNTIL_COMPLETE
+          - name: INHIBIT
             value: 1
             description: Prevent sleep until job execution finishes
 
@@ -101,9 +98,13 @@ namespaces:
             datatype: uint64
             description: End time for recurring jobs (epoch milliseconds UTC)
             mandatory: false
+          - name: paused
+            datatype: boolean
+            description: User intent - job should not be scheduled until resumed
+            default: false
           - name: status
             datatype: job_status_t
-            description: Current job status
+            description: Current execution status (vehicle-authoritative)
           - name: created_at_ms
             datatype: uint64
             description: Creation timestamp (epoch milliseconds UTC)
@@ -167,7 +168,12 @@ namespaces:
             datatype: boolean
             description: Include completed jobs
             default: false
-            
+          - name: paused_only
+            datatype: boolean
+            description: Only return paused jobs
+            mandatory: false
+            default: false
+
       - name: job_create_t
         description: Information needed to create a new job
         members:
@@ -198,6 +204,11 @@ namespaces:
             datatype: uint64
             description: End time for recurring jobs (epoch milliseconds UTC)
             mandatory: false
+          - name: paused
+            datatype: boolean
+            description: Create job in paused state
+            mandatory: false
+            default: false
           - name: wake_policy
             datatype: wake_policy_t
             description: Whether to wake vehicle for this job
@@ -234,6 +245,10 @@ namespaces:
             datatype: string
             description: New JSON parameters
             mandatory: false
+          - name: paused
+            datatype: boolean
+            description: New paused state
+            mandatory: false
           - name: wake_policy
             datatype: wake_policy_t
             description: New wake policy
@@ -265,7 +280,7 @@ namespaces:
           - name: message
             datatype: string
             description: Success or error message
-            
+
       - name: get_jobs
         description: Retrieve jobs based on filter criteria
         input:
@@ -280,7 +295,7 @@ namespaces:
           - name: jobs
             datatype: job_t[]
             description: List of jobs matching criteria
-            
+
       - name: get_job
         description: Retrieve a specific job by ID
         input:
@@ -300,7 +315,7 @@ namespaces:
             datatype: string
             description: Error message if not found
             mandatory: false
-            
+
       - name: update_job
         description: Update an existing job
         input:
@@ -319,7 +334,7 @@ namespaces:
           - name: message
             datatype: string
             description: Success or error message
-            
+
       - name: delete_job
         description: Delete a scheduled job
         input:
@@ -336,7 +351,7 @@ namespaces:
             description: Success or error message
 
       - name: pause_job
-        description: Pause a scheduled job (prevents execution until resumed)
+        description: Pause a scheduled job (sets paused=true)
         input:
           - name: job_id
             datatype: string
@@ -351,7 +366,7 @@ namespaces:
             description: Success or error message
 
       - name: resume_job
-        description: Resume a paused job
+        description: Resume a paused job (sets paused=false)
         input:
           - name: job_id
             datatype: string

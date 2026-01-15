@@ -2,8 +2,8 @@
 
 ## Status: DRAFT
 
-**Version:** 2.0
-**Date:** 2026-01-11
+**Version:** 2.4
+**Date:** 2026-01-15
 **Authors:** Claude + Human
 
 ## 1. Overview
@@ -86,6 +86,8 @@ enum JobAuthority {
 }
 ```
 
+**Note:** Authority is mandatory - every job must have one set at creation.
+
 **Rules:**
 - Job created by cloud → `AUTHORITY_CLOUD`
 - Job created by vehicle → `AUTHORITY_VEHICLE`
@@ -93,22 +95,20 @@ enum JobAuthority {
 
 Authority is **immutable** after creation.
 
-### 2.4 Sync State
+### 2.4 Sync State (Derived, for UI)
 
-Each job has a sync state tracking cloud-vehicle agreement:
+Each side can derive a sync state for display purposes:
 
 ```protobuf
 enum SyncState {
-    SYNC_UNKNOWN = 0;
-    SYNC_PENDING = 1;       // Change made, not yet confirmed by other side
-    SYNC_SYNCED = 2;        // Both sides agree (steady state)
-    SYNC_CONFLICT = 3;      // Conflict detected, resolution in progress
+    SYNC_PENDING = 0;       // My version differs from last confirmed remote version
+    SYNC_SYNCED = 1;        // My version matches last confirmed remote version
 }
 ```
 
-### 2.5 Job Record
+**Note:** This is a local derived field, not transmitted. Computed by comparing local version with last confirmed remote version.
 
-Complete job record structure:
+### 2.5 Job Record
 
 ```protobuf
 message JobRecord {
@@ -116,34 +116,59 @@ message JobRecord {
     string job_id = 1;
     JobAuthority authority = 2;
 
-    // Version
+    // Version (for sync protocol)
     JobVersion version = 3;
-    SyncState sync_state = 4;
 
     // Lifecycle
     bool deleted = 5;                    // Soft delete (tombstone)
-    uint64 deleted_at_ms = 6;            // When deleted (for tombstone expiry)
+    uint64 deleted_at_ms = 6;            // When deleted (for GC)
 
-    // Content
+    // Content (included in checksum) - user intent, synced
     string title = 10;
     string service = 11;
     string method = 12;
     string parameters_json = 13;
     uint64 scheduled_time_ms = 14;       // Epoch milliseconds
     string recurrence_rule = 15;         // iCal RRULE
-    uint64 end_time_ms = 16;             // Optional: stop recurring after this
+    uint64 end_time_ms = 16;
+    bool paused = 17;                    // User intent: "don't schedule this job"
+    WakePolicy wake_policy = 18;         // Whether to wake vehicle for this job
+    SleepPolicy sleep_policy = 19;       // Sleep behavior during execution
+    uint32 wake_lead_time_s = 20;        // Seconds before scheduled_time to wake
 
-    // Execution state (vehicle-authoritative)
-    JobStatus status = 20;               // PENDING, RUNNING, COMPLETED, etc.
-    uint64 next_run_time_ms = 21;
-    uint64 last_executed_ms = 22;
+    // Execution state (vehicle-authoritative, NOT in checksum) - runtime feedback
+    JobStatus status = 25;               // What's happening now
+    uint64 next_run_time_ms = 26;
+    uint64 last_executed_ms = 27;
 
-    // Metadata
+    // Metadata (NOT in checksum)
     uint64 created_at_ms = 30;
     uint64 updated_at_ms = 31;
-    string created_by = 32;              // User/system that created
+    string created_by = 32;
+}
+
+enum JobStatus {
+    JOB_STATUS_PENDING = 0;     // Waiting to execute
+    JOB_STATUS_RUNNING = 1;     // Currently executing
+    JOB_STATUS_COMPLETED = 2;   // Finished successfully
+    JOB_STATUS_FAILED = 3;      // Execution failed
+    JOB_STATUS_CANCELLED = 4;   // Cancelled by user/system
+}
+
+enum WakePolicy {
+    WAKE_NO_WAKE = 0;           // Only run if vehicle already awake
+    WAKE_REQUIRED = 1;          // Wake vehicle via RTC to run job
+}
+
+enum SleepPolicy {
+    SLEEP_NORMAL = 0;           // Normal sleep after job
+    SLEEP_INHIBIT = 1;          // Prevent sleep until job complete
 }
 ```
+
+**Notes:**
+- `paused` is intent (synced), `status` is runtime state (vehicle-authoritative)
+- Tombstones retain all content fields
 
 ### 2.6 Execution Record
 
@@ -155,7 +180,7 @@ message ExecutionRecord {
     string job_id = 2;
     uint64 executed_at_ms = 3;
     uint64 duration_ms = 4;
-    ExecutionStatus status = 5;          // SUCCESS, FAILED, TIMEOUT
+    JobStatus status = 5;                // COMPLETED or FAILED
     string result_json = 6;
     string error_message = 7;
 }
@@ -248,18 +273,172 @@ On reconnect:
 Both sides now have: {7, 5} with "10am"
 ```
 
-### 4.3 Delete Handling
+### 4.3 Tombstone Deletion Protocol
 
-Delete is just another state change:
+Deletion requires coordination to ensure both sides agree before physical removal.
+The protocol ensures crash recovery without losing deletion intent or resurrecting
+deleted jobs.
 
-- Delete sets `deleted = true` and increments version
-- Compared using same dominance rules
-- If delete conflicts with modify:
-  - Authority determines winner
-  - If delete wins: job stays deleted
-  - If modify wins: job is "resurrected"
+#### 4.3.1 Key Invariant
 
-**Tombstone expiry:** Deleted jobs kept for 30 days, then purged.
+**The initiator must persist the deletion intent before sending.**
+
+| Initiator | Must persist before sending | Confirmation |
+|-----------|---------------------------|--------------|
+| Cloud | `JobRecord{deleted=true}` in PostgreSQL | Vehicle echoes same version in V2C |
+| Vehicle | `JobRecord{deleted=true}` to local storage | Cloud echoes same version in C2V |
+
+**Confirmation is implicit:** When both sides have the same `{job_id, version, deleted=true}`,
+the tombstone is confirmed. No separate acknowledgment message needed.
+
+#### 4.3.2 Cloud-Initiated Delete
+
+```
+CLOUD                                           VEHICLE
+  │                                                │
+  │ 1. UPDATE job SET deleted=true,                │
+  │    version.cloud_seq++                         │
+  │    (PERSISTED)                                 │
+  │                                                │
+  │ ─── C2V: JobRecord{deleted=true, v={6,3}} ───► │
+  │                                                │
+  │                          2. Apply tombstone    │
+  │                             (version dominates │
+  │                              or merge)         │
+  │                             (PERSISTED)        │
+  │                                                │
+  │ ◄── V2C: JobRecord{deleted=true, v={6,3}} ─── │
+  │                                                │
+  │ 3. Received confirmation                       │
+  │    (versions match = confirmed)                │
+  │    Can GC after retention period               │
+  │                                                │
+```
+
+**Crash Recovery Scenarios:**
+
+| Crash Point | Cloud State | Vehicle State | Recovery |
+|-------------|-------------|---------------|----------|
+| After step 1, before C2V sent | `deleted=true, {6,3}` | Has job `{5,3}` | Cloud re-sends tombstone |
+| After C2V sent, before step 2 | `deleted=true, {6,3}` | Has job `{5,3}` | Cloud re-sends, vehicle applies |
+| After step 2, before V2C sent | `deleted=true, {6,3}` | Has tombstone `{6,3}` | Vehicle re-sends tombstone |
+| After V2C sent, before step 3 | `deleted=true, {6,3}` | Has tombstone `{6,3}` | Vehicle re-sends, cloud sees match |
+
+#### 4.3.3 Vehicle-Initiated Delete
+
+```
+VEHICLE                                         CLOUD
+  │                                                │
+  │ 1. User/system deletes job                     │
+  │    SET deleted=true, version.vehicle_seq++    │
+  │    (PERSISTED)                                 │
+  │                                                │
+  │ ─── V2C: JobRecord{deleted=true, v={5,4}} ───► │
+  │                                                │
+  │                          2. Apply tombstone    │
+  │                             (version dominates │
+  │                              or merge)         │
+  │                                                │
+  │ ◄── C2V: JobRecord{deleted=true, v={5,4}} ─── │
+  │                                                │
+  │ 3. Received confirmation                       │
+  │    (versions match = confirmed)                │
+  │    Can GC after retention period               │
+  │                                                │
+```
+
+**Crash Recovery Scenarios:**
+
+| Crash Point | Vehicle State | Cloud State | Recovery |
+|-------------|---------------|-------------|----------|
+| After step 1, before V2C sent | Tombstone `{5,4}` | Has job `{5,3}` | Vehicle re-sends tombstone |
+| After V2C sent, before step 2 | Tombstone `{5,4}` | Has job `{5,3}` | Vehicle re-sends, cloud applies |
+| After step 2, before C2V sent | Tombstone `{5,4}` | Tombstone `{5,4}` | Cloud re-sends confirmation |
+| After C2V sent, before step 3 | Tombstone `{5,4}` | Tombstone `{5,4}` | Vehicle receives, versions match |
+
+#### 4.3.4 Handling Unknown Deletions
+
+When receiving a tombstone for an unknown job:
+
+**Cloud receives tombstone `JobRecord{deleted=true}` for unknown job:**
+- Check if tombstone exists in retention storage
+- If yes: include in C2V response (re-confirm)
+- If no: create tombstone record, include in C2V response
+
+**Vehicle receives `JobRecord{deleted=true}` for unknown job:**
+- Create tombstone with version and authority from received record
+- Include in next V2C sync
+- This handles: vehicle restart after delete command sent but before persistence
+
+#### 4.3.5 Tombstone Record Structure
+
+Tombstones are regular `JobRecord` entries with `deleted=true`. This unified model
+ensures version vectors are always available for conflict resolution.
+
+**Vehicle side (local storage):**
+```json
+{
+    "job_id": "cloud-abc123",
+    "deleted": true,
+    "version": {"cloud_seq": 6, "vehicle_seq": 3},
+    "deleted_at_ms": 1705123456000,
+    "authority": "AUTHORITY_CLOUD"
+}
+```
+
+**Cloud side (PostgreSQL):**
+```sql
+jobs (
+    job_id VARCHAR PRIMARY KEY,
+    vehicle_id VARCHAR,
+    deleted BOOLEAN DEFAULT false,
+    deleted_at TIMESTAMP,
+    cloud_seq BIGINT,
+    vehicle_seq BIGINT,
+    authority VARCHAR,           -- 'cloud' or 'vehicle'
+    -- ... other job fields
+)
+```
+
+**Confirmation detection:** Tombstone is confirmed when both sides have
+matching `{job_id, cloud_seq, vehicle_seq, deleted=true}`.
+
+#### 4.3.6 Garbage Collection
+
+Both sides keep tombstones for a retention period (default: 7 days):
+
+```
+Tombstone GC Rules:
+1. Tombstone age > RETENTION_PERIOD (7 days)
+2. AND confirmed by other side
+3. THEN safe to physically delete
+```
+
+**Why retention period?**
+- Allows re-sync after extended offline periods
+- Prevents "resurrection" if old sync messages arrive late
+- 7 days balances storage vs. safety
+
+#### 4.3.7 Conflict: Delete vs Modify
+
+If delete conflicts with modify (neither version dominates):
+
+1. Check job's `authority` field
+2. Authority determines winner:
+   - If delete wins: job stays deleted
+   - If modify wins: job is "resurrected" (delete tombstone removed)
+3. Merged version computed as usual
+
+**Example:**
+```
+Job X (AUTHORITY_CLOUD)
+Cloud: deletes (cloud_seq: 7)
+Vehicle: modifies (vehicle_seq: 5)
+
+Conflict: {7, 3} vs {5, 5}
+Authority = CLOUD → delete wins
+Merged version: {7, 5} with deleted=true
+```
 
 ## 5. Sync Protocol
 
@@ -269,109 +448,72 @@ Delete is just another state change:
 // Cloud → Vehicle
 message C2V_SyncMessage {
     string vehicle_id = 1;
-    repeated JobRecord jobs = 2;         // Full job states
-    repeated string deleted_job_ids = 3; // Tombstones (job_id only)
-    uint64 sync_timestamp_ms = 4;
+    repeated JobRecord jobs = 2;         // All jobs: active AND tombstones (deleted=true)
+    uint64 sync_timestamp_ms = 3;
+
+    // Checksum-based quiescence detection
+    uint64 state_checksum = 10;          // Hash of current state
+    uint64 last_seen_v2c_checksum = 11;  // "I've seen your state up to this checksum"
 }
 
 // Vehicle → Cloud
 message V2C_SyncMessage {
     string vehicle_id = 1;
     string bridge_instance_id = 2;
-    repeated JobRecord jobs = 3;
-    repeated string deleted_job_ids = 4;
-    repeated ExecutionRecord executions = 5;  // New executions since last sync
-    uint64 sync_timestamp_ms = 6;
+    repeated JobRecord jobs = 3;         // All jobs: active AND tombstones (deleted=true)
+    repeated ExecutionRecord executions = 4;  // New executions since last sync
+    uint64 sync_timestamp_ms = 5;
+
+    // Checksum-based quiescence detection
+    uint64 state_checksum = 10;          // Hash of current state
+    uint64 last_seen_c2v_checksum = 11;  // "I've seen your state up to this checksum"
 }
 
-// Acknowledgment (bidirectional)
-message SyncAck {
-    bool success = 1;
-    repeated ConflictResolution resolutions = 2;  // How conflicts were resolved
-    uint64 ack_timestamp_ms = 3;
-}
-
-message ConflictResolution {
-    string job_id = 1;
-    JobVersion winning_version = 2;
-    string winner = 3;  // "cloud" or "vehicle"
-}
 ```
 
-### 5.2 Sync Flow
+**Notes:**
+- Tombstones are `JobRecord{deleted=true}` with version vectors
+- V2C serves as implicit acknowledgment (no separate SyncAck needed)
+
+### 5.2 Sync Flow (Event-Driven)
+
+Messages only sent when checksum differs. Silence = agreement.
 
 ```
 CLOUD                                    VEHICLE
   │                                         │
-  │ ◄──────── V2C_SyncMessage ───────────── │  (vehicle sends its state)
+  │◄──── V2C{jobs, checksum=0xAAAA} ────────│  (vehicle changed)
   │                                         │
-  │  [compare versions]                     │
-  │  [detect conflicts]                     │
-  │  [resolve by authority]                 │
-  │  [merge versions]                       │
+  │  [compare, resolve, update]             │
   │                                         │
-  │ ─────────── SyncAck ──────────────────► │  (cloud confirms)
+  │──── C2V{jobs, checksum=0xBBBB,  ───────►│  (cloud responds)
+  │         last_seen_v2c=0xAAAA}           │
   │                                         │
-  │ ─────────── C2V_SyncMessage ──────────► │  (cloud sends its state)
-  │                                         │
-  │                     [compare versions]  │
   │                     [apply updates]     │
   │                                         │
-  │ ◄──────────── SyncAck ───────────────── │  (vehicle confirms)
+  │◄─── V2C{checksum=0xBBBB,        ────────│  (vehicle confirms)
+  │         last_seen_c2v=0xBBBB}           │
   │                                         │
+  │  [checksums match - QUIESCENT]          │
+  │                                         │
+  ═══════════ NO TRAFFIC UNTIL STATE CHANGES ═══════════
 ```
+
+**Sync trigger:** Checksum differs from last confirmed.
 
 ### 5.3 Per-Job Sync Logic
 
-On receiving a job record from remote:
+On receiving a job from remote:
 
-```python
-def handle_remote_job(remote_job, local_jobs):
-    job_id = remote_job.job_id
+| Condition | Action |
+|-----------|--------|
+| Unknown job_id | Accept remote |
+| Same version | No-op |
+| Remote dominates | Accept remote |
+| Local dominates | Keep local |
+| Neither dominates (conflict) | Resolve by authority, merge versions |
 
-    if job_id not in local_jobs:
-        # New job from remote - accept it
-        local_jobs[job_id] = remote_job
-        return "accepted"
-
-    local_job = local_jobs[job_id]
-
-    if remote_job.version == local_job.version:
-        # Same version - no action
-        return "unchanged"
-
-    if dominates(remote_job.version, local_job.version):
-        # Remote is newer - accept it
-        local_jobs[job_id] = remote_job
-        return "updated"
-
-    if dominates(local_job.version, remote_job.version):
-        # Local is newer - keep local (remote will get update on next sync)
-        return "local_newer"
-
-    # Neither dominates - CONFLICT
-    winner = resolve_conflict(local_job, remote_job)
-    merged_version = merge_versions(local_job.version, remote_job.version)
-
-    result = winner.copy()
-    result.version = merged_version
-    result.sync_state = SYNC_SYNCED
-
-    local_jobs[job_id] = result
-    return "conflict_resolved"
-
-def resolve_conflict(local, remote):
-    if local.authority == AUTHORITY_CLOUD:
-        return remote if is_cloud else local
-    else:
-        return local if is_vehicle else remote
-
-def merge_versions(a, b):
-    return JobVersion(
-        cloud_seq = max(a.cloud_seq, b.cloud_seq),
-        vehicle_seq = max(a.vehicle_seq, b.vehicle_seq)
-    )
-```
+**Conflict resolution:** Winner is the side matching `authority`. Merged version = `{max(cloud_seq), max(vehicle_seq)}`.
 
 ### 5.4 Idempotency
 
@@ -383,185 +525,90 @@ All sync operations are idempotent:
 
 This allows safe retry on network failure.
 
-## 6. State Machine
+### 5.5 State Checksum
 
-### 6.1 Job Lifecycle States
+**Hash function:** xxHash64
 
-```
-                           ┌─────────────────────────────────┐
-                           │                                 │
-    ┌──────────────────────▼────────────────────────┐        │
-    │               SYNC_PENDING                    │        │
-    │  Local change made, not confirmed by remote   │        │
-    └──────────────────────┬────────────────────────┘        │
-                           │                                 │
-              remote confirms (version matches)              │
-                           │                                 │
-    ┌──────────────────────▼────────────────────────┐        │
-    │                SYNC_SYNCED                    │        │
-    │  Both sides have same version (steady state)  │◄───────┤
-    └──────────────────────┬────────────────────────┘        │
-                           │                                 │
-              local OR remote changes                        │
-                           │                                 │
-    ┌──────────────────────▼────────────────────────┐        │
-    │                  compare                      │        │
-    └───────┬──────────────┬────────────────┬───────┘        │
-            │              │                │                │
-    one dominates    neither dominates   equal              │
-            │              │                │                │
-            │    ┌─────────▼─────────┐      │                │
-            │    │   SYNC_CONFLICT   │      │                │
-            │    │  resolve by       │      │                │
-            │    │  authority        │      │                │
-            │    └─────────┬─────────┘      │                │
-            │              │                │                │
-            └──────────────┴────────────────┴────────────────┘
-                           │
-                      merge versions
-                           │
-                           ▼
-                      SYNC_SYNCED
-```
+**Checksum includes (per job, sorted by job_id):**
+- job_id, authority, version (cloud_seq, vehicle_seq), deleted
+- Content fields: title, service, method, parameters_json, scheduled_time_ms, recurrence_rule, end_time_ms, paused, wake_policy, sleep_policy, wake_lead_time_s
 
-### 6.2 Execution Handling
+**Checksum excludes:**
+- Metadata: created_at_ms, updated_at_ms, deleted_at_ms, created_by
+- Execution state: status, next_run_time_ms, last_executed_ms
+- Execution history
 
-Executions follow a separate path (no state machine, append-only):
+**Rationale:** Version vectors track modification count, not content. Content hashing detects data corruption.
+
+### 5.6 Quiescence Detection
+
+**Quiescent when:** Both sides have confirmed each other's current checksum.
+
+**Send sync when:** Remote hasn't confirmed my current checksum (i.e., remote's `last_seen_*_checksum` ≠ my `state_checksum`).
+
+**No messages sent when quiescent.** MQTT keepalive maintains connection.
+
+### 5.7 Initiation
+
+**Bidirectional:** Either side sends when remote hasn't confirmed its current checksum.
+
+State changes cause checksum to change, which triggers sync. No message sent if already quiescent.
+
+### 5.8 Execution Records
+
+- Append-only facts, no versioning
+- Cloud deduplicates by `execution_id`
+- No acknowledgment needed
+- Retained independently of job (survives job GC)
+
+## 6. Per-Job Sync State (Derived)
 
 ```
-Vehicle executes job
-        │
-        ▼
-ExecutionRecord created
-        │
-        ▼
-Added to V2C_SyncMessage.executions
-        │
-        ▼
-Cloud receives and stores
-        │
-        ▼
-Done (no confirmation needed - facts are immutable)
+SYNC_PENDING ◄──(local changes)──► SYNC_SYNCED
+     │                                  ▲
+     │                                  │
+     └──(remote confirms my version)────┘
 ```
+
+Derived by comparing local version with last confirmed remote version.
+
+Executions: Append-only, no state. Vehicle creates → V2C → Cloud stores.
 
 ## 7. Edge Cases
 
-### 7.1 Job Deleted While Executing
-
-```
-Timeline:
-  t=100: Cloud deletes job (cloud_seq: 7)
-  t=150: Vehicle executes job (didn't know about delete)
-  t=200: Reconnect
-```
-
-**Behavior:**
-- Execution record is stored (it happened)
-- Delete is applied (job is deleted)
-- Final state: deleted job with execution history
-
-### 7.2 Same Job Modified Many Times Offline
-
-```
-Cloud:   v{5,3} → {6,3} → {7,3} → {8,3}
-Vehicle: v{5,3} → {5,4} → {5,5} → {5,6}
-```
-
-**On reconnect:**
-- Cloud: {8, 3}
-- Vehicle: {5, 6}
-- Neither dominates → CONFLICT
-- Resolution by authority
-- Merged version: {8, 6}
-
-**Key point:** Only final states compared, not intermediate history.
-
-### 7.3 Reconnect After Very Long Offline
-
-```
-Vehicle offline for 30 days
-Cloud: {cloud: 50, vehicle: 3}
-Vehicle: {cloud: 5, vehicle: 40}
-```
-
-**Behavior:** Same as any conflict:
-- Neither dominates
-- Authority determines winner
-- Versions merged
-
-No special handling for "large" divergence.
-
-### 7.4 Clock Considerations
-
-**Wall clock is NOT used for conflict resolution.**
-
-Wall clock (`updated_at_ms`) is metadata only:
-- Used for display ("last modified 5 minutes ago")
-- Used for tombstone expiry
-- NOT used to determine version ordering
-
-**Vehicle clock can be wrong** and protocol still works correctly.
-
-### 7.5 Sync Bridge Restart
-
-If vehicle sync bridge restarts:
-
-1. Bridge reads current state from vehicle scheduler
-2. Bridge has persisted `{cloud_seq, vehicle_seq}` per job
-3. Resume normal sync
-
-**Requirement:** Sync bridge must persist version vectors.
-
-### 7.6 Network Failure During Sync
-
-```
-1. Cloud sends C2V_SyncMessage
-2. Vehicle receives, updates local state
-3. Vehicle sends SyncAck
-4. Ack lost!
-5. Cloud retries C2V_SyncMessage
-6. Vehicle receives again
-```
-
-**Behavior:** Idempotent - same version received twice is no-op.
+| Scenario | Behavior |
+|----------|----------|
+| **Bootstrap (new vehicle)** | Vehicle sends empty state, cloud sends all jobs, converge |
+| **Delete during execution** | Execution recorded, delete applied. Both facts preserved |
+| **Long offline (30+ days)** | Same as any conflict - authority wins, versions merged |
+| **Vehicle clock wrong** | No impact - wall clock is metadata only, not used for ordering |
+| **Network failure mid-sync** | Idempotent - retry is no-op |
+| **Sync drift (job missing)** | Checksum mismatch triggers re-sync, re-send missing jobs |
 
 ## 8. Implementation Requirements
 
-### 8.1 Cloud Side (Offboard)
+### 8.1 Both Sides
 
-| Component | Requirement |
-|-----------|-------------|
-| scheduler_api | Single writer (coordinate via database) |
-| scheduler_mirror | Store JobRecord with version vectors |
-| Database | Add `cloud_seq`, `vehicle_seq`, `authority`, `sync_state` columns |
-| MQTT handler | Parse V2C_SyncMessage, send C2V_SyncMessage |
+- Store jobs with version vectors (`cloud_seq`, `vehicle_seq`)
+- Persist tombstones (`deleted=true`) as regular JobRecords
+- Compute state checksum on any change
+- Track checksums for quiescence detection
 
-### 8.2 Vehicle Side (Onboard)
+### 8.2 Cloud-Specific
 
-| Component | Requirement |
-|-----------|-------------|
-| Scheduler service | Store jobs with version vectors |
-| Sync bridge | Persist version vectors (survives restart) |
-| Sync bridge | Compare versions, apply sync logic |
-| Backend transport | Send/receive sync messages via MQTT |
+- Database columns: `cloud_seq`, `vehicle_seq`, `authority`, `deleted`, `deleted_at`
+- Keep tombstones for 7 days (retention period)
 
-### 8.3 Content ID
+### 8.3 Vehicle-Specific
 
-Scheduler sync uses **content_id = 202** for both directions.
+- Sync bridge must persist version vectors (survives restart)
+- Handle `deleted=true` for unknown jobs (create tombstone)
 
-### 8.4 Sync Frequency
+### 8.4 Garbage Collection
 
-- Vehicle → Cloud: On change + periodic (configurable, default 60s)
-- Cloud → Vehicle: On change + periodic (configurable, default 60s)
-- Full sync on reconnect after offline period
+Remove tombstones where: `deleted=true` AND `age > 7 days` AND remote checksum confirmed while tombstone was included.
 
-## 9. Migration
-
-Since we have no backward compatibility requirement:
-
-1. Clear all existing job sync state
-2. Deploy new protocol to both sides
-3. Full sync establishes baseline
+"Confirmed" = received remote message with `last_seen_*_checksum` matching a checksum that included this tombstone.
 
 ## 10. Future Considerations
 
@@ -581,19 +628,30 @@ Since we have no backward compatibility requirement:
 
 ---
 
-## Appendix A: Proto Definitions
-
-See `proto/scheduler-sync-v2.proto` (to be created)
-
 ## Appendix B: Test Scenarios
 
-| Scenario | Cloud | Vehicle | Expected |
-|----------|-------|---------|----------|
-| Cloud creates | {1,0} | none | Vehicle gets {1,0} |
-| Vehicle creates | none | {0,1} | Cloud gets {0,1} |
-| Cloud updates | {2,0} | {1,0} | Vehicle updates to {2,0} |
-| Vehicle updates | {1,0} | {1,1} | Cloud updates to {1,1} |
-| Both update (cloud auth) | {2,0} | {1,1} | Both get {2,1} with cloud content |
-| Both update (vehicle auth) | {2,0} | {1,1} | Both get {2,1} with vehicle content |
-| Cloud deletes | {2,0} deleted | {1,1} | Conflict, resolve by authority |
-| Execute during delete | {2,0} deleted | executed | Delete applies, execution recorded |
+### B.1 Sync
+
+| Cloud | Vehicle | Expected |
+|-------|---------|----------|
+| {1,0} | none | Vehicle accepts {1,0} |
+| none | {0,1} | Cloud accepts {0,1} |
+| {2,0} | {1,0} | Vehicle updates to {2,0} |
+| {2,0} (cloud auth) | {1,1} | Both → {2,1} with cloud content |
+| {2,0} (vehicle auth) | {1,1} | Both → {2,1} with vehicle content |
+
+### B.2 Tombstones
+
+| Action | Expected |
+|--------|----------|
+| Cloud deletes {5,3} → {6,3} | Vehicle echoes {6,3} tombstone |
+| Vehicle deletes {5,3} → {5,4} | Cloud echoes {5,4} tombstone |
+| Delete for unknown job | Receiver creates tombstone, echoes |
+
+### B.3 Quiescence
+
+| Scenario | Expected |
+|----------|----------|
+| Both checksums match, confirmed | No messages |
+| One side changes | Exchange until checksums match |
+| Reconnect, same state | No messages (already quiescent) |

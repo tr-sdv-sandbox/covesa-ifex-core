@@ -9,14 +9,13 @@ package swdv.ifex_scheduler;
 // Namespace: core
 // Core scheduling functionality
 
-// Job execution status
+// Job execution status (vehicle-authoritative)
 enum job_status_t {
   PENDING = 0;
   RUNNING = 1;
   COMPLETED = 2;
   FAILED = 3;
   CANCELLED = 4;
-  PAUSED = 5;
 }
 
 // Calendar view types
@@ -35,8 +34,8 @@ enum wake_policy_t {
 
 // Vehicle sleep behavior during job execution
 enum sleep_policy_t {
-  SLEEP_NORMAL = 0;
-  INHIBIT_UNTIL_COMPLETE = 1;
+  NORMAL = 0;
+  INHIBIT = 1;
 }
 
 // Complete job information
@@ -49,16 +48,17 @@ message job_t {
   uint64 scheduled_time_ms = 6;
   string recurrence_rule = 7;
   uint64 end_time_ms = 8;
-  job_status_t status = 9;
-  uint64 created_at_ms = 10;
-  uint64 updated_at_ms = 11;
-  uint64 executed_at_ms = 12;
-  uint64 next_run_time_ms = 13;
-  string error_message = 14;
-  string result = 15;
-  wake_policy_t wake_policy = 16;
-  sleep_policy_t sleep_policy = 17;
-  uint32 wake_lead_time_s = 18;
+  bool paused = 9;
+  job_status_t status = 10;
+  uint64 created_at_ms = 11;
+  uint64 updated_at_ms = 12;
+  uint64 executed_at_ms = 13;
+  uint64 next_run_time_ms = 14;
+  string error_message = 15;
+  string result = 16;
+  wake_policy_t wake_policy = 17;
+  sleep_policy_t sleep_policy = 18;
+  uint32 wake_lead_time_s = 19;
 }
 
 // Filter criteria for retrieving jobs
@@ -69,6 +69,7 @@ message job_filter_t {
   job_status_t status = 4;
   bool has_status_filter = 5;
   bool include_completed = 6;
+  bool paused_only = 7;
 }
 
 // Information needed to create a new job
@@ -81,9 +82,10 @@ message job_create_t {
   uint64 scheduled_time_ms = 6;
   string recurrence_rule = 7;
   uint64 end_time_ms = 8;
-  wake_policy_t wake_policy = 9;
-  sleep_policy_t sleep_policy = 10;
-  uint32 wake_lead_time_s = 11;
+  bool paused = 9;
+  wake_policy_t wake_policy = 10;
+  sleep_policy_t sleep_policy = 11;
+  uint32 wake_lead_time_s = 12;
 }
 
 // Fields that can be updated in an existing job
@@ -93,9 +95,10 @@ message job_update_t {
   string recurrence_rule = 3;
   uint64 end_time_ms = 4;
   string parameters = 5;
-  wake_policy_t wake_policy = 6;
-  sleep_policy_t sleep_policy = 7;
-  uint32 wake_lead_time_s = 8;
+  bool paused = 6;
+  wake_policy_t wake_policy = 7;
+  sleep_policy_t sleep_policy = 8;
+  uint32 wake_lead_time_s = 9;
 }
 
 // Method: create_job
@@ -177,7 +180,7 @@ service delete_job_service {
 }
 
 // Method: pause_job
-// Pause a scheduled job (prevents execution until resumed)
+// Pause a scheduled job (sets paused=true)
 message pause_job_request {
   string job_id = 1;
 }
@@ -192,7 +195,7 @@ service pause_job_service {
 }
 
 // Method: resume_job
-// Resume a paused job
+// Resume a paused job (sets paused=false)
 message resume_job_request {
   string job_id = 1;
 }

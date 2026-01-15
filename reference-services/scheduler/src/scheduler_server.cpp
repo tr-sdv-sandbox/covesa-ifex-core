@@ -66,6 +66,7 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     }
 
     proto->set_status(status);
+    proto->set_paused(paused);
     proto->set_created_at_ms(TimePointToMs(created_at));
     proto->set_updated_at_ms(TimePointToMs(updated_at));
 
@@ -128,6 +129,7 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
     job->wake_policy = proto.wake_policy();
     job->sleep_policy = proto.sleep_policy();
     job->wake_lead_time_s = proto.wake_lead_time_s();
+    job->paused = proto.paused();
 
     auto now = std::chrono::system_clock::now();
     job->created_at = now;
@@ -169,11 +171,13 @@ json Job::ToJson() const {
     j["sleep_policy"] = static_cast<int>(sleep_policy);
     j["wake_lead_time_s"] = wake_lead_time_s;
 
+    j["paused"] = paused;
+
     // Sync v2 fields
     j["version_cloud_seq"] = version.cloud_seq;
     j["version_vehicle_seq"] = version.vehicle_seq;
     j["authority"] = static_cast<int>(authority);
-    j["sync_state"] = static_cast<int>(sync_state);
+    j["needs_sync"] = needs_sync;
     j["deleted"] = deleted;
     if (deleted_at.has_value()) {
         j["deleted_at_ms"] = TimePointToMs(deleted_at.value());
@@ -245,13 +249,14 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
         j.value("sleep_policy", 0));
     job->wake_lead_time_s = j.value("wake_lead_time_s", 0u);
 
+    job->paused = j.value("paused", false);
+
     // Sync v2 fields (with defaults for backward compatibility)
     job->version.cloud_seq = j.value("version_cloud_seq", 0ULL);
     job->version.vehicle_seq = j.value("version_vehicle_seq", 0ULL);
     job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(
         j.value("authority", static_cast<int>(swdv::scheduler_sync_v2::AUTHORITY_VEHICLE)));
-    job->sync_state = static_cast<swdv::scheduler_sync_v2::SyncState>(
-        j.value("sync_state", static_cast<int>(swdv::scheduler_sync_v2::SYNC_STATE_PENDING)));
+    job->needs_sync = j.value("needs_sync", false);
     job->deleted = j.value("deleted", false);
     if (j.contains("deleted_at_ms")) {
         job->deleted_at = MsToTimePoint(j.at("deleted_at_ms").get<uint64_t>());
@@ -271,7 +276,6 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
     ver->set_cloud_seq(version.cloud_seq);
     ver->set_vehicle_seq(version.vehicle_seq);
 
-    proto->set_sync_state(sync_state);
     proto->set_deleted(deleted);
     if (deleted_at.has_value()) {
         proto->set_deleted_at_ms(TimePointToMs(deleted_at.value()));
@@ -287,6 +291,7 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
     if (end_time.has_value()) {
         proto->set_end_time_ms(TimePointToMs(end_time.value()));
     }
+    proto->set_paused(paused);
 
     // Execution state (map scheduler status to sync status)
     switch (status) {
@@ -305,8 +310,6 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
         case swdv::ifex_scheduler::CANCELLED:
             proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED);
             break;
-        default:
-            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_UNKNOWN);
     }
 
     if (next_run_time.has_value()) {
@@ -318,11 +321,11 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
 
     // Power management
     proto->set_wake_policy(wake_policy == swdv::ifex_scheduler::WAKE_REQUIRED
-        ? swdv::scheduler_sync_v2::WAKE_POLICY_WAKE_REQUIRED
-        : swdv::scheduler_sync_v2::WAKE_POLICY_NO_WAKE);
-    proto->set_sleep_policy(sleep_policy == swdv::ifex_scheduler::INHIBIT_UNTIL_COMPLETE
-        ? swdv::scheduler_sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE
-        : swdv::scheduler_sync_v2::SLEEP_POLICY_NORMAL);
+        ? swdv::scheduler_sync_v2::WAKE_REQUIRED
+        : swdv::scheduler_sync_v2::WAKE_NO_WAKE);
+    proto->set_sleep_policy(sleep_policy == swdv::ifex_scheduler::INHIBIT
+        ? swdv::scheduler_sync_v2::SLEEP_INHIBIT
+        : swdv::scheduler_sync_v2::SLEEP_NORMAL);
     proto->set_wake_lead_time_s(wake_lead_time_s);
 
     // Metadata
@@ -340,7 +343,6 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
     job->version.cloud_seq = proto.version().cloud_seq();
     job->version.vehicle_seq = proto.version().vehicle_seq();
 
-    job->sync_state = proto.sync_state();
     job->deleted = proto.deleted();
     if (proto.deleted_at_ms() > 0) {
         job->deleted_at = MsToTimePoint(proto.deleted_at_ms());
@@ -363,6 +365,7 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
     if (proto.end_time_ms() > 0) {
         job->end_time = MsToTimePoint(proto.end_time_ms());
     }
+    job->paused = proto.paused();
 
     // Execution state (map sync status to scheduler status)
     switch (proto.status()) {
@@ -381,12 +384,6 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
         case swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED:
             job->status = swdv::ifex_scheduler::CANCELLED;
             break;
-        case swdv::scheduler_sync_v2::JOB_STATUS_PAUSED:
-            // Map PAUSED to PENDING for scheduler (scheduler doesn't have PAUSED)
-            job->status = swdv::ifex_scheduler::PENDING;
-            break;
-        default:
-            job->status = swdv::ifex_scheduler::PENDING;
     }
 
     if (proto.next_run_time_ms() > 0) {
@@ -397,12 +394,12 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
     }
 
     // Power management
-    job->wake_policy = (proto.wake_policy() == swdv::scheduler_sync_v2::WAKE_POLICY_WAKE_REQUIRED)
+    job->wake_policy = (proto.wake_policy() == swdv::scheduler_sync_v2::WAKE_REQUIRED)
         ? swdv::ifex_scheduler::WAKE_REQUIRED
         : swdv::ifex_scheduler::NO_WAKE;
-    job->sleep_policy = (proto.sleep_policy() == swdv::scheduler_sync_v2::SLEEP_POLICY_INHIBIT_UNTIL_COMPLETE)
-        ? swdv::ifex_scheduler::INHIBIT_UNTIL_COMPLETE
-        : swdv::ifex_scheduler::SLEEP_NORMAL;
+    job->sleep_policy = (proto.sleep_policy() == swdv::scheduler_sync_v2::SLEEP_INHIBIT)
+        ? swdv::ifex_scheduler::INHIBIT
+        : swdv::ifex_scheduler::NORMAL;
     job->wake_lead_time_s = proto.wake_lead_time_s();
 
     // Metadata
@@ -787,7 +784,7 @@ grpc::Status SchedulerServer::pause_job(grpc::ServerContext* context,
     LOG(INFO) << "PAUSE JOB REQUEST: " << request->job_id();
 
     try {
-        bool paused = false;
+        bool did_pause = false;
         {
             std::lock_guard<std::mutex> lock(jobs_mutex_);
 
@@ -808,15 +805,21 @@ grpc::Status SchedulerServer::pause_job(grpc::ServerContext* context,
                 return grpc::Status::OK;
             }
 
-            job->status = swdv::ifex_scheduler::PAUSED;
+            if (job->paused) {
+                response->set_success(false);
+                response->set_message("Job is already paused");
+                return grpc::Status::OK;
+            }
+
+            job->paused = true;
             job->updated_at = std::chrono::system_clock::now();
-            paused = true;
+            did_pause = true;
 
             LOG(INFO) << "Paused job " << request->job_id();
         }
 
         // Persist immediately
-        if (paused && !persistence_dir_.empty()) {
+        if (did_pause && !persistence_dir_.empty()) {
             SaveJobs();
         }
 
@@ -838,7 +841,7 @@ grpc::Status SchedulerServer::resume_job(grpc::ServerContext* context,
     LOG(INFO) << "RESUME JOB REQUEST: " << request->job_id();
 
     try {
-        bool resumed = false;
+        bool did_resume = false;
         {
             std::lock_guard<std::mutex> lock(jobs_mutex_);
 
@@ -851,23 +854,22 @@ grpc::Status SchedulerServer::resume_job(grpc::ServerContext* context,
 
             auto& job = it->second;
 
-            // Can only resume PAUSED jobs
-            if (job->status != swdv::ifex_scheduler::PAUSED) {
+            // Can only resume paused jobs
+            if (!job->paused) {
                 response->set_success(false);
-                response->set_message("Can only resume PAUSED jobs, current status: " +
-                                     std::to_string(static_cast<int>(job->status)));
+                response->set_message("Job is not paused");
                 return grpc::Status::OK;
             }
 
-            job->status = swdv::ifex_scheduler::PENDING;
+            job->paused = false;
             job->updated_at = std::chrono::system_clock::now();
-            resumed = true;
+            did_resume = true;
 
             LOG(INFO) << "Resumed job " << request->job_id();
         }
 
         // Persist immediately
-        if (resumed && !persistence_dir_.empty()) {
+        if (did_resume && !persistence_dir_.empty()) {
             SaveJobs();
         }
 
@@ -902,11 +904,10 @@ grpc::Status SchedulerServer::trigger_job(grpc::ServerContext* context,
 
             auto& job = it->second;
 
-            // Can trigger PENDING or PAUSED jobs
-            if (job->status != swdv::ifex_scheduler::PENDING &&
-                job->status != swdv::ifex_scheduler::PAUSED) {
+            // Can trigger PENDING jobs (whether paused or not)
+            if (job->status != swdv::ifex_scheduler::PENDING) {
                 response->set_success(false);
-                response->set_message("Can only trigger PENDING or PAUSED jobs, current status: " +
+                response->set_message("Can only trigger PENDING jobs, current status: " +
                                      std::to_string(static_cast<int>(job->status)));
                 return grpc::Status::OK;
             }
@@ -1085,11 +1086,12 @@ void SchedulerServer::JobExecutor() {
         auto now = std::chrono::system_clock::now();
         std::vector<Job*> jobs_to_execute;
 
-        // Find jobs ready to execute
+        // Find jobs ready to execute (PENDING, not paused, scheduled time has passed)
         {
             std::lock_guard<std::mutex> lock(jobs_mutex_);
             for (auto& [job_id, job] : jobs_) {
                 if (job->status == swdv::ifex_scheduler::PENDING &&
+                    !job->paused &&
                     job->scheduled_time <= now) {
                     jobs_to_execute.push_back(job.get());
                 }
@@ -1269,6 +1271,11 @@ bool SchedulerServer::MatchesFilter(const Job& job,
 
     // Check completed filter
     if (!filter.include_completed() && job.status == swdv::ifex_scheduler::COMPLETED) {
+        return false;
+    }
+
+    // Check paused_only filter
+    if (filter.paused_only() && !job.paused) {
         return false;
     }
 

@@ -1,33 +1,31 @@
 /**
  * @file scheduler_sync_bridge.hpp
- * @brief Bidirectional bridge for Scheduler state sync and cloud commands
+ * @brief Bidirectional bridge for Scheduler state sync (pure state sync model)
  *
- * The SchedulerSyncBridge provides bidirectional communication between
+ * The SchedulerSyncBridge provides bidirectional state synchronization between
  * the vehicle Scheduler service and the cloud:
  *
  * Vehicle-to-Cloud (v2c):
  * - Monitors Scheduler for job state changes
- * - Publishes sync events (created, updated, executed, deleted)
+ * - Publishes V2C_SyncMessage with job state and execution records
  * - Sends heartbeats for liveness detection
  *
  * Cloud-to-Vehicle (c2v):
- * - Receives job management commands from cloud
- * - Executes create, update, delete, pause, resume, trigger operations
- * - Sends acknowledgments back to cloud
+ * - Receives C2V_SyncMessage with cloud job state
+ * - Merges cloud jobs into local Scheduler
+ * - Handles TriggerJobRequest for immediate job execution
  *
  * Design principles:
- * - Delta sync: Only send changes, not full state
- * - Terminal state sync: Sync COMPLETED/FAILED once with result, then forget
- * - Batch execution results: Group multiple job completions
- * - Sequence numbers: Enable gap detection and ordering
- * - State checksum: Verify sync without full resync
- * - Command acknowledgment: Confirm command execution to cloud
+ * - Pure state sync: No imperative commands except TriggerJob
+ * - Bidirectional: Cloud and vehicle each maintain state, sync replicates
+ * - Version vectors: Conflict detection without wall-clock dependency
+ * - Authority-based resolution: Cloud or vehicle wins based on job origin
+ * - Append-only executions: Execution records are facts, never conflict
  */
 
 #pragma once
 
 #include "backend_transport_client.hpp"
-#include "scheduler-command-envelope.pb.h"
 #include "scheduler-sync-v2.pb.h"
 #include "ifex-scheduler-service.grpc.pb.h"
 #include "version_vector.hpp"
@@ -91,17 +89,14 @@ struct SchedulerSyncBridgeConfig {
     std::string state_persistence_path;
 
     // =========================================================================
-    // Cloud Command Settings (c2v)
+    // Cloud Sync Settings (c2v)
     // =========================================================================
 
-    /// Enable receiving and processing cloud commands
-    bool enable_cloud_commands = true;
-
-    /// Send acknowledgments for cloud commands
-    bool send_command_acks = true;
+    /// Enable receiving and processing cloud sync messages
+    bool enable_cloud_sync = true;
 
     /// Timeout for executing scheduler operations (ms)
-    uint32_t command_timeout_ms = 5000;
+    uint32_t operation_timeout_ms = 5000;
 };
 
 /**
@@ -119,23 +114,23 @@ struct SyncedJobState {
 
     // Job status and power management (v2 types)
     swdv::scheduler_sync_v2::JobStatus status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
-    swdv::scheduler_sync_v2::WakePolicy wake_policy = swdv::scheduler_sync_v2::WAKE_POLICY_NO_WAKE;
-    swdv::scheduler_sync_v2::SleepPolicy sleep_policy = swdv::scheduler_sync_v2::SLEEP_POLICY_NORMAL;
+    swdv::scheduler_sync_v2::WakePolicy wake_policy = swdv::scheduler_sync_v2::WAKE_NO_WAKE;
+    swdv::scheduler_sync_v2::SleepPolicy sleep_policy = swdv::scheduler_sync_v2::SLEEP_NORMAL;
     uint32_t wake_lead_time_s = 0;
     uint64_t created_at_ms = 0;
     uint64_t updated_at_ms = 0;
     uint64_t last_synced_sequence = 0;
+    bool paused = false;  // User intent: "don't schedule this job"
 
     // Sync Protocol v2 fields
     sync::VersionVector version;
     swdv::scheduler_sync_v2::JobAuthority authority =
         swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
-    swdv::scheduler_sync_v2::SyncState sync_state =
-        swdv::scheduler_sync_v2::SYNC_STATE_PENDING;
     bool deleted = false;
     uint64_t deleted_at_ms = 0;
     uint64_t scheduled_time_ms = 0;
     uint64_t end_time_ms = 0;
+    bool needs_sync = false;  // Local tracking: needs to be sent to remote
 
     /// Compute hash for change detection
     uint64_t ComputeHash() const;
@@ -171,40 +166,39 @@ struct SchedulerSyncStats {
     bool is_initialized = false;
     bool is_connected = false;
 
-    // c2v command stats
-    uint64_t commands_received = 0;
-    uint64_t commands_succeeded = 0;
-    uint64_t commands_failed = 0;
-    uint64_t commands_create = 0;
-    uint64_t commands_update = 0;
-    uint64_t commands_delete = 0;
-    uint64_t commands_pause = 0;
-    uint64_t commands_resume = 0;
-    uint64_t commands_trigger = 0;
-    uint64_t command_acks_sent = 0;
+    // c2v sync stats
+    uint64_t syncs_received = 0;
+    uint64_t jobs_created_from_cloud = 0;
+    uint64_t jobs_updated_from_cloud = 0;
+    uint64_t jobs_deleted_from_cloud = 0;
+    uint64_t jobs_rejected = 0;  // Jobs from cloud that couldn't be created
+    uint64_t trigger_requests_received = 0;
+    uint64_t trigger_requests_succeeded = 0;
+    uint64_t trigger_requests_failed = 0;
+    uint64_t sync_acks_sent = 0;
 };
 
 /**
- * @brief Bidirectional bridge for Scheduler state sync and cloud commands
+ * @brief Bidirectional bridge for Scheduler state sync (pure state sync model)
  *
- * v2c Lifecycle (sync to cloud):
+ * v2c Lifecycle (vehicle → cloud):
  * 1. Start() - begins initialization phase
  * 2. After initialization_delay_ms, captures initial state
- * 3. Publishes FULL_SYNC event with all active jobs
+ * 3. Publishes V2C_SyncMessage with all active jobs
  * 4. Polls Scheduler at poll_interval_ms
- * 5. Publishes delta events for job changes
- * 6. Publishes JOB_EXECUTED for completed/failed jobs
+ * 5. Publishes delta V2C_SyncMessage for job changes
+ * 6. Includes ExecutionRecords for completed/failed jobs
  *
- * c2v Lifecycle (commands from cloud):
+ * c2v Lifecycle (cloud → vehicle):
  * 1. Subscribes to Backend Transport on_content callback
- * 2. Decodes scheduler_command_t messages
- * 3. Executes commands via Scheduler gRPC (create, update, delete, etc.)
- * 4. Publishes scheduler_command_ack_t with result
+ * 2. Decodes C2V_SyncMessage with cloud job state
+ * 3. Merges cloud jobs into local Scheduler via gRPC
+ * 4. Handles TriggerJobRequest for immediate execution
+ * 5. Sends SyncAck to confirm receipt
  *
  * Thread model:
  * - Poll thread: queries Scheduler for state changes (v2c)
  * - Batch thread: batches and sends sync events (v2c)
- * - Command workers: process cloud commands asynchronously (c2v)
  */
 class SchedulerSyncBridge {
 public:
@@ -357,45 +351,34 @@ private:
         swdv::ifex_scheduler::sleep_policy_t policy);
 
     // =========================================================================
-    // Cloud Command Handling (c2v)
+    // Cloud Sync Handling (c2v)
     // =========================================================================
 
-    /// Handle incoming cloud command (called from on_content callback)
-    void HandleCloudCommand(const std::vector<uint8_t>& payload);
+    /// Handle incoming cloud message (called from on_content callback)
+    void HandleCloudMessage(const std::vector<uint8_t>& payload);
 
-    /// Process a decoded command (forwards to Scheduler via gRPC)
-    void ProcessCommand(const swdv::scheduler_command_envelope::scheduler_command_t& command);
-
-    /// Command result for internal use
-    struct CommandResult {
+    /// Operation result for internal use
+    struct OperationResult {
         bool success = false;
         std::string job_id;
         std::string error_message;
     };
 
-    /// Execute create job command
-    CommandResult ExecuteCreateJob(
-        const swdv::scheduler_command_envelope::job_definition_t& def);
+    /// Create a job in the local Scheduler from cloud sync
+    OperationResult CreateJobFromCloud(const swdv::scheduler_sync_v2::JobRecord& job);
 
-    /// Execute update job command
-    CommandResult ExecuteUpdateJob(
-        const swdv::scheduler_command_envelope::job_update_t& update);
+    /// Update a job in the local Scheduler from cloud sync
+    OperationResult UpdateJobFromCloud(const swdv::scheduler_sync_v2::JobRecord& job);
 
-    /// Execute delete job command
-    CommandResult ExecuteDeleteJob(const std::string& job_id);
+    /// Delete a job from the local Scheduler
+    OperationResult DeleteJobFromScheduler(const std::string& job_id);
 
-    /// Execute pause job command (sets job status to paused)
-    CommandResult ExecutePauseJob(const std::string& job_id);
+    /// Handle TriggerJobRequest (the only imperative command)
+    void HandleTriggerJobRequest(const swdv::scheduler_sync_v2::TriggerJobRequest& request);
 
-    /// Execute resume job command (resumes paused job)
-    CommandResult ExecuteResumeJob(const std::string& job_id);
-
-    /// Execute trigger job command (immediate execution)
-    CommandResult ExecuteTriggerJob(const std::string& job_id);
-
-    /// Send command acknowledgment to cloud
-    void SendCommandAck(const std::string& command_id, bool success,
-                       const std::string& error_message, const std::string& job_id);
+    /// Send TriggerJobResponse to cloud
+    void SendTriggerJobResponse(const std::string& job_id, bool accepted,
+                                const std::string& error_message);
 
     // =========================================================================
     // Sync Protocol v2 Methods
@@ -417,10 +400,8 @@ private:
     /// Process a single job from cloud using sync engine
     void ProcessCloudJob(const swdv::scheduler_sync_v2::JobRecord& remote_job);
 
-    /// Send sync acknowledgment
-    void SendSyncAck(const std::string& sync_id, bool success,
-                    const std::vector<swdv::scheduler_sync_v2::ConflictResolution>& conflicts,
-                    const std::string& error_message = "");
+    /// Compute state checksum for quiescence detection (xxHash64)
+    uint64_t ComputeStateChecksumXxHash() const;
 
     /// Record an execution (for sending to cloud)
     void RecordExecution(const std::string& job_id,

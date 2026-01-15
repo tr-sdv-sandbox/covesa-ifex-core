@@ -1,104 +1,135 @@
 // Cloud Scheduler Service - Fleet-wide job scheduling
 // Provides gRPC API for creating and managing scheduled jobs on vehicles
+//
+// Aligned with scheduler-sync-protocol-v2.md specification.
+
 syntax = "proto3";
 
 package ifex.cloud.scheduler;
 
-// === Job Status (extended for cloud) ===
+import "scheduler-sync-v2.proto";
 
-enum CloudJobStatus {
-    CLOUD_JOB_UNKNOWN = 0;
-    CLOUD_JOB_PENDING = 1;          // Job created, waiting to run
-    CLOUD_JOB_SCHEDULED = 2;        // Job scheduled on vehicle
-    CLOUD_JOB_RUNNING = 3;          // Currently executing
-    CLOUD_JOB_COMPLETED = 4;        // Finished successfully
-    CLOUD_JOB_FAILED = 5;           // Execution failed
-    CLOUD_JOB_CANCELLED = 6;        // Job cancelled
-    CLOUD_JOB_PAUSED = 7;           // Temporarily paused
+// =============================================================================
+// Cloud-specific types
+// =============================================================================
+
+// Sync state for UI display (derived from version comparison).
+// This is NOT transmitted in the sync protocol - it's computed by cloud.
+enum CloudSyncState {
+    CLOUD_SYNC_PENDING = 0;     // Cloud version differs from last confirmed vehicle version
+    CLOUD_SYNC_SYNCED = 1;      // Cloud and vehicle versions match
 }
 
-// === Sync State (cloud-vehicle reconciliation) ===
-//
-// Tracks the synchronization lifecycle between cloud and vehicle.
-// This is separate from CloudJobStatus which tracks execution state.
-//
-// State machine:
-//   PENDING_SYNC ─── vehicle confirms ───► SYNCED
-//        │                                    │
-//        │ vehicle fails                      │ vehicle deletes/fails
-//        ▼                                    ▼
-//   SYNC_FAILED                          OUT_OF_SYNC
-//
-enum SyncState {
-    SYNC_STATE_UNKNOWN = 0;
-    SYNC_STATE_PENDING = 1;         // Command sent, waiting for vehicle to confirm
-    SYNC_STATE_SYNCED = 2;          // Vehicle confirmed job exists (steady state)
-    SYNC_STATE_FAILED = 3;          // Vehicle failed to create/update job
-    SYNC_STATE_OUT_OF_SYNC = 4;     // Cloud and vehicle state diverged
-}
-
-// === Job Info ===
+// =============================================================================
+// Job Info (for API responses)
+// =============================================================================
 
 message JobInfo {
+    // --- Cloud context ---
     string vehicle_id = 1;
     string fleet_id = 2;
     string region = 3;
+
+    // --- Identity (from sync protocol) ---
     string job_id = 4;
-    string title = 5;
-    string service = 6;
-    string method = 7;
-    string parameters_json = 8;
-    CloudJobStatus status = 9;
-    uint64 scheduled_time_ms = 10;     // Epoch milliseconds UTC
-    string recurrence_rule = 11;       // iCal RRULE format
-    uint64 next_run_time_ms = 12;      // Epoch milliseconds UTC
-    uint64 created_at_ms = 13;
-    uint64 updated_at_ms = 14;
-    string created_by = 15;            // Who created this job
+    swdv.scheduler_sync_v2.JobAuthority authority = 5;
+
+    // --- Version (from sync protocol) ---
+    uint64 cloud_seq = 6;
+    uint64 vehicle_seq = 7;
+    CloudSyncState sync_state = 8;      // Derived for UI display
+
+    // --- Lifecycle ---
+    bool deleted = 9;
+
+    // --- Content ---
+    string title = 10;
+    string service = 11;
+    string method = 12;
+    string parameters_json = 13;
+    uint64 scheduled_time_ms = 14;      // Epoch milliseconds UTC
+    string recurrence_rule = 15;        // iCal RRULE format
+    uint64 end_time_ms = 16;            // When to stop recurring (epoch ms UTC)
+    bool paused = 17;                   // User intent: "don't schedule this job"
+    swdv.scheduler_sync_v2.WakePolicy wake_policy = 18;
+    swdv.scheduler_sync_v2.SleepPolicy sleep_policy = 19;
+    uint32 wake_lead_time_s = 20;
+
+    // --- Execution state (vehicle-authoritative) ---
+    swdv.scheduler_sync_v2.JobStatus status = 25;
+    uint64 next_run_time_ms = 26;       // Epoch milliseconds UTC
+    uint64 last_executed_ms = 27;
+
+    // --- Metadata ---
+    uint64 created_at_ms = 30;
+    uint64 updated_at_ms = 31;
+    string created_by = 32;
 }
 
-// === Execution Info ===
+// =============================================================================
+// Execution Info
+// =============================================================================
 
 message ExecutionInfo {
     string execution_id = 1;
-    CloudJobStatus status = 2;
+    swdv.scheduler_sync_v2.JobStatus status = 2;
     uint64 executed_at_ms = 3;
-    uint32 duration_ms = 4;
+    uint64 duration_ms = 4;
     string result_json = 5;
     string error_message = 6;
-    uint64 next_run_time_ms = 7;       // Epoch milliseconds UTC
+    uint64 next_run_time_ms = 7;        // Epoch milliseconds UTC
 }
 
-// === Create Job ===
+// =============================================================================
+// Create Job
+// =============================================================================
 
 message CreateJobRequest {
     string vehicle_id = 1;
-    string title = 2;                  // Human-readable title
-    string service = 3;                // Target service name
-    string method = 4;                 // Method to invoke
-    string parameters_json = 5;        // JSON-encoded parameters
-    uint64 scheduled_time_ms = 6;      // When to first run (epoch ms UTC)
-    string recurrence_rule = 7;        // Optional: cron/iCal RRULE for recurring
-    uint64 end_time_ms = 8;            // Optional: when to stop recurring (epoch ms UTC)
-    string created_by = 9;             // Who is creating this job
+    string title = 2;                   // Human-readable title
+    string service = 3;                 // Target service name
+    string method = 4;                  // Method to invoke
+    string parameters_json = 5;         // JSON-encoded parameters
+    uint64 scheduled_time_ms = 6;       // When to first run (epoch ms UTC)
+    string recurrence_rule = 7;         // Optional: iCal RRULE for recurring
+    uint64 end_time_ms = 8;             // Optional: when to stop recurring (epoch ms UTC)
+    string created_by = 9;              // Who is creating this job
+    bool paused = 10;                   // Optional: create in paused state
+    swdv.scheduler_sync_v2.WakePolicy wake_policy = 11;
+    swdv.scheduler_sync_v2.SleepPolicy sleep_policy = 12;
+    uint32 wake_lead_time_s = 13;
 }
 
 message CreateJobResponse {
     bool success = 1;
-    string job_id = 2;                 // Cloud-generated job ID
+    string job_id = 2;                  // Cloud-generated job ID (cloud-<uuid>)
     string error_message = 3;
 }
 
-// === Update Job ===
+// =============================================================================
+// Update Job
+// =============================================================================
 
 message UpdateJobRequest {
     string vehicle_id = 1;
     string job_id = 2;
-    string title = 3;                  // Empty = no change
-    uint64 scheduled_time_ms = 4;      // 0 = no change (epoch ms UTC)
-    string recurrence_rule = 5;        // Empty = no change
-    string parameters_json = 6;        // Empty = no change
-    uint64 end_time_ms = 7;            // 0 = no change (epoch ms UTC)
+
+    // All fields optional - empty/zero means no change
+    string title = 3;
+    uint64 scheduled_time_ms = 4;       // 0 = no change (epoch ms UTC)
+    string recurrence_rule = 5;
+    string parameters_json = 6;
+    uint64 end_time_ms = 7;             // 0 = no change (epoch ms UTC)
+
+    // Explicit flags for optional fields that can be set to zero/false
+    bool has_paused = 10;
+    bool paused = 11;
+    bool has_wake_policy = 12;
+    swdv.scheduler_sync_v2.WakePolicy wake_policy = 13;
+    bool has_sleep_policy = 14;
+    swdv.scheduler_sync_v2.SleepPolicy sleep_policy = 15;
+    bool has_wake_lead_time = 16;
+    uint32 wake_lead_time_s = 17;
 }
 
 message UpdateJobResponse {
@@ -106,7 +137,9 @@ message UpdateJobResponse {
     string error_message = 2;
 }
 
-// === Delete Job ===
+// =============================================================================
+// Delete Job
+// =============================================================================
 
 message DeleteJobRequest {
     string vehicle_id = 1;
@@ -118,7 +151,9 @@ message DeleteJobResponse {
     string error_message = 2;
 }
 
-// === Pause/Resume Job ===
+// =============================================================================
+// Pause/Resume Job
+// =============================================================================
 
 message PauseJobRequest {
     string vehicle_id = 1;
@@ -140,7 +175,9 @@ message ResumeJobResponse {
     string error_message = 2;
 }
 
-// === Trigger Job (immediate execution) ===
+// =============================================================================
+// Trigger Job (immediate execution)
+// =============================================================================
 
 message TriggerJobRequest {
     string vehicle_id = 1;
@@ -152,7 +189,9 @@ message TriggerJobResponse {
     string error_message = 2;
 }
 
-// === Get Job ===
+// =============================================================================
+// Get Job
+// =============================================================================
 
 message GetJobRequest {
     string vehicle_id = 1;
@@ -164,18 +203,25 @@ message GetJobResponse {
     JobInfo job = 2;
 }
 
-// === List Jobs ===
+// =============================================================================
+// List Jobs
+// =============================================================================
 
 message ListJobsRequest {
-    string vehicle_id_filter = 1;      // Optional
-    string fleet_id_filter = 2;        // Optional
-    string region_filter = 3;          // Optional
-    string service_filter = 4;         // Optional
-    CloudJobStatus status_filter = 5;  // Optional (0 = all)
-    string created_by_filter = 6;      // Optional
-    bool recurring_only = 7;           // Only recurring jobs
-    int32 page_size = 10;
-    string page_token = 11;
+    // Filters (all optional)
+    string vehicle_id_filter = 1;
+    string fleet_id_filter = 2;
+    string region_filter = 3;
+    string service_filter = 4;
+    swdv.scheduler_sync_v2.JobStatus status_filter = 5;  // 0 = all (PENDING)
+    string created_by_filter = 6;
+    bool recurring_only = 7;
+    bool paused_only = 8;
+    bool include_deleted = 9;           // Include tombstones
+
+    // Pagination
+    int32 page_size = 20;
+    string page_token = 21;
 }
 
 message ListJobsResponse {
@@ -184,13 +230,15 @@ message ListJobsResponse {
     int32 total_count = 3;
 }
 
-// === Get Job Executions ===
+// =============================================================================
+// Get Job Executions
+// =============================================================================
 
 message GetJobExecutionsRequest {
     string vehicle_id = 1;
     string job_id = 2;
-    int32 limit = 3;                   // Default: 100
-    uint64 since_ms = 4;               // Optional: only executions after this time
+    int32 limit = 3;                    // Default: 100
+    uint64 since_ms = 4;                // Optional: only executions after this time
 }
 
 message GetJobExecutionsResponse {
@@ -200,21 +248,30 @@ message GetJobExecutionsResponse {
     int32 total_count = 4;
 }
 
-// === Create Fleet Job (same job on multiple vehicles) ===
+// =============================================================================
+// Create Fleet Job (same job on multiple vehicles)
+// =============================================================================
 
 message CreateFleetJobRequest {
-    repeated string vehicle_ids = 1;   // Explicit list of vehicles
-    string fleet_id = 2;               // OR all vehicles in fleet
-    string region = 3;                 // OR all vehicles in region
-    string service_filter = 4;         // OR only vehicles with this service
+    // Target selection (one of these)
+    repeated string vehicle_ids = 1;    // Explicit list of vehicles
+    string fleet_id = 2;                // OR all vehicles in fleet
+    string region = 3;                  // OR all vehicles in region
+    string service_filter = 4;          // OR only vehicles with this service
+
+    // Job definition
     string title = 5;
     string service = 6;
     string method = 7;
     string parameters_json = 8;
-    uint64 scheduled_time_ms = 9;      // Epoch milliseconds UTC
+    uint64 scheduled_time_ms = 9;       // Epoch milliseconds UTC
     string recurrence_rule = 10;
-    uint64 end_time_ms = 11;           // Epoch milliseconds UTC
+    uint64 end_time_ms = 11;            // Epoch milliseconds UTC
     string created_by = 12;
+    bool paused = 13;
+    swdv.scheduler_sync_v2.WakePolicy wake_policy = 14;
+    swdv.scheduler_sync_v2.SleepPolicy sleep_policy = 15;
+    uint32 wake_lead_time_s = 16;
 }
 
 message FleetJobResult {
@@ -229,14 +286,16 @@ message CreateFleetJobResponse {
     int32 successful = 2;
     int32 failed = 3;
     repeated FleetJobResult results = 4;
-    string fleet_job_id = 5;           // ID to track the fleet operation
+    string fleet_job_id = 5;            // ID to track the fleet operation
 }
 
-// === Delete Fleet Job ===
+// =============================================================================
+// Delete Fleet Job
+// =============================================================================
 
 message DeleteFleetJobRequest {
     repeated string vehicle_ids = 1;
-    repeated string job_ids = 2;       // Delete these jobs from all specified vehicles
+    repeated string job_ids = 2;        // Delete these jobs from all specified vehicles
 }
 
 message DeleteFleetJobResponse {
@@ -245,7 +304,9 @@ message DeleteFleetJobResponse {
     int32 failed = 3;
 }
 
-// === Get Fleet Job Stats ===
+// =============================================================================
+// Get Fleet Job Stats
+// =============================================================================
 
 message GetFleetJobStatsRequest {
     string fleet_id_filter = 1;
@@ -261,6 +322,7 @@ message JobStats {
     int32 completed = 6;
     int32 failed = 7;
     int32 recurring = 8;
+    int32 paused = 9;                   // Jobs with paused=true
 }
 
 message GetFleetJobStatsResponse {
@@ -271,7 +333,9 @@ message GetFleetJobStatsResponse {
     map<string, int32> by_region = 5;
 }
 
-// === gRPC Service Definition ===
+// =============================================================================
+// gRPC Service Definition
+// =============================================================================
 
 service CloudSchedulerService {
     // Single vehicle operations

@@ -44,7 +44,7 @@ struct Job {
 
     // Wake/Sleep policies
     swdv::ifex_scheduler::wake_policy_t wake_policy = swdv::ifex_scheduler::NO_WAKE;
-    swdv::ifex_scheduler::sleep_policy_t sleep_policy = swdv::ifex_scheduler::SLEEP_NORMAL;
+    swdv::ifex_scheduler::sleep_policy_t sleep_policy = swdv::ifex_scheduler::NORMAL;
     uint32_t wake_lead_time_s = 0;
 
     // Timestamps
@@ -54,6 +54,9 @@ struct Job {
     std::optional<std::string> error_message;
     std::optional<std::string> result;  // Response from service call
 
+    // User intent: paused jobs should not be scheduled
+    bool paused = false;
+
     // --- Sync Protocol v2 fields ---
     // Version vector for conflict detection (see docs/scheduler-sync-protocol-v2.md)
     sync::VersionVector version;
@@ -62,9 +65,8 @@ struct Job {
     swdv::scheduler_sync_v2::JobAuthority authority =
         swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
 
-    // Current sync state
-    swdv::scheduler_sync_v2::SyncState sync_state =
-        swdv::scheduler_sync_v2::SYNC_STATE_PENDING;
+    // Local tracking: job needs to be synced
+    bool needs_sync = false;
 
     // Soft delete flag (tombstone for sync)
     bool deleted = false;
@@ -90,7 +92,7 @@ struct Job {
     void IncrementVersion() {
         version.increment_vehicle();
         updated_at = std::chrono::system_clock::now();
-        sync_state = swdv::scheduler_sync_v2::SYNC_STATE_PENDING;
+        needs_sync = true;
     }
 };
 

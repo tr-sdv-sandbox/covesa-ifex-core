@@ -518,7 +518,7 @@ grpc::Status CloudBackendTransportServer::subscribe(
     }
 
     // Block until client disconnects
-    while (!context->IsCancelled()) {
+    while (running_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -542,7 +542,7 @@ grpc::Status CloudBackendTransportServer::subscribe(
         ack_streams_.push_back(writer);
     }
 
-    while (!context->IsCancelled()) {
+    while (running_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -566,7 +566,7 @@ grpc::Status CloudBackendTransportServer::subscribe(
         status_streams_.push_back(writer);
     }
 
-    while (!context->IsCancelled()) {
+    while (running_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -590,7 +590,7 @@ grpc::Status CloudBackendTransportServer::subscribe(
         queue_streams_.push_back(writer);
     }
 
-    while (!context->IsCancelled()) {
+    while (running_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 

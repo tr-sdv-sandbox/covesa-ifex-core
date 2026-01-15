@@ -541,8 +541,8 @@ TEST_F(SchedulerIntegrationTest, PauseJob) {
 
         status = get_stub->get_job(&get_context, get_request, &get_response);
         ASSERT_TRUE(status.ok() && get_response.success());
-        EXPECT_EQ(get_response.job().status(), swdv::ifex_scheduler::PAUSED)
-            << "Job should be PAUSED after pause_job call";
+        EXPECT_TRUE(get_response.job().paused())
+            << "Job should be paused after pause_job call";
     }
 }
 
@@ -843,10 +843,21 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
         return resp.job().status();
     };
 
-    // Step 1: Initial status should be PENDING
-    EXPECT_EQ(get_status(), swdv::ifex_scheduler::PENDING) << "Initial status should be PENDING";
+    // Helper to get paused state
+    auto get_paused = [&]() -> bool {
+        swdv::ifex_scheduler::get_job_request req;
+        req.set_job_id(job_id);
+        swdv::ifex_scheduler::get_job_response resp;
+        grpc::ClientContext ctx;
+        get_stub->get_job(&ctx, req, &resp);
+        return resp.job().paused();
+    };
 
-    // Step 2: Pause -> PAUSED
+    // Step 1: Initial status should be PENDING and not paused
+    EXPECT_EQ(get_status(), swdv::ifex_scheduler::PENDING) << "Initial status should be PENDING";
+    EXPECT_FALSE(get_paused()) << "Initial job should not be paused";
+
+    // Step 2: Pause -> paused=true (status unchanged)
     {
         swdv::ifex_scheduler::pause_job_request req;
         req.set_job_id(job_id);
@@ -855,9 +866,9 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
         status = pause_stub->pause_job(&ctx, req, &resp);
         ASSERT_TRUE(status.ok() && resp.success());
     }
-    EXPECT_EQ(get_status(), swdv::ifex_scheduler::PAUSED) << "Status should be PAUSED after pause";
+    EXPECT_TRUE(get_paused()) << "Job should be paused after pause";
 
-    // Step 3: Resume -> PENDING
+    // Step 3: Resume -> paused=false
     {
         swdv::ifex_scheduler::resume_job_request req;
         req.set_job_id(job_id);
@@ -866,9 +877,9 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
         status = resume_stub->resume_job(&ctx, req, &resp);
         ASSERT_TRUE(status.ok() && resp.success());
     }
-    EXPECT_EQ(get_status(), swdv::ifex_scheduler::PENDING) << "Status should be PENDING after resume";
+    EXPECT_FALSE(get_paused()) << "Job should not be paused after resume";
 
-    // Step 4: Pause again -> PAUSED
+    // Step 4: Pause again -> paused=true
     {
         swdv::ifex_scheduler::pause_job_request req;
         req.set_job_id(job_id);
@@ -877,7 +888,7 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
         status = pause_stub->pause_job(&ctx, req, &resp);
         ASSERT_TRUE(status.ok() && resp.success());
     }
-    EXPECT_EQ(get_status(), swdv::ifex_scheduler::PAUSED) << "Status should be PAUSED after second pause";
+    EXPECT_TRUE(get_paused()) << "Job should be paused after second pause";
 
     // Step 5: Trigger -> COMPLETED or FAILED
     {

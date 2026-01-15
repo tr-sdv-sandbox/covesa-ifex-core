@@ -587,7 +587,7 @@ TEST_F(SchedulerSyncBridgeIntegrationTest, FullSyncOnStartup) {
     const auto& first_msg = messages[0];
     EXPECT_EQ(first_msg.vehicle_id(), vehicle_id_);
     EXPECT_FALSE(first_msg.bridge_instance_id().empty());
-    EXPECT_FALSE(first_msg.sync_id().empty()) << "Should have sync_id";
+    EXPECT_GT(first_msg.state_checksum(), 0u) << "Should have state_checksum";
     EXPECT_GT(first_msg.sync_timestamp_ms(), 0) << "Should have timestamp";
 
     // Full sync includes all jobs - check that our job is present

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "cloud-scheduler-service.grpc.pb.h"
-#include "scheduler-command-envelope.pb.h"
 #include "scheduler-sync-v2.pb.h"
 #include "cloud_backend_transport_client.hpp"
 #include "version_vector.hpp"
@@ -132,16 +131,17 @@ private:
     /// Generate a unique job ID
     std::string GenerateJobId();
 
-    /// Generate a unique command ID
-    std::string GenerateCommandId();
-
-    /// Send a scheduler command to a vehicle
-    bool SendCommand(const std::string& vehicle_id,
-                     const swdv::scheduler_command_envelope::scheduler_command_t& command);
-
     /// Handle incoming sync message from vehicle
     void HandleSyncMessage(const std::string& vehicle_id,
                            const std::vector<uint8_t>& payload);
+
+    /// Send C2V_SyncMessage with pending jobs to a vehicle
+    void SendPendingJobsToVehicle(const std::string& vehicle_id);
+
+    /// Send TriggerJobRequest to a vehicle (the only imperative command)
+    bool SendTriggerJobRequest(const std::string& vehicle_id,
+                               const std::string& job_id,
+                               const std::string& requester_id);
 
     /// Convert ISO8601 string to epoch milliseconds
     static uint64_t Iso8601ToEpochMs(const std::string& iso_str);
@@ -163,13 +163,11 @@ private:
     // Sync v2: version vectors per job (vehicle_id -> job_id -> version)
     std::map<std::string, std::map<std::string, sync::VersionVector>> job_versions_;
 
-    // Sync v2: sync state per job
-    std::map<std::string, std::map<std::string, swdv::scheduler_sync_v2::SyncState>> job_sync_states_;
+    // Sync v2: sync state per job (for UI display - NOT transmitted in protocol)
+    std::map<std::string, std::map<std::string, ::ifex::cloud::scheduler::CloudSyncState>> job_sync_states_;
 
     std::atomic<bool> running_{false};
     std::atomic<uint64_t> job_counter_{0};
-    std::atomic<uint64_t> command_counter_{0};
-    std::atomic<uint64_t> sync_id_counter_{0};
 
     // =========================================================================
     // Sync Protocol v2 Methods
@@ -190,14 +188,12 @@ private:
     /// Send C2V_SyncMessage to vehicle with pending changes
     void SendV2SyncMessage(const std::string& vehicle_id);
 
-    /// Send sync acknowledgment
-    void SendSyncAck(const std::string& vehicle_id,
-                    const std::string& sync_id,
-                    bool success,
-                    const std::string& error_message = "");
+    /// Compute state checksum for a vehicle's jobs (for quiescence detection)
+    /// Uses CRC32 combining of individual job hashes for deterministic ordering
+    uint64_t ComputeStateChecksum(const std::string& vehicle_id) const;
 
-    /// Generate unique sync ID
-    std::string GenerateSyncId();
+    /// Compute hash for a single job (content fields only, excludes metadata)
+    static uint64_t ComputeJobHash(const ::ifex::cloud::scheduler::JobInfo& job);
 
     /// Convert JobInfo to v2 JobRecord
     void JobInfoToRecord(const ::ifex::cloud::scheduler::JobInfo& job,

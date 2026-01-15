@@ -196,6 +196,9 @@ private:
     std::unique_ptr<MqttClient> mqtt_client_;
     std::unique_ptr<MessageQueueManager> queue_manager_;
 
+    // Lifecycle state
+    std::atomic<bool> stopped_{false};
+
     // Connection state
     std::atomic<bool> connected_{false};
     swdv::backend_transport_service::disconnect_reason_t disconnect_reason_ =

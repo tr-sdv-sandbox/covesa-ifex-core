@@ -15,36 +15,19 @@
 namespace ifex::sync {
 
 // Source authority for a job - set at creation, immutable thereafter.
+// Values match proto: AUTHORITY_CLOUD=0, AUTHORITY_VEHICLE=1
 enum class JobAuthority {
-    UNKNOWN = 0,
-    CLOUD = 1,      // Job created by cloud - cloud wins conflicts
-    VEHICLE = 2     // Job created by vehicle/phone - vehicle wins conflicts
+    CLOUD = 0,      // Job created by cloud - cloud wins conflicts
+    VEHICLE = 1     // Job created by vehicle/phone - vehicle wins conflicts
 };
 
-// Sync state of a job record
-enum class SyncState {
-    UNKNOWN = 0,
-    PENDING = 1,    // Change made locally, not yet confirmed by remote
-    SYNCED = 2,     // Both sides agree on version (steady state)
-    CONFLICT = 3    // Conflict detected, resolution in progress
-};
-
-// String conversions
+// String conversion for JobAuthority
 inline const char* authority_to_string(JobAuthority auth) {
     switch (auth) {
         case JobAuthority::CLOUD: return "CLOUD";
         case JobAuthority::VEHICLE: return "VEHICLE";
-        default: return "UNKNOWN";
     }
-}
-
-inline const char* sync_state_to_string(SyncState state) {
-    switch (state) {
-        case SyncState::PENDING: return "PENDING";
-        case SyncState::SYNCED: return "SYNCED";
-        case SyncState::CONFLICT: return "CONFLICT";
-        default: return "UNKNOWN";
-    }
+    return "CLOUD";  // Default (CLOUD=0)
 }
 
 // Result of processing a sync operation

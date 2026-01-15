@@ -93,6 +93,12 @@ bool BackendTransportServer::Start() {
 }
 
 void BackendTransportServer::Stop() {
+    // Idempotent: only stop once
+    bool expected = false;
+    if (!stopped_.compare_exchange_strong(expected, true)) {
+        return;  // Already stopped
+    }
+
     LOG(INFO) << "Stopping Backend Transport Service...";
 
     // Stop queue manager (persists messages)
@@ -266,8 +272,8 @@ grpc::Status BackendTransportServer::subscribe(
     // Deliver any queued messages that arrived before handler registered
     DeliverQueuedC2v(content_id, writer);
 
-    // Keep stream open until client disconnects
-    while (!context->IsCancelled()) {
+    // Keep stream open until client disconnects or service stops
+    while (!stopped_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -294,8 +300,8 @@ grpc::Status BackendTransportServer::subscribe(
 
     AddAckStream(writer, content_id);
 
-    // Keep stream open until client disconnects
-    while (!context->IsCancelled()) {
+    // Keep stream open until client disconnects or service stops
+    while (!stopped_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -322,8 +328,8 @@ grpc::Status BackendTransportServer::subscribe(
     status->set_timestamp_ms(last_status_change_ms_.load());
     writer->Write(event);
 
-    // Keep stream open until client disconnects
-    while (!context->IsCancelled()) {
+    // Keep stream open until client disconnects or service stops
+    while (!stopped_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -342,8 +348,8 @@ grpc::Status BackendTransportServer::subscribe(
 
     AddQueueStream(writer);
 
-    // Keep stream open until client disconnects
-    while (!context->IsCancelled()) {
+    // Keep stream open until client disconnects or service stops
+    while (!stopped_.load() && !context->IsCancelled()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
