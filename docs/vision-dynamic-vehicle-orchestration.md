@@ -555,4 +555,3 @@ Cloud services can be discovered and called through the same mechanism.
 - [Core Services Specification](core-services-spec.md) - Technical details of infrastructure services
 - [Orchestrator Service Design](orchestrator-service-design.md) - Workflow engine specification
 - [IFEX Service Architecture](ifex-service-architecture.md) - How to design and implement services
-- [Intelligent Vehicle Orchestration](intelligent-vehicle-orchestration-spec.md) - AI/LLM integration

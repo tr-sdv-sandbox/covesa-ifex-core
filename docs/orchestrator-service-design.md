@@ -4,6 +4,8 @@
 
 The Orchestrator is the fourth core infrastructure service, responsible for executing multi-step workflows. It sits between Scheduler (timing) and Dispatcher (execution), managing the coordination logic.
 
+**Default Port:** `50054`
+
 ```
 Scheduler → Orchestrator → Dispatcher → Services
   (when)      (what)         (how)       (do)

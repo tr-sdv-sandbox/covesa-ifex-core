@@ -104,7 +104,7 @@ service_info_t:
           input_parameters: [...]
           output_parameters: [...]
   ifex_schema: string             # Full IFEX YAML (optional)
-  last_heartbeat: uint64          # Unix timestamp
+  last_heartbeat_ms: uint64       # Epoch milliseconds
 
 service_filter_t:
   name_pattern: string            # Glob pattern

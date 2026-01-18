@@ -31,10 +31,10 @@ message rpc_request_t {
     string method_name = 3;           // Target method
     string parameters_json = 4;       // Method parameters as JSON
     uint32 timeout_ms = 5;            // Request timeout
-    sint64 request_timestamp_ns = 6;  // Cloud timestamp
+    sint64 request_timestamp_ms = 6;  // Cloud timestamp (epoch ms)
 
     // Improvements (new fields)
-    uint64 expires_at_ns = 10;        // Absolute expiration
+    uint64 expires_at_ms = 10;        // Absolute expiration (epoch ms)
     string idempotency_key = 11;      // For exactly-once semantics
     rpc_priority_t priority = 12;     // Execution priority
     string trace_id = 13;             // Distributed tracing
@@ -58,7 +58,7 @@ message rpc_response_t {
     string error_message = 4;         // Error details if failed
     uint32 duration_ms = 5;           // Actual execution time
     string service_endpoint = 6;      // Service address used
-    sint64 response_timestamp_ns = 7; // Vehicle timestamp
+    sint64 response_timestamp_ms = 7; // Vehicle timestamp (epoch ms)
 }
 
 enum rpc_status_t {
@@ -230,8 +230,8 @@ CREATE TABLE rpc_requests (
     trace_id VARCHAR(64),
 
     -- Timing
-    request_timestamp_ns BIGINT,
-    expires_at_ns BIGINT,
+    request_timestamp_ms BIGINT,
+    expires_at_ms BIGINT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
 
     -- Response
@@ -264,11 +264,11 @@ CREATE INDEX idx_rpc_idempotency ON rpc_requests(idempotency_key)
 
 ```cpp
 // Cloud sets absolute expiration
-request.set_expires_at_ns(now_ns + timeout_ms * 1000000);
+request.set_expires_at_ms(now_ms + timeout_ms);
 
 // Vehicle checks against own clock
 void HandleRequest(const rpc_request_t& req) {
-    if (req.expires_at_ns() > 0 && NowNs() > req.expires_at_ns()) {
+    if (req.expires_at_ms() > 0 && NowMs() > req.expires_at_ms()) {
         SendResponse(req.correlation_id(), EXPIRED,
                     "", "Request expired", 0);
         return;
@@ -308,7 +308,7 @@ Track whether vehicle received and acknowledged request.
 message rpc_ack_t {
     string correlation_id = 1;
     rpc_ack_type_t type = 2;
-    uint64 timestamp_ns = 3;
+    uint64 timestamp_ms = 3;
 }
 
 enum rpc_ack_type_t {

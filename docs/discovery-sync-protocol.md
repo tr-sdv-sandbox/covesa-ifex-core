@@ -1,5 +1,8 @@
 # Discovery Sync Protocol Specification
 
+**Version:** 1.0
+**Date:** 2026-01-18
+
 ## Overview
 
 The Discovery Sync Protocol enables efficient synchronization of IFEX service registries between vehicles and cloud. It uses content-addressed storage (SHA-256 hashes) to minimize bandwidth and avoid redundant transfers.
@@ -67,7 +70,7 @@ VEHICLE                                         CLOUD
    │  for all registered service hashes           │
    │                                              │
    ├──── v2c/{vid}/201: HashList ─────────────────▶
-   │     ["a]abc123", "def456", "ghi789"]         │
+   │     ["abc123", "def456", "ghi789"]         │
    │                                              │
    │                               ┌──────────────┤
    │                               │ For each hash:

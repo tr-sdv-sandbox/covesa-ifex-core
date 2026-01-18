@@ -140,7 +140,7 @@ No timeout tracking is needed. The FIFO guarantee means that once a higher seque
 
 ### Timestamps Without Source Information
 
-The API uses simple `timestamp_ns` (nanoseconds since epoch) rather than structured timestamps with source information (GPS, NTP, system clock, etc.).
+The API uses simple `timestamp_ms` (milliseconds since epoch) rather than structured timestamps with source information (GPS, NTP, system clock, etc.).
 
 **Rationale:**
 - **Abstraction level** - Timestamp source is often a transport or envelope concern, not an application concern.
