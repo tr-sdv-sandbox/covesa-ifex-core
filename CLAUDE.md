@@ -84,7 +84,20 @@ Services are defined in YAML (`*.ifex.yml`):
 - `reference-services/ifex/` - Core infrastructure service schemas
 - `test-services/<service>/` - Domain service schemas
 
-Run `./generate_proto.sh` to regenerate proto files from IFEX YAML. Requires `ifex-tools` Docker image (installed via `install_deps.sh`). The script generates `.proto` files in `proto/`; CMake then compiles these to C++ during build.
+Run `./generate_proto.sh` to regenerate proto files from IFEX YAML. Requires `ifex-tools` Docker image (installed via `install_deps.sh`). The script generates `.proto` files in `proto/ifex-generated/`; CMake then compiles these to C++ during build.
+
+### Proto Directory Structure
+
+```
+proto/
+├── ifex-generated/   # Generated from IFEX YAML (DO NOT EDIT)
+├── internal/         # Hand-written internal protocols (scheduler-sync-v2.proto)
+└── api/              # Hand-written external APIs (cloud-scheduler-service.proto)
+```
+
+- **ifex-generated/**: Auto-generated from IFEX YAML schemas
+- **internal/**: Wire protocols between internal components (not gRPC services)
+- **api/**: External gRPC APIs not expressible in IFEX (cloud-only services, complex types)
 
 ### Core Library (`core/`)
 
@@ -92,6 +105,10 @@ The shared library (`ifex-core`) provides:
 - `types.hpp` - Core type definitions (ServiceInfo, ServiceEndpoint, MethodSignature, etc.)
 - `parser.hpp` - IFEX YAML parsing
 - `discovery.hpp` - gRPC client for Discovery service
+
+The `core/sync/` sublibrary (`ifex-sync`, header-only) provides:
+- `version_vector.hpp` - Two-component version vectors for sync protocol v2
+- `sync_engine.hpp` - Conflict resolution logic (dominance, authority-based merge)
 
 Services link against `ifex-core` and `ifex-proto-generated`.
 
@@ -219,35 +236,40 @@ VEHICLE                                         CLOUD
 
 See `docs/discovery-sync-protocol.md` for full protocol specification.
 
-### Scheduler Sync Protocol
+### Scheduler Sync Protocol v2
 
-The Scheduler Sync Bridge synchronizes job state to cloud and receives commands.
+The Scheduler Sync Bridge (v2) uses **version vectors** for bidirectional state synchronization.
 
 **Vehicle-to-Cloud (v2c):**
 ```
 Scheduler → SchedulerSyncBridge → Backend Transport → MQTT → Cloud
-              (poll 1s, hash-based change detection)
+              (poll 1s, checksum-based change detection)
 ```
-
-Event types: `FULL_SYNC`, `JOB_CREATED`, `JOB_UPDATED`, `JOB_DELETED`, `JOB_EXECUTED`, `HEARTBEAT`
 
 **Cloud-to-Vehicle (c2v):**
 ```
 Cloud API → Kafka → MQTT → Backend Transport → SchedulerSyncBridge → Scheduler
-                                                 (command execution + ACK)
 ```
 
-Command types: `CREATE_JOB`, `UPDATE_JOB`, `DELETE_JOB`, `PAUSE_JOB`, `RESUME_JOB`, `TRIGGER_JOB`
+**Key protocol features:**
+- **Version vectors:** `{cloud_seq, vehicle_seq}` - no wall-clock dependency
+- **Authority-based resolution:** Cloud or vehicle wins based on job origin
+- **Tombstone deletion:** Soft deletes with 7-day retention, confirmed via echo
+- **Checksum quiescence:** No traffic when both sides agree (xxHash64)
+- **Append-only executions:** Execution records are immutable facts
+
+**Job identity:** `<source>-<uuid>` (e.g., `cloud-abc123`, `veh-WDB123-def456`)
 
 **Key differences from Discovery:**
-| Aspect | Discovery | Scheduler |
-|--------|-----------|-----------|
+| Aspect | Discovery | Scheduler v2 |
+|--------|-----------|--------------|
 | Data | Static schemas | Dynamic jobs |
 | Sharing | Fleet-wide dedup | Per-vehicle unique |
 | Direction | Mostly v2c | Bidirectional |
-| Sync | Hash-first, pull | Delta events |
+| Sync | Hash-first, pull | Version vectors |
+| Conflict | N/A (immutable) | Authority wins |
 
-See `docs/scheduler-sync-protocol.md` for full protocol specification.
+See `docs/scheduler-sync-protocol-v2.md` for full protocol specification.
 
 ### RPC Protocol
 
@@ -308,6 +330,22 @@ All timestamp fields across the codebase use **milliseconds since Unix epoch**:
 
 **Do not use nanoseconds.** The `_ns` suffix is reserved for internal conversions only.
 
+### Version Vector Convention (Scheduler Sync v2)
+
+Jobs use two-component version vectors for conflict detection:
+
+```cpp
+struct VersionVector {
+    uint64_t cloud_seq;    // Incremented by cloud on any change
+    uint64_t vehicle_seq;  // Incremented by vehicle on any change
+};
+```
+
+**Comparison rules:**
+- A dominates B: `A.cloud >= B.cloud && A.vehicle >= B.vehicle && (A.cloud > B.cloud || A.vehicle > B.vehicle)`
+- Neither dominates = **conflict** → resolve by job's `authority` field
+- Merged version: `{max(cloud_seq), max(vehicle_seq)}`
+
 ### Schema Hash Validation
 
 Service schemas are identified by SHA-256 hashes (64-character lowercase hex strings):
@@ -324,6 +362,20 @@ The discovery sync bridge validates hashes before sending to cloud:
 - Hashes must be exactly 64 characters
 - Only hex characters (0-9, a-f, A-F) allowed
 - Invalid hashes are logged as warnings and skipped
+
+### Cloud Reference Services (`cloud/`)
+
+Test-only cloud-side implementations (NOT for production):
+
+| Service | Description |
+|---------|-------------|
+| `cloud-backend-transport/` | Cloud counterpart to vehicle Backend Transport (MQTT) |
+| `cloud-scheduler-service/` | Fleet scheduler API (job CRUD, sync processing) |
+
+Cloud services are **only built when tests are enabled** (`./build.sh --debug --test`).
+They are NOT built for cross-compilation targets.
+
+For production cloud deployments, see `covesa-ifex-offboard-services`.
 
 ## Key Files
 
@@ -353,12 +405,13 @@ ctest -R "discovery_sync" --output-on-failure
 
 | Test | Label | Description |
 |------|-------|-------------|
+| `ifex-sync-tests` | unit | Version vector operations |
 | `backend_transport_conformance_test` | conformance | API contract verification |
 | `backend_transport_integration_test` | integration, mqtt | End-to-end with MQTT broker |
 | `backend_transport_resilience_test` | resilience, mqtt | Broker disconnect/reconnect |
 | `discovery_sync_bridge_integration_test` | integration, mqtt | Hash-based sync protocol |
 | `dispatcher_bridge_integration_test` | integration, mqtt | RPC request/response |
-| `scheduler_sync_bridge_integration_test` | integration, mqtt | Job sync to cloud |
+| `scheduler_sync_bridge_test` | integration, mqtt | v2 sync protocol (version vectors, tombstones) |
 
 ### MQTT Test Notes
 
