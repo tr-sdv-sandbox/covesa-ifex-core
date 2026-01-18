@@ -31,8 +31,6 @@ DEFINE_uint32(batch_window_ms, 100,
               "Event batching window (0 = immediate send)");
 DEFINE_uint32(heartbeat_ms, 30000,
               "Heartbeat interval when no changes (0 = disabled)");
-DEFINE_bool(terminal_only, true,
-            "Only sync terminal states (COMPLETED/FAILED), not RUNNING");
 DEFINE_string(state_file, "",
               "Path to persist sync state (empty = no persistence)");
 DEFINE_uint32(stats_interval_s, 60,
@@ -58,7 +56,6 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "Backend Transport: " << FLAGS_backend_transport;
     LOG(INFO) << "Vehicle ID: " << FLAGS_vehicle_id;
     LOG(INFO) << "Content ID: " << FLAGS_content_id;
-    LOG(INFO) << "Terminal states only: " << (FLAGS_terminal_only ? "yes" : "no");
 
     // Set up signal handlers
     std::signal(SIGINT, SignalHandler);
@@ -74,7 +71,6 @@ int main(int argc, char* argv[]) {
     config.poll_interval_ms = FLAGS_poll_interval_ms;
     config.batch_window_ms = FLAGS_batch_window_ms;
     config.heartbeat_interval_ms = FLAGS_heartbeat_ms;
-    config.terminal_states_only = FLAGS_terminal_only;
     config.state_persistence_path = FLAGS_state_file;
 
     // Create and start the bridge

@@ -36,7 +36,6 @@ TEST_F(SchedulerSyncBridgeTest, ConfigDefaults) {
     EXPECT_EQ(config.poll_interval_ms, 1000);
     EXPECT_EQ(config.batch_window_ms, 100);
     EXPECT_EQ(config.heartbeat_interval_ms, 30000);
-    EXPECT_TRUE(config.terminal_states_only);
     EXPECT_TRUE(config.state_persistence_path.empty());
 }
 
@@ -165,9 +164,8 @@ TEST_F(SchedulerSyncBridgeTest, SyncedJobStateHash) {
     state1.service = "test-service";
     state1.method = "test_method";
     state1.parameters = "{}";
-    state1.scheduled_time = "2025-01-01T10:00:00Z";
+    state1.scheduled_time_ms = 1704103200000;  // 2025-01-01T10:00:00Z
     state1.recurrence_rule = "";
-    state1.next_run_time = "";
     state1.status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
     state1.created_at_ms = 1000;
     state1.updated_at_ms = 1000;
@@ -177,13 +175,14 @@ TEST_F(SchedulerSyncBridgeTest, SyncedJobStateHash) {
     // Same state should have same hash
     EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
 
-    // Different status should have different hash
+    // Per Scheduler Sync Protocol v2.4 Section 5.5, status is EXCLUDED from hash
+    // (it's execution state, not job content)
     state2.status = swdv::scheduler_sync_v2::JOB_STATUS_RUNNING;
-    EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
+    EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
 
-    // Different scheduled_time should have different hash
+    // Different scheduled_time_ms should have different hash
     state2 = state1;
-    state2.scheduled_time = "2025-02-01T12:00:00Z";
+    state2.scheduled_time_ms = 1706781600000;  // Different timestamp
     EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
 
     // Different title should have different hash
@@ -195,6 +194,16 @@ TEST_F(SchedulerSyncBridgeTest, SyncedJobStateHash) {
     state2 = state1;
     state2.updated_at_ms = 9999;
     EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
+
+    // created_at_ms is excluded from hash (it's metadata, not content)
+    state2 = state1;
+    state2.created_at_ms = 9999;
+    EXPECT_EQ(state1.ComputeHash(), state2.ComputeHash());
+
+    // Different paused should have different hash (paused IS a content field)
+    state2 = state1;
+    state2.paused = true;
+    EXPECT_NE(state1.ComputeHash(), state2.ComputeHash());
 }
 
 TEST_F(SchedulerSyncBridgeTest, SyncedJobStateIsTerminal) {

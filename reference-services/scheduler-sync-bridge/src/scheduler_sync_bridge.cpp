@@ -53,9 +53,17 @@ static std::string EpochMsToIso8601(uint64_t epoch_ms) {
 // =============================================================================
 
 uint64_t SyncedJobState::ComputeHash() const {
-    // Hash only content fields - exclude metadata like updated_at_ms
-    // which can change without actual job content changing
+    // Hash content fields per Scheduler Sync Protocol v2.4 Section 5.5
+    //
+    // INCLUDED: job_id, title, service, method, parameters_json, scheduled_time_ms,
+    //           recurrence_rule, end_time_ms, paused, wake_policy, sleep_policy, wake_lead_time_s
+    //
+    // EXCLUDED: status, next_run_time_ms (execution state - vehicle authoritative)
+    //           created_at_ms, updated_at_ms (metadata)
+    //
     std::hash<std::string> str_hash;
+    std::hash<uint64_t> uint64_hash;
+    std::hash<bool> bool_hash;
     std::hash<int> int_hash;
 
     uint64_t h = str_hash(job_id);
@@ -63,11 +71,13 @@ uint64_t SyncedJobState::ComputeHash() const {
     h ^= str_hash(service) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(method) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(parameters) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(scheduled_time) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= uint64_hash(scheduled_time_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(recurrence_rule) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(next_run_time) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= int_hash(static_cast<int>(status)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    // Note: updated_at_ms excluded - it's metadata, not content
+    h ^= uint64_hash(end_time_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= bool_hash(paused) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= int_hash(static_cast<int>(wake_policy)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= int_hash(static_cast<int>(sleep_policy)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= uint64_hash(wake_lead_time_s) + 0x9e3779b9 + (h << 6) + (h >> 2);
 
     return h;
 }
@@ -97,7 +107,6 @@ bool SchedulerSyncBridge::Start() {
     LOG(INFO) << "  Backend Transport endpoint: " << config_.backend_transport_endpoint;
     LOG(INFO) << "  Sync content_id: " << config_.sync_content_id;
     LOG(INFO) << "  Initialization delay: " << config_.initialization_delay_ms << "ms";
-    LOG(INFO) << "  Terminal states only: " << (config_.terminal_states_only ? "yes" : "no");
 
     // Connect to Backend Transport
     auto bt_channel = grpc::CreateChannel(
@@ -244,24 +253,17 @@ void SchedulerSyncBridge::PollLoop() {
     auto jobs = QuerySchedulerJobs();
     SendV2SyncMessage(jobs, true /* include_all_jobs */);
 
-    // Update synced state with active jobs only
+    // Track ALL jobs in synced state (per spec: "All jobs: active AND tombstones")
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         synced_state_.clear();
-        synced_terminal_jobs_.clear();
         for (const auto& job : jobs) {
-            if (!job.IsTerminal()) {
-                synced_state_[job.job_id] = job;
-            } else {
-                // Mark terminal jobs as already synced
-                synced_terminal_jobs_.insert(job.job_id);
-            }
+            synced_state_[job.job_id] = job;
         }
     }
 
     initialized_.store(true);
-    LOG(INFO) << "Initial sync complete, " << jobs.size() << " jobs synced, "
-              << synced_state_.size() << " active jobs tracked";
+    LOG(INFO) << "Initial sync complete, " << jobs.size() << " jobs synced";
 
     // Main poll loop
     while (!stop_requested_.load()) {
@@ -378,15 +380,18 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
         state.scheduled_time_ms = job.scheduled_time_ms();
         state.scheduled_time = EpochMsToIso8601(job.scheduled_time_ms());  // For display/hash
         state.recurrence_rule = job.recurrence_rule();
+        state.end_time_ms = job.end_time_ms();
         state.next_run_time = EpochMsToIso8601(job.next_run_time_ms());  // For display/hash
         state.status = MapStatus(job.status());
         state.wake_policy = MapWakePolicy(job.wake_policy());
         state.sleep_policy = MapSleepPolicy(job.sleep_policy());
         state.wake_lead_time_s = job.wake_lead_time_s();
+        state.paused = job.paused();
 
         VLOG(1) << "FetchJobsFromScheduler: job=" << job.id()
                 << " scheduled_time_ms=" << job.scheduled_time_ms()
-                << " wake_policy=" << static_cast<int>(job.wake_policy());
+                << " wake_policy=" << static_cast<int>(job.wake_policy())
+                << " paused=" << (job.paused() ? "true" : "false");
 
         // Use actual timestamps from job
         state.created_at_ms = job.created_at_ms();
@@ -423,90 +428,63 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
 
     // Check for new or changed jobs
     for (const auto& job : current) {
-        // Skip jobs already synced in terminal state
-        if (synced_terminal_jobs_.count(job.job_id) > 0) {
-            continue;
-        }
-
         auto it = synced_state_.find(job.job_id);
 
         if (it == synced_state_.end()) {
-            // New job or job transitioning to terminal state
+            // New job - add to synced state and mark for sync
+            SyncedJobState new_state = job;
+            new_state.needs_sync = true;
+            new_state.version.increment_vehicle();  // New local job
+            new_state.authority = sync_v2::AUTHORITY_VEHICLE;
+            synced_state_[job.job_id] = new_state;
+
+            // If already in terminal state, also record execution
             if (job.IsTerminal()) {
-                // Job completed/failed - record execution for v2 sync
                 RecordExecution(
                     job.job_id,
                     job.updated_at_ms,
-                    0,  // duration_ms - would calculate from actual execution
-                    job.status == sync_v2::JOB_STATUS_COMPLETED
-                        ? sync_v2::JOB_STATUS_COMPLETED
-                        : sync_v2::JOB_STATUS_FAILED,
+                    0,  // duration_ms
+                    job.status,
                     "",  // result_json
                     ""   // error_message
                 );
-
-                synced_terminal_jobs_.insert(job.job_id);
                 LOG(INFO) << "Job executed: " << job.title << " (id=" << job.job_id
                           << ", status=" << static_cast<int>(job.status) << ")";
             } else {
-                // New active job - add to synced state and mark for sync
-                SyncedJobState new_state = job;
-                new_state.needs_sync = true;
-                new_state.version.increment_vehicle();  // New local job
-                new_state.authority = sync_v2::AUTHORITY_VEHICLE;
-                synced_state_[job.job_id] = new_state;
-
                 LOG(INFO) << "Job created: " << job.title << " (id=" << job.job_id << ")";
             }
         } else {
             // Existing job - check for changes
             const auto& synced = it->second;
 
-            if (job.IsTerminal()) {
+            // Check if job transitioned to terminal state
+            bool was_terminal = synced.IsTerminal();
+            bool is_terminal = job.IsTerminal();
+
+            if (!was_terminal && is_terminal) {
                 // Job transitioned to terminal state - record execution
                 RecordExecution(
                     job.job_id,
                     job.updated_at_ms,
                     0,  // duration_ms
-                    job.status == sync_v2::JOB_STATUS_COMPLETED
-                        ? sync_v2::JOB_STATUS_COMPLETED
-                        : sync_v2::JOB_STATUS_FAILED,
+                    job.status,
                     "",  // result_json
                     ""   // error_message
                 );
-
-                // Remove from active tracking, add to terminal set
-                synced_state_.erase(job.job_id);
-                synced_terminal_jobs_.insert(job.job_id);
-
                 LOG(INFO) << "Job completed: " << job.title << " (id=" << job.job_id
                           << ", status=" << static_cast<int>(job.status) << ")";
-            } else if (job.ComputeHash() != synced.ComputeHash()) {
-                // Job was updated (but still active)
-                bool should_sync = true;
+            }
 
-                // If terminal_states_only, skip RUNNING state updates
-                if (config_.terminal_states_only &&
-                    job.status == sync_v2::JOB_STATUS_RUNNING &&
-                    synced.status == sync_v2::JOB_STATUS_PENDING) {
-                    should_sync = false;
-                    VLOG(1) << "Skipping RUNNING state update for: " << job.title;
-                }
+            // Update synced state if job changed
+            if (job.ComputeHash() != synced.ComputeHash()) {
+                SyncedJobState updated_state = job;
+                updated_state.version = synced.version;
+                updated_state.version.increment_vehicle();  // Local change
+                updated_state.authority = synced.authority;
+                updated_state.needs_sync = true;
+                it->second = updated_state;
 
-                if (should_sync) {
-                    // Update synced state with new values and mark for sync
-                    SyncedJobState updated_state = job;
-                    updated_state.version = synced.version;
-                    updated_state.version.increment_vehicle();  // Local change
-                    updated_state.authority = synced.authority;
-                    updated_state.needs_sync = true;
-                    it->second = updated_state;
-
-                    VLOG(1) << "Job updated: " << job.title;
-                } else {
-                    it->second = job;
-                    it->second.needs_sync = synced.needs_sync;  // Preserve sync state
-                }
+                VLOG(1) << "Job updated: " << job.title;
             }
         }
     }

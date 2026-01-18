@@ -81,10 +81,6 @@ struct SchedulerSyncBridgeConfig {
     /// 0 = no heartbeat
     uint32_t heartbeat_interval_ms = 30000;
 
-    /// Only sync jobs that change to terminal states (COMPLETED/FAILED)
-    /// If false, also syncs RUNNING state changes
-    bool terminal_states_only = true;
-
     /// Path to persist sync state (empty = no persistence)
     std::string state_persistence_path;
 
@@ -273,9 +269,6 @@ private:
     /// Terminal jobs are removed after syncing their execution result
     std::unordered_map<std::string, SyncedJobState> synced_state_;
     mutable std::mutex state_mutex_;
-
-    /// Jobs that have been synced in terminal state (to avoid re-syncing)
-    std::unordered_set<std::string> synced_terminal_jobs_;
 
     /// Mutex for events
     mutable std::mutex events_mutex_;

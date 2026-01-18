@@ -692,11 +692,14 @@ void CloudSchedulerService::ClearAllJobs() {
 // =========================================================================
 
 uint64_t CloudSchedulerService::ComputeJobHash(const sched::JobInfo& job) {
-    // Hash only content fields - exclude metadata like updated_at_ms, created_at_ms
-    // which can change without actual job content changing
+    // Hash content fields per Scheduler Sync Protocol v2.4 Section 5.5
+    // INCLUDED: job_id, title, service, method, parameters, scheduled_time_ms,
+    //           recurrence_rule, end_time_ms, paused, wake_policy, sleep_policy, wake_lead_time_s
+    // EXCLUDED: status, next_run_time_ms, created_at_ms, updated_at_ms, deleted
     std::hash<std::string> str_hash;
     std::hash<uint64_t> uint64_hash;
     std::hash<bool> bool_hash;
+    std::hash<int> int_hash;
 
     // Use golden ratio constant for hash mixing (0x9e3779b9)
     uint64_t h = str_hash(job.job_id());
@@ -708,11 +711,9 @@ uint64_t CloudSchedulerService::ComputeJobHash(const sched::JobInfo& job) {
     h ^= str_hash(job.recurrence_rule()) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= uint64_hash(job.end_time_ms()) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= bool_hash(job.paused()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= bool_hash(job.deleted()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= uint64_hash(static_cast<uint64_t>(job.wake_policy())) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= uint64_hash(static_cast<uint64_t>(job.sleep_policy())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= int_hash(static_cast<int>(job.wake_policy())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= int_hash(static_cast<int>(job.sleep_policy())) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= uint64_hash(job.wake_lead_time_s()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    // Note: status, updated_at_ms, created_at_ms excluded - they're metadata, not content
 
     return h;
 }

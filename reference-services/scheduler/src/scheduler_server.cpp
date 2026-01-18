@@ -716,10 +716,15 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
                 job->parameters = json::parse(updates.parameters());
             }
 
+            // Always apply paused state from updates
+            // (sync bridge always sends the current paused value)
+            job->paused = updates.paused();
+
             job->updated_at = std::chrono::system_clock::now();
             updated = true;
 
-            LOG(INFO) << "Updated job " << request->job_id();
+            LOG(INFO) << "Updated job " << request->job_id()
+                      << " paused=" << (job->paused ? "true" : "false");
         }  // Release jobs_mutex_ here
 
         // Persist immediately for durability
