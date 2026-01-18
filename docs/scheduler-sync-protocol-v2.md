@@ -2,8 +2,8 @@
 
 ## Status: DRAFT
 
-**Version:** 2.4
-**Date:** 2026-01-15
+**Version:** 2.5
+**Date:** 2026-01-18
 **Authors:** Claude + Human
 
 ## 1. Overview
@@ -112,18 +112,15 @@ enum SyncState {
 
 ```protobuf
 message JobRecord {
-    // Identity
+    // Identity (included in checksum)
     string job_id = 1;
     JobAuthority authority = 2;
 
-    // Version (for sync protocol)
+    // Version (included in checksum)
     JobVersion version = 3;
 
-    // Lifecycle
+    // Content - synced state (included in checksum)
     bool deleted = 5;                    // Soft delete (tombstone)
-    uint64 deleted_at_ms = 6;            // When deleted (for GC)
-
-    // Content (included in checksum) - user intent, synced
     string title = 10;
     string service = 11;
     string method = 12;
@@ -136,7 +133,7 @@ message JobRecord {
     SleepPolicy sleep_policy = 19;       // Sleep behavior during execution
     uint32 wake_lead_time_s = 20;        // Seconds before scheduled_time to wake
 
-    // Execution state (vehicle-authoritative, NOT in checksum) - runtime feedback
+    // Execution state (vehicle-authoritative, NOT in checksum)
     JobStatus status = 25;               // What's happening now
     uint64 next_run_time_ms = 26;
     uint64 last_executed_ms = 27;
@@ -144,6 +141,7 @@ message JobRecord {
     // Metadata (NOT in checksum)
     uint64 created_at_ms = 30;
     uint64 updated_at_ms = 31;
+    uint64 deleted_at_ms = 6;            // When deleted (for GC timing only)
     string created_by = 32;
 }
 
@@ -167,8 +165,9 @@ enum SleepPolicy {
 ```
 
 **Notes:**
-- `paused` is intent (synced), `status` is runtime state (vehicle-authoritative)
-- Tombstones retain all content fields
+- `deleted` is synced content (in checksum); `deleted_at_ms` is metadata (not in checksum)
+- `paused` is user intent (synced), `status` is runtime state (vehicle-authoritative)
+- Tombstones (`deleted=true`) retain all content fields for conflict resolution
 
 ### 2.6 Execution Record
 
@@ -249,10 +248,17 @@ When neither version dominates (true conflict):
    merged.vehicle_seq = max(A.vehicle_seq, B.vehicle_seq)
    ```
 
-3. **Result:**
-   - Content from winner
-   - Version is merged version
-   - Both sides converge to same state
+3. **Increment resolver's sequence:**
+   ```
+   if resolver is cloud:  merged.cloud_seq++
+   if resolver is vehicle: merged.vehicle_seq++
+   ```
+   This ensures the resolved version dominates both inputs.
+
+4. **Result:**
+   - Content from winner (authority)
+   - Version is merged + incremented
+   - Other side sees REMOTE_DOMINATES and accepts
 
 ### 4.2 Resolution Example
 
@@ -263,15 +269,23 @@ Last sync: {cloud: 5, vehicle: 3}
 Cloud offline: modifies to {cloud: 7, vehicle: 3}, content = "10am"
 Vehicle offline: modifies to {cloud: 5, vehicle: 5}, content = "2pm"
 
-On reconnect:
-  Neither dominates → CONFLICT
-  Authority = CLOUD → cloud wins
+On reconnect (vehicle sends first):
+  1. Vehicle sends V2C with {5, 5}, "2pm"
+  2. Cloud receives, compares {7, 3} vs {5, 5}
+     Neither dominates → CONFLICT
+     Authority = CLOUD → cloud content wins
+     Merged = {max(7,5), max(3,5)} = {7, 5}
+     Cloud increments its seq → {8, 5}
+  3. Cloud sends C2V with {8, 5}, "10am"
+  4. Vehicle receives, compares {5, 5} vs {8, 5}
+     {8, 5} dominates {5, 5} → accept remote
+  5. Vehicle now has {8, 5}, "10am"
 
-  Merged version: {cloud: 7, vehicle: 5}
-  Content: "10am" (from cloud)
-
-Both sides now have: {7, 5} with "10am"
+Both sides converge to: {8, 5} with "10am"
 ```
+
+**Note:** The resolver always increments their sequence after merge. This ensures the
+resolved version dominates both inputs, so the other side accepts it without conflict.
 
 ### 4.3 Tombstone Deletion Protocol
 
@@ -405,19 +419,40 @@ matching `{job_id, cloud_seq, vehicle_seq, deleted=true}`.
 
 #### 4.3.6 Garbage Collection
 
-Both sides keep tombstones for a retention period (default: 7 days):
+Tombstones must be confirmed before garbage collection. Time alone is not sufficient.
 
 ```
 Tombstone GC Rules:
-1. Tombstone age > RETENTION_PERIOD (7 days)
-2. AND confirmed by other side
+1. Tombstone confirmed by other side (required)
+2. AND tombstone age > RETENTION_PERIOD (default: 7 days)
 3. THEN safe to physically delete
 ```
 
-**Why retention period?**
-- Allows re-sync after extended offline periods
-- Prevents "resurrection" if old sync messages arrive late
-- 7 days balances storage vs. safety
+**Confirmation is required** because:
+- Vehicle may be offline for weeks (parked, stored, shipped)
+- Time-only GC would cause job resurrection on reconnect
+- Cloud storage is cheap; resurrection bugs are expensive
+
+**Retention period after confirmation** because:
+- Prevents issues from delayed/reordered messages
+- Allows safe replay of old sync logs for debugging
+- 7 days is minimum; production may use 30+ days
+
+**Cloud-side implementation:**
+```sql
+-- Safe to GC when:
+--   1. Vehicle confirmed (echoed same version)
+--   2. AND retention period elapsed
+DELETE FROM jobs
+WHERE deleted = true
+  AND vehicle_confirmed_at IS NOT NULL
+  AND vehicle_confirmed_at < NOW() - INTERVAL '7 days';
+```
+
+**Vehicle-side implementation:**
+- Keep tombstones until cloud confirms (echoes in C2V)
+- After confirmation, apply local retention period
+- On storage pressure, confirmed tombstones are first to evict
 
 #### 4.3.7 Conflict: Delete vs Modify
 
@@ -548,11 +583,45 @@ This allows safe retry on network failure.
 
 **No messages sent when quiescent.** MQTT keepalive maintains connection.
 
-### 5.7 Initiation
+### 5.7 Bootstrap and Initiation
 
-**Bidirectional:** Either side sends when remote hasn't confirmed its current checksum.
+#### Initial State
 
-State changes cause checksum to change, which triggers sync. No message sent if already quiescent.
+On first connection (no prior sync history):
+- `last_seen_remote_checksum = 0` (unknown)
+- `state_checksum` = hash of current jobs (may be empty or have local jobs)
+
+#### Bootstrap Flow
+
+```
+VEHICLE (new)                              CLOUD
+  │                                          │
+  │  [no prior sync, last_seen_c2v = 0]      │
+  │                                          │
+  │── V2C{jobs=[], checksum=0x0000,    ─────►│  (empty vehicle)
+  │       last_seen_c2v=0}                   │
+  │                                          │
+  │                    [cloud has jobs]      │
+  │                                          │
+  │◄── C2V{jobs=[...], checksum=0xABCD, ────│  (cloud sends all)
+  │        last_seen_v2c=0x0000}             │
+  │                                          │
+  │  [vehicle applies jobs]                  │
+  │                                          │
+  │── V2C{jobs=[...], checksum=0xABCD, ────►│  (vehicle confirms)
+  │       last_seen_c2v=0xABCD}              │
+  │                                          │
+  │  [checksums match - QUIESCENT]           │
+```
+
+#### Sync Trigger
+
+Either side sends when: `remote.last_seen_my_checksum ≠ my_checksum`
+
+This means:
+- On first connect: both sides send (neither has confirmed the other)
+- After state change: changed side sends
+- On reconnect with same state: no messages (already quiescent)
 
 ### 5.8 Execution Records
 
@@ -580,7 +649,7 @@ Executions: Append-only, no state. Vehicle creates → V2C → Cloud stores.
 |----------|----------|
 | **Bootstrap (new vehicle)** | Vehicle sends empty state, cloud sends all jobs, converge |
 | **Delete during execution** | Execution recorded, delete applied. Both facts preserved |
-| **Long offline (30+ days)** | Same as any conflict - authority wins, versions merged |
+| **Long offline (30+ days)** | Works correctly - tombstones kept until confirmed (see 4.3.6) |
 | **Vehicle clock wrong** | No impact - wall clock is metadata only, not used for ordering |
 | **Network failure mid-sync** | Idempotent - retry is no-op |
 | **Sync drift (job missing)** | Checksum mismatch triggers re-sync, re-send missing jobs |
@@ -606,20 +675,24 @@ Executions: Append-only, no state. Vehicle creates → V2C → Cloud stores.
 
 ### 8.4 Garbage Collection
 
-Remove tombstones where: `deleted=true` AND `age > 7 days` AND remote checksum confirmed while tombstone was included.
+Remove tombstones where:
+1. `deleted=true`
+2. AND remote has confirmed (echoed same `{job_id, version, deleted=true}`)
+3. AND `confirmation_age > RETENTION_PERIOD` (7 days minimum)
 
-"Confirmed" = received remote message with `last_seen_*_checksum` matching a checksum that included this tombstone.
+**Critical:** Never GC based on time alone. Confirmation is required to prevent
+resurrection of deleted jobs when vehicles reconnect after extended offline periods.
 
-## 10. Future Considerations
+## 9. Future Considerations
 
-### 10.1 Not In Scope (v2)
+### 9.1 Not In Scope (v2)
 
 - Multi-writer within a side (would need full vector clocks)
 - Partial sync / delta compression
 - Conflict notification to users
 - Manual conflict resolution UI
 
-### 10.2 Potential Extensions
+### 9.2 Potential Extensions
 
 - **Conflict callbacks:** Notify application layer of conflicts
 - **Merge strategies:** Per-field merge for non-conflicting changes
@@ -628,19 +701,22 @@ Remove tombstones where: `deleted=true` AND `age > 7 days` AND remote checksum c
 
 ---
 
-## Appendix B: Test Scenarios
+## Appendix A: Test Scenarios
 
-### B.1 Sync
+### A.1 Sync
 
 | Cloud | Vehicle | Expected |
 |-------|---------|----------|
 | {1,0} | none | Vehicle accepts {1,0} |
 | none | {0,1} | Cloud accepts {0,1} |
-| {2,0} | {1,0} | Vehicle updates to {2,0} |
-| {2,0} (cloud auth) | {1,1} | Both → {2,1} with cloud content |
-| {2,0} (vehicle auth) | {1,1} | Both → {2,1} with vehicle content |
+| {2,0} | {1,0} | Vehicle updates to {2,0} (cloud dominates) |
+| {2,0} (cloud auth) | {1,1} | Conflict: cloud resolves → {3,1}, vehicle accepts |
+| {2,0} (vehicle auth) | {1,1} | Conflict: cloud resolves → {3,1} with vehicle content* |
 
-### B.2 Tombstones
+*When cloud resolves a conflict where vehicle is authoritative, cloud still increments
+`cloud_seq` but uses vehicle's content. Vehicle then accepts the dominating version.
+
+### A.2 Tombstones
 
 | Action | Expected |
 |--------|----------|
@@ -648,7 +724,7 @@ Remove tombstones where: `deleted=true` AND `age > 7 days` AND remote checksum c
 | Vehicle deletes {5,3} → {5,4} | Cloud echoes {5,4} tombstone |
 | Delete for unknown job | Receiver creates tombstone, echoes |
 
-### B.3 Quiescence
+### A.3 Quiescence
 
 | Scenario | Expected |
 |----------|----------|
