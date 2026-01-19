@@ -9,6 +9,11 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+# Guard against multiple inclusion (when used as submodule from multiple repos)
+if(TARGET ifex-scheduler)
+    return()
+endif()
+
 # Library sources
 set(SCHEDULER_LIB_SOURCES
     src/job.cpp
