@@ -1349,12 +1349,12 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceChecksumConsistency) {
     // When no changes occur, the checksum should remain stable.
 
     // Get initial checksum
-    uint32_t checksum1 = vehicle_sync_bridge_->GetStateChecksum();
+    uint64_t checksum1 = vehicle_sync_bridge_->GetStateChecksum();
     LOG(INFO) << "Initial checksum: " << checksum1;
 
     // Wait and check again - should be identical
     std::this_thread::sleep_for(1s);
-    uint32_t checksum2 = vehicle_sync_bridge_->GetStateChecksum();
+    uint64_t checksum2 = vehicle_sync_bridge_->GetStateChecksum();
     LOG(INFO) << "Checksum after wait: " << checksum2;
 
     EXPECT_EQ(checksum1, checksum2)
@@ -1382,7 +1382,7 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceChecksumConsistency) {
     // Wait for sync
     std::this_thread::sleep_for(3s);
 
-    uint32_t checksum3 = vehicle_sync_bridge_->GetStateChecksum();
+    uint64_t checksum3 = vehicle_sync_bridge_->GetStateChecksum();
     LOG(INFO) << "Checksum after job added: " << checksum3;
 
     // Checksum should change after adding a job

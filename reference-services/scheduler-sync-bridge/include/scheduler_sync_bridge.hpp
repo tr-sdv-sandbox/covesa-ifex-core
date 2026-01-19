@@ -28,8 +28,12 @@
 #include "backend_transport_client.hpp"
 #include "scheduler-sync-v2.pb.h"
 #include "ifex-scheduler-service.grpc.pb.h"
+
+// ifex-scheduler library (canonical job structure, hash, version vectors)
 #include "version_vector.hpp"
 #include "sync_engine.hpp"
+#include "job.hpp"
+#include "job_hash.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -119,7 +123,7 @@ struct SyncedJobState {
     bool paused = false;  // User intent: "don't schedule this job"
 
     // Sync Protocol v2 fields
-    sync::VersionVector version;
+    ifex::scheduler::VersionVector version;
     swdv::scheduler_sync_v2::JobAuthority authority =
         swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
     bool deleted = false;
@@ -242,9 +246,9 @@ public:
     void ForceFullSync();
 
     /**
-     * @brief Get current state checksum
+     * @brief Get current state checksum (xxHash64)
      */
-    uint32_t GetStateChecksum() const;
+    uint64_t GetStateChecksum() const;
 
 private:
     /// Configuration
@@ -316,8 +320,6 @@ private:
     /// Send heartbeat if no recent activity
     void MaybeSendHeartbeat();
 
-    /// Compute CRC32 checksum of current active job state
-    uint32_t ComputeStateChecksum() const;
 
     /// Generate unique instance ID
     static std::string GenerateInstanceId();

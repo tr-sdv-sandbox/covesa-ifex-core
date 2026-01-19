@@ -236,7 +236,7 @@ TEST_F(SchedulerSyncBridgeTest, SyncedJobStateToJobRecord) {
     state.status = swdv::scheduler_sync_v2::JOB_STATUS_PENDING;
     state.authority = swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
     state.paused = false;
-    state.version = sync::VersionVector{1, 2};
+    state.version = ifex::scheduler::VersionVector{1, 2};
 
     swdv::scheduler_sync_v2::JobRecord record;
     state.ToJobRecord(&record);

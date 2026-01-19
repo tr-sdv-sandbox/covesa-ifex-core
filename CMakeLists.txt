@@ -126,6 +126,9 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     )
 endif()
 
+# Scheduler state library (standalone, no proto dependency)
+add_subdirectory(libs/scheduler)
+
 # Core library - depends on generated protobuf
 if(BUILD_CORE)
     add_subdirectory(core)

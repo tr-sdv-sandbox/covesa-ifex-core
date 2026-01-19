@@ -1,40 +1,19 @@
-// DEPRECATED: This header is deprecated. Use libs/scheduler/include/sync_engine.hpp instead.
+// Sync Engine for Scheduler Sync Protocol v2
 //
-// This file is kept for backwards compatibility only.
-// New code should use: #include "ifex/scheduler/sync_engine.hpp" or link to ifex-scheduler
+// Implements the core sync logic for bidirectional job synchronization
+// between cloud and vehicle. Uses version vectors for conflict detection
+// and source authority for deterministic conflict resolution.
+//
+// See docs/scheduler-sync-protocol-v2.md for full specification.
 
 #pragma once
 
-// Include the new location
-#include "../../../libs/scheduler/include/sync_engine.hpp"
-
-// The ifex::sync namespace aliases are defined in the new header
-// for backwards compatibility, so existing code using ifex::sync::SyncEngine
-// will continue to work.
-
-#if 0  // Original implementation preserved for reference
-
 #include "version_vector.hpp"
+#include "job.hpp"
 #include <optional>
 #include <string>
 
-namespace ifex::sync {
-
-// Source authority for a job - set at creation, immutable thereafter.
-// Values match proto: AUTHORITY_CLOUD=0, AUTHORITY_VEHICLE=1
-enum class JobAuthority {
-    CLOUD = 0,      // Job created by cloud - cloud wins conflicts
-    VEHICLE = 1     // Job created by vehicle/phone - vehicle wins conflicts
-};
-
-// String conversion for JobAuthority
-inline const char* authority_to_string(JobAuthority auth) {
-    switch (auth) {
-        case JobAuthority::CLOUD: return "CLOUD";
-        case JobAuthority::VEHICLE: return "VEHICLE";
-    }
-    return "CLOUD";  // Default (CLOUD=0)
-}
+namespace ifex::scheduler {
 
 // Result of processing a sync operation
 struct SyncResult {
@@ -137,7 +116,7 @@ public:
         bool we_win = (cloud_wins == we_are_cloud);
 
         std::string winner = cloud_wins ? "cloud" : "vehicle";
-        std::string reason = "authority=" + std::string(authority_to_string(authority));
+        std::string reason = "authority=" + std::string(job_authority_to_string(authority));
 
         // After conflict resolution, increment our sequence to indicate
         // we processed the conflict
@@ -207,6 +186,15 @@ public:
     }
 };
 
-}  // namespace ifex::sync
+}  // namespace ifex::scheduler
 
-#endif  // Original implementation
+// Backwards compatibility alias
+namespace ifex::sync {
+    using JobAuthority = ifex::scheduler::JobAuthority;
+    using SyncResult = ifex::scheduler::SyncResult;
+    using SyncEngine = ifex::scheduler::SyncEngine;
+
+    inline const char* authority_to_string(JobAuthority auth) {
+        return ifex::scheduler::job_authority_to_string(auth);
+    }
+}

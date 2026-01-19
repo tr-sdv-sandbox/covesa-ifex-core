@@ -4,12 +4,19 @@
 # for bidirectional job synchronization between cloud and vehicle.
 
 # Header-only library (no source files needed)
+# NOTE: This is now a compatibility layer that forwards to libs/scheduler
 add_library(ifex-sync INTERFACE)
 
 target_include_directories(ifex-sync
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include/ifex/sync>
+)
+
+# Link to the new scheduler library for implementations
+target_link_libraries(ifex-sync
+    INTERFACE
+        ifex-scheduler
 )
 
 # Install headers

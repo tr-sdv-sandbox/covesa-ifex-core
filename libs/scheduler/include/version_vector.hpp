@@ -1,20 +1,16 @@
-// DEPRECATED: This header is deprecated. Use libs/scheduler/include/version_vector.hpp instead.
+// Version Vector for Scheduler Sync Protocol v2
 //
-// This file is kept for backwards compatibility only.
-// New code should use: #include "ifex/scheduler/version_vector.hpp" or link to ifex-scheduler
+// Two-component version vector for conflict detection between cloud and vehicle.
+// Each component is incremented by its respective side on any change.
+// No dependency on wall-clock time for correctness.
 
 #pragma once
 
-// Include the new location
-#include "../../../libs/scheduler/include/version_vector.hpp"
+#include <cstdint>
+#include <string>
+#include <algorithm>
 
-// The ifex::sync namespace aliases are defined in the new header
-// for backwards compatibility, so existing code using ifex::sync::VersionVector
-// will continue to work.
-
-#if 0  // Original implementation preserved for reference
-
-namespace ifex::sync {
+namespace ifex::scheduler {
 
 // Result of comparing two version vectors
 enum class CompareResult {
@@ -104,6 +100,12 @@ inline const char* compare_result_to_string(CompareResult result) {
     }
 }
 
-}  // namespace ifex::sync
+}  // namespace ifex::scheduler
 
-#endif  // Original implementation
+// Backwards compatibility alias
+namespace ifex::sync {
+    using VersionVector = ifex::scheduler::VersionVector;
+    using CompareResult = ifex::scheduler::CompareResult;
+    using ifex::scheduler::compare;
+    using ifex::scheduler::compare_result_to_string;
+}

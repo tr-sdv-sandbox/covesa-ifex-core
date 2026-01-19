@@ -724,9 +724,9 @@ TEST_F(SchedulerSyncBridgeIntegrationTest, ChecksumConsistency) {
     ASSERT_TRUE(bridge.IsInitialized());
 
     // Get checksum multiple times - should be consistent
-    uint32_t checksum1 = bridge.GetStateChecksum();
+    uint64_t checksum1 = bridge.GetStateChecksum();
     std::this_thread::sleep_for(200ms);
-    uint32_t checksum2 = bridge.GetStateChecksum();
+    uint64_t checksum2 = bridge.GetStateChecksum();
 
     // Without changes, checksum should be the same
     EXPECT_EQ(checksum1, checksum2);

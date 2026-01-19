@@ -3,8 +3,12 @@
 #include "cloud-scheduler-service.grpc.pb.h"
 #include "scheduler-sync-v2.pb.h"
 #include "cloud_backend_transport_client.hpp"
+
+// ifex-scheduler library (canonical job structure, hash, version vectors)
 #include "version_vector.hpp"
 #include "sync_engine.hpp"
+#include "job.hpp"
+#include "job_hash.hpp"
 
 #include <grpcpp/grpcpp.h>
 #include <glog/logging.h>
@@ -161,7 +165,7 @@ private:
     std::map<std::string, std::map<std::string, std::vector<::ifex::cloud::scheduler::ExecutionInfo>>> executions_;
 
     // Sync v2: version vectors per job (vehicle_id -> job_id -> version)
-    std::map<std::string, std::map<std::string, sync::VersionVector>> job_versions_;
+    std::map<std::string, std::map<std::string, ifex::scheduler::VersionVector>> job_versions_;
 
     // Sync v2: sync state per job (for UI display - NOT transmitted in protocol)
     std::map<std::string, std::map<std::string, ::ifex::cloud::scheduler::CloudSyncState>> job_sync_states_;
@@ -189,15 +193,16 @@ private:
     void SendV2SyncMessage(const std::string& vehicle_id);
 
     /// Compute state checksum for a vehicle's jobs (for quiescence detection)
-    /// Uses CRC32 combining of individual job hashes for deterministic ordering
+    /// Uses ifex-scheduler library for xxHash64 checksum
     uint64_t ComputeStateChecksum(const std::string& vehicle_id) const;
 
     /// Compute hash for a single job (content fields only, excludes metadata)
+    /// Uses ifex-scheduler library for FNV-1a style hash
     static uint64_t ComputeJobHash(const ::ifex::cloud::scheduler::JobInfo& job);
 
     /// Convert JobInfo to v2 JobRecord
     void JobInfoToRecord(const ::ifex::cloud::scheduler::JobInfo& job,
-                        const sync::VersionVector& version,
+                        const ifex::scheduler::VersionVector& version,
                         swdv::scheduler_sync_v2::JobRecord* record);
 
     /// Convert v2 JobRecord to JobInfo

@@ -22,6 +22,7 @@ namespace ifex::reference {
 using namespace std::chrono_literals;
 namespace sync_v2 = swdv::scheduler_sync_v2;
 namespace scheduler_pb = swdv::ifex_scheduler;
+namespace sched_lib = ifex::scheduler;
 
 // =============================================================================
 // Helper: Convert epoch milliseconds to ISO8601 string
@@ -49,37 +50,41 @@ static std::string EpochMsToIso8601(uint64_t epoch_ms) {
 }
 
 // =============================================================================
+// Helper: Convert SyncedJobState to library Job for hash computation
+// =============================================================================
+
+static sched_lib::Job ToLibraryJob(const SyncedJobState& state) {
+    sched_lib::Job job;
+    job.job_id = state.job_id;
+    job.title = state.title;
+    job.service = state.service;
+    job.method = state.method;
+    job.parameters_json = state.parameters;
+    job.scheduled_time_ms = state.scheduled_time_ms;
+    job.recurrence_rule = state.recurrence_rule;
+    job.end_time_ms = state.end_time_ms;
+    job.paused = state.paused;
+    job.wake_policy = static_cast<sched_lib::WakePolicy>(state.wake_policy);
+    job.sleep_policy = static_cast<sched_lib::SleepPolicy>(state.sleep_policy);
+    job.wake_lead_time_s = state.wake_lead_time_s;
+    job.status = static_cast<sched_lib::JobStatus>(state.status);
+    job.version = sched_lib::VersionVector(state.version.cloud_seq, state.version.vehicle_seq);
+    job.authority = static_cast<sched_lib::JobAuthority>(state.authority);
+    job.deleted = state.deleted;
+    job.deleted_at_ms = state.deleted_at_ms;
+    return job;
+}
+
+// =============================================================================
 // SyncedJobState
 // =============================================================================
 
 uint64_t SyncedJobState::ComputeHash() const {
-    // Hash content fields per Scheduler Sync Protocol v2.4 Section 5.5
-    //
-    // INCLUDED: job_id, title, service, method, parameters_json, scheduled_time_ms,
-    //           recurrence_rule, end_time_ms, paused, wake_policy, sleep_policy, wake_lead_time_s
-    //
-    // EXCLUDED: status, next_run_time_ms (execution state - vehicle authoritative)
-    //           created_at_ms, updated_at_ms (metadata)
-    //
-    std::hash<std::string> str_hash;
-    std::hash<uint64_t> uint64_hash;
-    std::hash<bool> bool_hash;
-    std::hash<int> int_hash;
-
-    uint64_t h = str_hash(job_id);
-    h ^= str_hash(title) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(service) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(method) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(parameters) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= uint64_hash(scheduled_time_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(recurrence_rule) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= uint64_hash(end_time_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= bool_hash(paused) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= int_hash(static_cast<int>(wake_policy)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= int_hash(static_cast<int>(sleep_policy)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= uint64_hash(wake_lead_time_s) + 0x9e3779b9 + (h << 6) + (h >> 2);
-
-    return h;
+    // Use centralized hash computation from ifex-scheduler library
+    // Included fields: job_id, title, service, method, parameters_json, scheduled_time_ms,
+    //                  recurrence_rule, end_time_ms, paused, wake_policy, sleep_policy, wake_lead_time_s
+    // Excluded fields: status, next_run_time_ms, created_at_ms, updated_at_ms, version
+    return sched_lib::compute_job_content_hash(ToLibraryJob(*this));
 }
 
 // =============================================================================
@@ -224,8 +229,8 @@ void SchedulerSyncBridge::ForceFullSync() {
     SendV2SyncMessage(jobs, true /* include_all_jobs */);
 }
 
-uint32_t SchedulerSyncBridge::GetStateChecksum() const {
-    return ComputeStateChecksum();
+uint64_t SchedulerSyncBridge::GetStateChecksum() const {
+    return ComputeStateChecksumXxHash();
 }
 
 // =============================================================================
@@ -507,36 +512,6 @@ void SchedulerSyncBridge::MaybeSendHeartbeat() {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         stats_.heartbeats_sent++;
     }
-}
-
-uint32_t SchedulerSyncBridge::ComputeStateChecksum() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-
-    // Simple CRC32-like checksum
-    uint32_t crc = 0xFFFFFFFF;
-
-    // Sort by job_id for deterministic ordering
-    std::vector<std::string> sorted_ids;
-    for (const auto& [id, _] : synced_state_) {
-        sorted_ids.push_back(id);
-    }
-    std::sort(sorted_ids.begin(), sorted_ids.end());
-
-    for (const auto& id : sorted_ids) {
-        const auto& state = synced_state_.at(id);
-        uint64_t hash = state.ComputeHash();
-
-        // Mix hash into CRC
-        for (int i = 0; i < 8; ++i) {
-            uint8_t byte = (hash >> (i * 8)) & 0xFF;
-            crc ^= byte;
-            for (int j = 0; j < 8; ++j) {
-                crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
-            }
-        }
-    }
-
-    return crc ^ 0xFFFFFFFF;
 }
 
 std::string SchedulerSyncBridge::GenerateInstanceId() {
@@ -1131,7 +1106,7 @@ void SchedulerSyncBridge::ProcessCloudJob(const sync_v2::JobRecord& remote_job) 
     const std::string& job_id = remote_job.job_id();
 
     // Get local version if exists
-    std::optional<sync::VersionVector> local_version;
+    std::optional<sched_lib::VersionVector> local_version;
     sync_v2::JobAuthority authority = remote_job.authority();
 
     {
@@ -1143,33 +1118,33 @@ void SchedulerSyncBridge::ProcessCloudJob(const sync_v2::JobRecord& remote_job) 
     }
 
     // Use sync engine to determine action
-    sync::VersionVector remote_version(
+    sched_lib::VersionVector remote_version(
         remote_job.version().cloud_seq(),
         remote_job.version().vehicle_seq());
 
-    sync::SyncResult result = sync::SyncEngine::process_remote(
+    sched_lib::SyncResult result = sched_lib::SyncEngine::process_remote(
         remote_version,
         local_version,
-        static_cast<sync::JobAuthority>(authority),
+        static_cast<sched_lib::JobAuthority>(authority),
         false  // We are vehicle side
     );
 
     switch (result.action) {
-        case sync::SyncResult::NO_ACTION:
+        case sched_lib::SyncResult::NO_ACTION:
             VLOG(1) << "Job " << job_id << ": no action (already in sync)";
             break;
 
-        case sync::SyncResult::ACCEPT_REMOTE:
+        case sched_lib::SyncResult::ACCEPT_REMOTE:
             VLOG(1) << "Job " << job_id << ": accepting remote version";
             ApplyCloudJob(remote_job);
             break;
 
-        case sync::SyncResult::REJECT_REMOTE:
+        case sched_lib::SyncResult::REJECT_REMOTE:
             VLOG(1) << "Job " << job_id << ": rejecting remote (local dominates)";
             // Our local version is newer - will be synced on next outbound
             break;
 
-        case sync::SyncResult::CONFLICT_RESOLVED:
+        case sched_lib::SyncResult::CONFLICT_RESOLVED:
             LOG(INFO) << "Job " << job_id << ": conflict resolved, winner=" << result.winner;
             if (result.winner == "cloud") {
                 ApplyCloudJob(remote_job);
@@ -1190,27 +1165,22 @@ void SchedulerSyncBridge::ProcessCloudJob(const sync_v2::JobRecord& remote_job) 
 uint64_t SchedulerSyncBridge::ComputeStateChecksumXxHash() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
 
-    // Use xxHash64 for checksum (simplified implementation using std::hash)
-    // In production, use xxHash library for proper xxHash64
-    uint64_t hash = 0x9e3779b97f4a7c15ULL;  // xxHash seed
+    // Use centralized checksum computation from ifex-scheduler library
+    // Jobs must be sorted by job_id for deterministic results
+    std::vector<sched_lib::Job> jobs;
+    jobs.reserve(synced_state_.size());
 
-    // Sort by job_id for deterministic ordering
-    std::vector<std::string> sorted_ids;
-    for (const auto& [id, _] : synced_state_) {
-        sorted_ids.push_back(id);
-    }
-    std::sort(sorted_ids.begin(), sorted_ids.end());
-
-    for (const auto& id : sorted_ids) {
-        const auto& state = synced_state_.at(id);
-        // Include only content fields in checksum (not execution state)
-        uint64_t job_hash = state.ComputeHash();
-        // Mix using FNV-1a style
-        hash ^= job_hash;
-        hash *= 0x100000001b3ULL;
+    for (const auto& [id, state] : synced_state_) {
+        jobs.push_back(ToLibraryJob(state));
     }
 
-    return hash;
+    // Sort by job_id for deterministic ordering (required by library)
+    std::sort(jobs.begin(), jobs.end(),
+              [](const sched_lib::Job& a, const sched_lib::Job& b) {
+                  return a.job_id < b.job_id;
+              });
+
+    return sched_lib::compute_state_checksum(jobs);
 }
 
 void SchedulerSyncBridge::RecordExecution(const std::string& job_id,
@@ -1271,14 +1241,24 @@ void SchedulerSyncBridge::ApplyCloudJob(const sync_v2::JobRecord& remote_job) {
         exists_locally = (synced_state_.find(job_id) != synced_state_.end());
     }
 
-    // Handle deleted jobs
+    // Handle deleted jobs - keep tombstone until both sides confirm
     if (remote_job.deleted()) {
         auto result = DeleteJobFromScheduler(job_id);
         if (result.success || !exists_locally) {
+            // Keep tombstone in synced_state_ for sync back to cloud
+            // Cloud will delete from DB when it receives our V2C tombstone
             std::lock_guard<std::mutex> lock(state_mutex_);
-            synced_state_.erase(job_id);
+            SyncedJobState tombstone;
+            tombstone.job_id = job_id;
+            tombstone.deleted = true;
+            tombstone.deleted_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            tombstone.version.cloud_seq = remote_job.version().cloud_seq();
+            tombstone.version.vehicle_seq = remote_job.version().vehicle_seq();
+            tombstone.needs_sync = true;  // Will be sent in next V2C sync
+            synced_state_[job_id] = tombstone;
         }
-        LOG(INFO) << "Applied cloud deletion for job " << job_id;
+        LOG(INFO) << "Applied cloud deletion for job " << job_id << ", tombstone queued for sync";
         return;
     }
 
