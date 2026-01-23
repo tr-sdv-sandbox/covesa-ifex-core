@@ -1,7 +1,7 @@
 #pragma once
 
 #include "echo_service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <memory>
 #include <string>

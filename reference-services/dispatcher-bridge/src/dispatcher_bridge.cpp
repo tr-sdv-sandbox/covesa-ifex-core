@@ -13,8 +13,8 @@
 
 // Generated proto headers
 #include "dispatcher-rpc-envelope.pb.h"
-#include "ifex-dispatcher-service.pb.h"
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "dispatcher-service.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 
 #include <chrono>
 #include <queue>

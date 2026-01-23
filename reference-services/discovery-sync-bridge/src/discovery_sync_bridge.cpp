@@ -455,9 +455,9 @@ void DiscoverySyncBridge::HandleC2vMessage(const std::vector<uint8_t>& payload) 
         return;
     }
 
-    if (envelope.has_schema_request()) {
+    if (envelope.has_request()) {
         // Cloud is requesting specific schemas
-        const auto& request = envelope.schema_request();
+        const auto& request = envelope.request();
         LOG(INFO) << "Cloud requested " << request.hashes_size() << " schemas";
 
         std::vector<std::string> requested_hashes;

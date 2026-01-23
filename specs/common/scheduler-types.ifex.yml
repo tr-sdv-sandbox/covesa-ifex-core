@@ -1,0 +1,249 @@
+---
+# Common Scheduler Types
+#
+# Shared data model for vehicle and cloud scheduler services.
+# Aligned with scheduler-sync-protocol-v2.md specification.
+#
+# This file defines the canonical types used for bidirectional job
+# synchronization between vehicle (onboard) and cloud (offboard).
+
+name: scheduler_types
+major_version: 2
+minor_version: 0
+description: >
+  Common data types for scheduler services and sync protocol.
+  Used by both vehicle scheduler-service and cloud-scheduler-service.
+  Aligned with scheduler-sync-protocol-v2.md specification.
+
+namespaces:
+  - name: types
+    description: Shared scheduler data types
+
+    # =========================================================================
+    # Enumerations (from sync protocol v2)
+    # =========================================================================
+
+    enumerations:
+      - name: job_authority_t
+        datatype: uint8
+        description: >
+          Who is authoritative for conflicts on this job.
+          Set at creation time, immutable thereafter.
+          Used by sync protocol to resolve concurrent modifications.
+        options:
+          - name: AUTHORITY_CLOUD
+            value: 0
+            description: Cloud wins conflicts (job created by cloud)
+          - name: AUTHORITY_VEHICLE
+            value: 1
+            description: Vehicle wins conflicts (job created on vehicle/phone)
+
+      - name: job_status_t
+        datatype: uint8
+        description: >
+          Job execution status. Vehicle-authoritative - only vehicle
+          updates this field based on actual execution state.
+        options:
+          - name: JOB_STATUS_PENDING
+            value: 0
+            description: Waiting to execute
+          - name: JOB_STATUS_RUNNING
+            value: 1
+            description: Currently executing
+          - name: JOB_STATUS_COMPLETED
+            value: 2
+            description: Finished successfully
+          - name: JOB_STATUS_FAILED
+            value: 3
+            description: Execution failed
+          - name: JOB_STATUS_CANCELLED
+            value: 4
+            description: Cancelled by user/system
+
+      - name: sync_state_t
+        datatype: uint8
+        description: >
+          Synchronization state between local and remote.
+          Derived locally by comparing version vectors, NOT transmitted.
+          Used for UI display and debugging.
+        options:
+          - name: SYNC_PENDING
+            value: 0
+            description: My version differs from last confirmed remote version
+          - name: SYNC_SYNCED
+            value: 1
+            description: My version matches last confirmed remote version
+
+      - name: wake_policy_t
+        datatype: uint8
+        description: >
+          Vehicle wake behavior for scheduled jobs.
+          Determines whether job can wake vehicle from sleep via RTC.
+        options:
+          - name: WAKE_NO_WAKE
+            value: 0
+            description: Only run if vehicle already awake
+          - name: WAKE_REQUIRED
+            value: 1
+            description: Wake vehicle via RTC timer to run job
+
+      - name: sleep_policy_t
+        datatype: uint8
+        description: >
+          Vehicle sleep behavior during job execution.
+          Controls whether vehicle can sleep while job is running.
+        options:
+          - name: SLEEP_NORMAL
+            value: 0
+            description: Normal sleep behavior after job completes
+          - name: SLEEP_INHIBIT
+            value: 1
+            description: Prevent sleep until job execution finishes
+
+    # =========================================================================
+    # Structs (from sync protocol v2)
+    # =========================================================================
+
+    structs:
+      - name: job_version_t
+        description: >
+          Two-component version vector for conflict detection.
+          Each component is incremented by its respective side on any change.
+        members:
+          - name: cloud_seq
+            datatype: uint64
+            description: Incremented by cloud on any change
+          - name: vehicle_seq
+            datatype: uint64
+            description: Incremented by vehicle on any change
+
+      - name: job_record_t
+        description: >
+          Complete job record with version tracking.
+          This is the canonical job structure used in sync protocol.
+          Both vehicle and cloud store jobs in this format.
+        members:
+          # --- Identity ---
+          - name: job_id
+            datatype: string
+            description: >
+              Globally unique ID with source namespace.
+              Format: <source>-<uuid> where source is "cloud", "veh-<vin>", or "phone"
+          - name: authority
+            datatype: job_authority_t
+            description: Who wins conflicts (immutable after creation)
+
+          # --- Version (for sync protocol) ---
+          - name: cloud_seq
+            datatype: uint64
+            description: Cloud sequence number (version vector component)
+          - name: vehicle_seq
+            datatype: uint64
+            description: Vehicle sequence number (version vector component)
+
+          # --- Lifecycle ---
+          - name: deleted
+            datatype: boolean
+            description: Soft delete tombstone flag
+            mandatory: false
+          - name: deleted_at_ms
+            datatype: uint64
+            description: When deleted (epoch ms, for GC timing only)
+            mandatory: false
+
+          # --- Content (included in checksum, synced) ---
+          - name: title
+            datatype: string
+            description: Human-readable job title
+          - name: service
+            datatype: string
+            description: Target service name
+          - name: method
+            datatype: string
+            description: Target method name
+          - name: parameters_json
+            datatype: string
+            description: JSON-encoded method parameters
+            mandatory: false
+          - name: scheduled_time_ms
+            datatype: uint64
+            description: When to run (epoch milliseconds UTC)
+          - name: recurrence_rule
+            datatype: string
+            description: iCal RRULE for recurring jobs
+            mandatory: false
+          - name: end_time_ms
+            datatype: uint64
+            description: Stop recurring after this (epoch ms, 0 = forever)
+            mandatory: false
+          - name: paused
+            datatype: boolean
+            description: User intent - job should not be scheduled until resumed
+            mandatory: false
+          - name: wake_policy
+            datatype: wake_policy_t
+            description: Whether to wake vehicle for this job
+            mandatory: false
+          - name: sleep_policy
+            datatype: sleep_policy_t
+            description: Sleep behavior during execution
+            mandatory: false
+          - name: wake_lead_time_s
+            datatype: uint32
+            description: Seconds before scheduled_time to wake vehicle
+            mandatory: false
+
+          # --- Execution state (vehicle-authoritative, NOT in checksum) ---
+          - name: status
+            datatype: job_status_t
+            description: Current execution status
+          - name: next_run_time_ms
+            datatype: uint64
+            description: Next scheduled run time (epoch ms)
+            mandatory: false
+          - name: last_executed_ms
+            datatype: uint64
+            description: Last execution timestamp (epoch ms)
+            mandatory: false
+
+          # --- Metadata (NOT in checksum) ---
+          - name: created_at_ms
+            datatype: uint64
+            description: Creation timestamp (epoch ms)
+          - name: updated_at_ms
+            datatype: uint64
+            description: Last update timestamp (epoch ms)
+          - name: created_by
+            datatype: string
+            description: User/system that created job
+            mandatory: false
+
+      - name: execution_record_t
+        description: >
+          Immutable record of a job execution.
+          Executions are append-only facts - they never conflict.
+          Used by sync protocol for execution history.
+        members:
+          - name: execution_id
+            datatype: string
+            description: Globally unique execution identifier
+          - name: job_id
+            datatype: string
+            description: Job that was executed
+          - name: executed_at_ms
+            datatype: uint64
+            description: When execution started (epoch ms)
+          - name: duration_ms
+            datatype: uint32
+            description: Execution duration in milliseconds
+          - name: status
+            datatype: job_status_t
+            description: Result - JOB_STATUS_COMPLETED or JOB_STATUS_FAILED
+          - name: result_json
+            datatype: string
+            description: JSON result (for completed jobs)
+            mandatory: false
+          - name: error_message
+            datatype: string
+            description: Error message (for failed jobs)
+            mandatory: false

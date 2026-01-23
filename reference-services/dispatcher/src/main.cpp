@@ -92,7 +92,7 @@ int main(int argc, char* argv[]) {
         if (!schema_found) {
             const char* schema_dir_env = std::getenv("IFEX_SCHEMA_DIR");
             if (schema_dir_env) {
-                std::string schema_path = std::string(schema_dir_env) + "/ifex-dispatcher-service.yml";
+                std::string schema_path = std::string(schema_dir_env) + "/dispatcher-service.ifex.yml";
                 std::ifstream schema_file(schema_path);
                 if (schema_file.is_open()) {
                     std::stringstream buffer;

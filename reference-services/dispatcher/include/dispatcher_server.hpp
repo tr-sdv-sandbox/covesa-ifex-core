@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 #include <ifex/discovery.hpp>
 #include "../src/dynamic_caller.hpp"
 #include <grpcpp/grpcpp.h>

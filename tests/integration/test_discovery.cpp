@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #include <glog/logging.h>
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <thread>
 #include <chrono>

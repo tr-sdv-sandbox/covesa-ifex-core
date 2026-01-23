@@ -32,11 +32,10 @@ add_subdirectory(discovery-sync-bridge)
 # Build scheduler sync bridge service
 add_subdirectory(scheduler-sync-bridge)
 
-# Copy IFEX files to build directory as resources
-file(GLOB IFEX_FILES "${CMAKE_CURRENT_SOURCE_DIR}/ifex/*.yml")
-foreach(IFEX_FILE ${IFEX_FILES})
+# Copy IFEX specs to build directory as resources
+file(GLOB VEHICLE_IFEX_FILES "${CMAKE_SOURCE_DIR}/specs/vehicle/*.ifex.yml")
+foreach(IFEX_FILE ${VEHICLE_IFEX_FILES})
     get_filename_component(IFEX_NAME ${IFEX_FILE} NAME)
     configure_file(${IFEX_FILE} ${CMAKE_CURRENT_BINARY_DIR}/ifex/${IFEX_NAME} COPYONLY)
-    # Also copy to the main binary directory for easier access
     configure_file(${IFEX_FILE} ${CMAKE_BINARY_DIR}/ifex/${IFEX_NAME} COPYONLY)
 endforeach()

@@ -20,7 +20,7 @@
 
 #include "backend_transport_client.hpp"
 #include "discovery-sync-envelope.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 
 #include <atomic>
 #include <chrono>

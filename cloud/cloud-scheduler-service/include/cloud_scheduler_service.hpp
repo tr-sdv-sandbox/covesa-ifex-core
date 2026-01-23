@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cloud-scheduler-service.grpc.pb.h"
+#include "scheduler-types.pb.h"
 #include "scheduler-sync-v2.pb.h"
 #include "cloud_backend_transport_client.hpp"
 
@@ -24,6 +25,10 @@
 
 namespace ifex::cloud {
 
+// Alias for the IFEX-generated namespace
+namespace sched = ::swdv::cloud_scheduler_service;
+namespace scheduler_types = ::swdv::scheduler_types;
+
 /// Configuration for CloudSchedulerService
 struct CloudSchedulerServiceConfig {
     std::string backend_transport_address = "localhost:50100";
@@ -32,10 +37,24 @@ struct CloudSchedulerServiceConfig {
 
 /// In-memory cloud scheduler service for testing.
 ///
-/// Provides the same gRPC API as the production cloud scheduler,
-/// but stores state in-memory instead of PostgreSQL.
+/// Provides the gRPC API defined by the IFEX cloud-scheduler-service spec.
+/// Each method is a separate gRPC service per IFEX conventions.
+/// Stores state in-memory instead of PostgreSQL.
 /// Uses CloudBackendTransportClient for vehicle communication.
-class CloudSchedulerService final : public ::ifex::cloud::scheduler::CloudSchedulerService::Service {
+class CloudSchedulerService final
+    : public sched::create_job_service::Service
+    , public sched::update_job_service::Service
+    , public sched::delete_job_service::Service
+    , public sched::pause_job_service::Service
+    , public sched::resume_job_service::Service
+    , public sched::trigger_job_service::Service
+    , public sched::get_job_service::Service
+    , public sched::list_jobs_service::Service
+    , public sched::get_job_executions_service::Service
+    , public sched::create_fleet_job_service::Service
+    , public sched::delete_fleet_job_service::Service
+    , public sched::get_fleet_job_stats_service::Service
+    , public sched::healthy_service::Service {
 public:
     explicit CloudSchedulerService(const CloudSchedulerServiceConfig& config);
     ~CloudSchedulerService();
@@ -53,161 +72,184 @@ public:
     /// Check if service is running
     bool IsRunning() const { return running_; }
 
+    /// Register all services with a gRPC server builder
+    void RegisterServices(grpc::ServerBuilder& builder);
+
     // =========================================================================
-    // gRPC Service Methods
+    // gRPC Service Methods (IFEX per-method services)
     // =========================================================================
 
-    grpc::Status CreateJob(
+    grpc::Status create_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::CreateJobRequest* request,
-        ::ifex::cloud::scheduler::CreateJobResponse* response) override;
+        const sched::create_job_request* request,
+        sched::create_job_response* response) override;
 
-    grpc::Status UpdateJob(
+    grpc::Status update_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::UpdateJobRequest* request,
-        ::ifex::cloud::scheduler::UpdateJobResponse* response) override;
+        const sched::update_job_request* request,
+        sched::update_job_response* response) override;
 
-    grpc::Status DeleteJob(
+    grpc::Status delete_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::DeleteJobRequest* request,
-        ::ifex::cloud::scheduler::DeleteJobResponse* response) override;
+        const sched::delete_job_request* request,
+        sched::delete_job_response* response) override;
 
-    grpc::Status PauseJob(
+    grpc::Status pause_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::PauseJobRequest* request,
-        ::ifex::cloud::scheduler::PauseJobResponse* response) override;
+        const sched::pause_job_request* request,
+        sched::pause_job_response* response) override;
 
-    grpc::Status ResumeJob(
+    grpc::Status resume_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::ResumeJobRequest* request,
-        ::ifex::cloud::scheduler::ResumeJobResponse* response) override;
+        const sched::resume_job_request* request,
+        sched::resume_job_response* response) override;
 
-    grpc::Status TriggerJob(
+    grpc::Status trigger_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::TriggerJobRequest* request,
-        ::ifex::cloud::scheduler::TriggerJobResponse* response) override;
+        const sched::trigger_job_request* request,
+        sched::trigger_job_response* response) override;
 
-    grpc::Status GetJob(
+    grpc::Status get_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::GetJobRequest* request,
-        ::ifex::cloud::scheduler::GetJobResponse* response) override;
+        const sched::get_job_request* request,
+        sched::get_job_response* response) override;
 
-    grpc::Status ListJobs(
+    grpc::Status list_jobs(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::ListJobsRequest* request,
-        ::ifex::cloud::scheduler::ListJobsResponse* response) override;
+        const sched::list_jobs_request* request,
+        sched::list_jobs_response* response) override;
 
-    grpc::Status GetJobExecutions(
+    grpc::Status get_job_executions(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::GetJobExecutionsRequest* request,
-        ::ifex::cloud::scheduler::GetJobExecutionsResponse* response) override;
+        const sched::get_job_executions_request* request,
+        sched::get_job_executions_response* response) override;
 
-    // Fleet operations (simplified for testing)
-    grpc::Status CreateFleetJob(
+    grpc::Status create_fleet_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::CreateFleetJobRequest* request,
-        ::ifex::cloud::scheduler::CreateFleetJobResponse* response) override;
+        const sched::create_fleet_job_request* request,
+        sched::create_fleet_job_response* response) override;
 
-    grpc::Status DeleteFleetJob(
+    grpc::Status delete_fleet_job(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::DeleteFleetJobRequest* request,
-        ::ifex::cloud::scheduler::DeleteFleetJobResponse* response) override;
+        const sched::delete_fleet_job_request* request,
+        sched::delete_fleet_job_response* response) override;
 
-    grpc::Status GetFleetJobStats(
+    grpc::Status get_fleet_job_stats(
         grpc::ServerContext* context,
-        const ::ifex::cloud::scheduler::GetFleetJobStatsRequest* request,
-        ::ifex::cloud::scheduler::GetFleetJobStatsResponse* response) override;
+        const sched::get_fleet_job_stats_request* request,
+        sched::get_fleet_job_stats_response* response) override;
+
+    grpc::Status healthy(
+        grpc::ServerContext* context,
+        const sched::healthy_request* request,
+        sched::healthy_response* response) override;
 
     // =========================================================================
     // Test Helpers
     // =========================================================================
 
-    /// Get count of jobs for a vehicle
+    /// Get number of jobs for a specific vehicle (excludes tombstones)
     size_t GetJobCount(const std::string& vehicle_id) const;
 
-    /// Get count of all jobs
+    /// Get total job count across all vehicles (excludes tombstones)
     size_t GetTotalJobCount() const;
 
-    /// Clear all in-memory state
+    /// Clear all jobs (for testing)
     void ClearAllJobs();
 
 private:
-    /// Generate a unique job ID
+    // =========================================================================
+    // Internal Implementation
+    // =========================================================================
+
+    /// Generate unique job ID
     std::string GenerateJobId();
 
-    /// Handle incoming sync message from vehicle
-    void HandleSyncMessage(const std::string& vehicle_id,
-                           const std::vector<uint8_t>& payload);
-
-    /// Send C2V_SyncMessage with pending jobs to a vehicle
-    void SendPendingJobsToVehicle(const std::string& vehicle_id);
-
-    /// Send TriggerJobRequest to a vehicle (the only imperative command)
-    bool SendTriggerJobRequest(const std::string& vehicle_id,
-                               const std::string& job_id,
-                               const std::string& requester_id);
-
-    /// Convert ISO8601 string to epoch milliseconds
+    /// Convert ISO8601 timestamp to epoch milliseconds
     static uint64_t Iso8601ToEpochMs(const std::string& iso_str);
 
     /// Convert epoch milliseconds to ISO8601 string
     static std::string EpochMsToIso8601(uint64_t epoch_ms);
 
-    CloudSchedulerServiceConfig config_;
-    std::unique_ptr<CloudBackendTransportClient> transport_;
+    /// Send pending jobs to vehicle via sync protocol
+    void SendPendingJobsToVehicle(const std::string& vehicle_id);
 
-    // In-memory job storage: vehicle_id -> job_id -> JobInfo
-    mutable std::mutex jobs_mutex_;
-    std::map<std::string, std::map<std::string, ::ifex::cloud::scheduler::JobInfo>> jobs_;
+    /// Send trigger job request to vehicle
+    bool SendTriggerJobRequest(
+        const std::string& vehicle_id,
+        const std::string& job_id,
+        const std::string& requester_id);
 
-    // Execution history: vehicle_id -> job_id -> [ExecutionInfo]
-    mutable std::mutex executions_mutex_;
-    std::map<std::string, std::map<std::string, std::vector<::ifex::cloud::scheduler::ExecutionInfo>>> executions_;
-
-    // Sync v2: version vectors per job (vehicle_id -> job_id -> version)
-    std::map<std::string, std::map<std::string, ifex::scheduler::VersionVector>> job_versions_;
-
-    // Sync v2: sync state per job (for UI display - NOT transmitted in protocol)
-    std::map<std::string, std::map<std::string, ::ifex::cloud::scheduler::CloudSyncState>> job_sync_states_;
-
-    std::atomic<bool> running_{false};
-    std::atomic<uint64_t> job_counter_{0};
+    /// Handle incoming sync message from vehicle
+    void HandleSyncMessage(
+        const std::string& vehicle_id,
+        const std::vector<uint8_t>& payload);
 
     // =========================================================================
     // Sync Protocol v2 Methods
     // =========================================================================
 
-    /// Handle incoming V2C_SyncMessage from vehicle
-    void HandleV2SyncMessage(const std::string& vehicle_id,
-                             const swdv::scheduler_sync_v2::V2C_SyncMessage& msg);
+    /// Compute content hash for a job
+    uint64_t ComputeJobHash(const sched::job_info_t& job);
 
-    /// Process a single job record from vehicle sync
-    void ProcessVehicleJob(const std::string& vehicle_id,
-                          const swdv::scheduler_sync_v2::JobRecord& record);
-
-    /// Process execution records from vehicle
-    void ProcessVehicleExecutions(const std::string& vehicle_id,
-                                  const google::protobuf::RepeatedPtrField<swdv::scheduler_sync_v2::ExecutionRecord>& executions);
-
-    /// Send C2V_SyncMessage to vehicle with pending changes
-    void SendV2SyncMessage(const std::string& vehicle_id);
-
-    /// Compute state checksum for a vehicle's jobs (for quiescence detection)
-    /// Uses ifex-scheduler library for xxHash64 checksum
+    /// Compute state checksum for a vehicle
     uint64_t ComputeStateChecksum(const std::string& vehicle_id) const;
 
-    /// Compute hash for a single job (content fields only, excludes metadata)
-    /// Uses ifex-scheduler library for FNV-1a style hash
-    static uint64_t ComputeJobHash(const ::ifex::cloud::scheduler::JobInfo& job);
+    /// Handle v2 sync message from vehicle
+    void HandleV2SyncMessage(
+        const std::string& vehicle_id,
+        const swdv::scheduler_sync_v2::V2C_SyncMessage& msg);
 
-    /// Convert JobInfo to v2 JobRecord
-    void JobInfoToRecord(const ::ifex::cloud::scheduler::JobInfo& job,
-                        const ifex::scheduler::VersionVector& version,
-                        swdv::scheduler_sync_v2::JobRecord* record);
+    /// Process a job record from vehicle
+    void ProcessVehicleJob(
+        const std::string& vehicle_id,
+        const swdv::scheduler_sync_v2::JobRecord& record);
 
-    /// Convert v2 JobRecord to JobInfo
-    void RecordToJobInfo(const swdv::scheduler_sync_v2::JobRecord& record,
-                        ::ifex::cloud::scheduler::JobInfo* job);
+    /// Process execution records from vehicle
+    void ProcessVehicleExecutions(
+        const std::string& vehicle_id,
+        const google::protobuf::RepeatedPtrField<swdv::scheduler_sync_v2::ExecutionRecord>& executions);
+
+    /// Send v2 sync message to vehicle
+    void SendV2SyncMessage(const std::string& vehicle_id);
+
+    /// Convert job_info_t to sync v2 JobRecord
+    void JobInfoToRecord(
+        const sched::job_info_t& job,
+        const ifex::scheduler::VersionVector& version,
+        swdv::scheduler_sync_v2::JobRecord* record);
+
+    /// Convert sync v2 JobRecord to job_info_t
+    void RecordToJobInfo(
+        const swdv::scheduler_sync_v2::JobRecord& record,
+        sched::job_info_t* job);
+
+    // =========================================================================
+    // State
+    // =========================================================================
+
+    CloudSchedulerServiceConfig config_;
+    std::atomic<bool> running_{false};
+
+    // Transport client for vehicle communication
+    std::unique_ptr<CloudBackendTransportClient> transport_;
+
+    // Job storage: vehicle_id -> job_id -> job
+    mutable std::mutex jobs_mutex_;
+    std::map<std::string, std::map<std::string, sched::job_info_t>> jobs_;
+
+    // Version vectors for sync v2: vehicle_id -> job_id -> version
+    std::map<std::string, std::map<std::string, ifex::scheduler::VersionVector>> job_versions_;
+
+    // Sync state tracking: vehicle_id -> job_id -> sync_state
+    std::map<std::string, std::map<std::string, scheduler_types::sync_state_t>> job_sync_states_;
+
+    // Execution history: vehicle_id -> job_id -> executions
+    mutable std::mutex executions_mutex_;
+    std::map<std::string, std::map<std::string, std::vector<sched::execution_info_t>>> executions_;
+
+    // Job ID counter
+    std::atomic<uint64_t> job_counter_{0};
 };
 
 }  // namespace ifex::cloud

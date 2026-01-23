@@ -12,7 +12,7 @@
 #include "discovery_sync_bridge.hpp"
 #include "ifex_content_ids.hpp"
 #include "discovery-sync-envelope.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 
 #include <gtest/gtest.h>
 #include <glog/logging.h>
@@ -510,7 +510,7 @@ TEST_F(DiscoverySyncBridgeIntegrationTest, SchemaRequestResponse) {
     // First, create the schema request message
     sync_pb::discovery_envelope_t schema_request;
     schema_request.set_vehicle_id(vehicle_id_);
-    auto* request = schema_request.mutable_schema_request();
+    auto* request = schema_request.mutable_request();
     request->add_hashes(service_hash);
 
     std::string request_serialized;

@@ -106,7 +106,7 @@ TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithManifest) {
     ASSERT_TRUE(parsed.ParseFromString(serialized));
     EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
     EXPECT_TRUE(parsed.has_manifest());
-    EXPECT_FALSE(parsed.has_schema_request());
+    EXPECT_FALSE(parsed.has_request());
     EXPECT_FALSE(parsed.has_schemas());
     ASSERT_EQ(parsed.manifest().hashes_size(), 1);
     EXPECT_EQ(parsed.manifest().hashes(0).schema_hash(), "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab");
@@ -116,7 +116,7 @@ TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithSchemaRequest) {
     swdv::discovery_sync_envelope::discovery_envelope_t envelope;
     envelope.set_vehicle_id("vehicle-001");
 
-    auto* request = envelope.mutable_schema_request();
+    auto* request = envelope.mutable_request();
     request->add_hashes("unknown_hash_1");
     request->add_hashes("unknown_hash_2");
 
@@ -127,9 +127,9 @@ TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithSchemaRequest) {
     ASSERT_TRUE(parsed.ParseFromString(serialized));
     EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
     EXPECT_FALSE(parsed.has_manifest());
-    EXPECT_TRUE(parsed.has_schema_request());
+    EXPECT_TRUE(parsed.has_request());
     EXPECT_FALSE(parsed.has_schemas());
-    ASSERT_EQ(parsed.schema_request().hashes_size(), 2);
+    ASSERT_EQ(parsed.request().hashes_size(), 2);
 }
 
 TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithSchemas) {
@@ -148,7 +148,7 @@ TEST_F(DiscoverySyncBridgeTest, DiscoveryEnvelopeWithSchemas) {
     ASSERT_TRUE(parsed.ParseFromString(serialized));
     EXPECT_EQ(parsed.vehicle_id(), "vehicle-001");
     EXPECT_FALSE(parsed.has_manifest());
-    EXPECT_FALSE(parsed.has_schema_request());
+    EXPECT_FALSE(parsed.has_request());
     EXPECT_TRUE(parsed.has_schemas());
     ASSERT_EQ(parsed.schemas().schemas_size(), 1);
     EXPECT_EQ(parsed.schemas().schemas(0).schema_hash(), "hash1");

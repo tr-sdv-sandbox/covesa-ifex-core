@@ -45,6 +45,10 @@ target_include_directories(ifex-scheduler
 # C++17 required
 target_compile_features(ifex-scheduler PUBLIC cxx_std_17)
 
+# JSON normalization for consistent hashing across platforms
+find_package(nlohmann_json REQUIRED)
+target_link_libraries(ifex-scheduler PUBLIC nlohmann_json::nlohmann_json)
+
 # Alias for consistent naming
 add_library(ifex::scheduler ALIAS ifex-scheduler)
 

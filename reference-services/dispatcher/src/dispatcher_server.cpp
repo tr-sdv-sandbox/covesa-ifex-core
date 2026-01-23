@@ -1,5 +1,5 @@
 #include "dispatcher_server.hpp"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <ifex/parser.hpp>
 #include <ifex/network.hpp>
 #include <glog/logging.h>

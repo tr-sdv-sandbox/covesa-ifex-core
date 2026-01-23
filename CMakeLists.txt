@@ -39,26 +39,38 @@ endif()
 # Build protobuf generation first if we're building core or services
 if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     # Proto directories:
-    #   ifex-generated/ - Generated from IFEX YAML (DO NOT EDIT)
-    #   internal/       - Hand-written internal protocols (sync, etc.)
-    #   api/            - Hand-written external API definitions
+    #   ifex-generated/common/        - Common type protos (from specs/common/)
+    #   ifex-generated/vehicle/       - Vehicle service protos (from specs/vehicle/)
+    #   ifex-generated/cloud/         - Cloud service protos (from specs/cloud/)
+    #   ifex-generated/test-services/ - Test service protos
+    #   internal/                     - Hand-written internal protocols (sync, etc.)
+    #   api/                          - Hand-written external API definitions
     set(PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/proto)
     set(PROTO_IFEX_GENERATED_DIR ${PROTO_DIR}/ifex-generated)
+    set(PROTO_IFEX_COMMON_DIR ${PROTO_IFEX_GENERATED_DIR}/common)
+    set(PROTO_IFEX_VEHICLE_DIR ${PROTO_IFEX_GENERATED_DIR}/vehicle)
+    set(PROTO_IFEX_CLOUD_DIR ${PROTO_IFEX_GENERATED_DIR}/cloud)
+    set(PROTO_IFEX_TEST_DIR ${PROTO_IFEX_GENERATED_DIR}/test-services)
     set(PROTO_INTERNAL_DIR ${PROTO_DIR}/internal)
     set(PROTO_API_DIR ${PROTO_DIR}/api)
 
     # Check if proto files exist (sample check for IFEX-generated files)
-    if(NOT EXISTS ${PROTO_IFEX_GENERATED_DIR}/service-discovery-service.proto)
-        message(FATAL_ERROR "Proto files not found in ${PROTO_IFEX_GENERATED_DIR}. Please run ./generate_proto.sh first.")
+    if(NOT EXISTS ${PROTO_IFEX_VEHICLE_DIR}/discovery-service.proto)
+        message(FATAL_ERROR "Proto files not found in ${PROTO_IFEX_VEHICLE_DIR}. Please run ./generate_proto.sh first.")
     endif()
 
     # Find all proto files from all directories
-    file(GLOB PROTO_FILES_IFEX ${PROTO_IFEX_GENERATED_DIR}/*.proto)
+    file(GLOB PROTO_FILES_COMMON ${PROTO_IFEX_COMMON_DIR}/*.proto)
+    file(GLOB PROTO_FILES_VEHICLE ${PROTO_IFEX_VEHICLE_DIR}/*.proto)
+    file(GLOB PROTO_FILES_CLOUD ${PROTO_IFEX_CLOUD_DIR}/*.proto)
+    file(GLOB PROTO_FILES_TEST ${PROTO_IFEX_TEST_DIR}/*.proto)
     file(GLOB PROTO_FILES_INTERNAL ${PROTO_INTERNAL_DIR}/*.proto)
     file(GLOB PROTO_FILES_API ${PROTO_API_DIR}/*.proto)
-    set(PROTO_FILES ${PROTO_FILES_IFEX} ${PROTO_FILES_INTERNAL} ${PROTO_FILES_API})
+    set(PROTO_FILES ${PROTO_FILES_COMMON} ${PROTO_FILES_VEHICLE} ${PROTO_FILES_CLOUD} ${PROTO_FILES_TEST} ${PROTO_FILES_INTERNAL} ${PROTO_FILES_API})
 
     # Generate C++ sources from proto files
+    # Proto files are organized in subdirectories, and protoc preserves the directory structure
+    # when using -I on the parent directory to support imports.
     set(PROTO_SRCS)
     set(PROTO_HDRS)
     set(GRPC_SRCS)
@@ -66,15 +78,35 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
 
     foreach(proto_file ${PROTO_FILES})
         get_filename_component(proto_name ${proto_file} NAME_WE)
+        get_filename_component(proto_dir ${proto_file} DIRECTORY)
 
-        set(proto_src "${CMAKE_BINARY_DIR}/proto/${proto_name}.pb.cc")
-        set(proto_hdr "${CMAKE_BINARY_DIR}/proto/${proto_name}.pb.h")
-        set(grpc_src "${CMAKE_BINARY_DIR}/proto/${proto_name}.grpc.pb.cc")
-        set(grpc_hdr "${CMAKE_BINARY_DIR}/proto/${proto_name}.grpc.pb.h")
+        # Determine the output subdirectory based on the proto file location
+        # IFEX-generated protos: preserve subdirectory structure (common/, vehicle/, cloud/, test-services/)
+        # Internal/API protos: flat structure (no subdirectory)
+        if(proto_file MATCHES "${PROTO_IFEX_GENERATED_DIR}")
+            # Get relative path from PROTO_IFEX_GENERATED_DIR
+            file(RELATIVE_PATH proto_subdir ${PROTO_IFEX_GENERATED_DIR} ${proto_dir})
+            set(proto_out_dir "${CMAKE_BINARY_DIR}/proto/${proto_subdir}")
+        else()
+            set(proto_out_dir "${CMAKE_BINARY_DIR}/proto")
+            set(proto_subdir "")
+        endif()
+
+        if(proto_subdir)
+            set(proto_src "${CMAKE_BINARY_DIR}/proto/${proto_subdir}/${proto_name}.pb.cc")
+            set(proto_hdr "${CMAKE_BINARY_DIR}/proto/${proto_subdir}/${proto_name}.pb.h")
+            set(grpc_src "${CMAKE_BINARY_DIR}/proto/${proto_subdir}/${proto_name}.grpc.pb.cc")
+            set(grpc_hdr "${CMAKE_BINARY_DIR}/proto/${proto_subdir}/${proto_name}.grpc.pb.h")
+        else()
+            set(proto_src "${CMAKE_BINARY_DIR}/proto/${proto_name}.pb.cc")
+            set(proto_hdr "${CMAKE_BINARY_DIR}/proto/${proto_name}.pb.h")
+            set(grpc_src "${CMAKE_BINARY_DIR}/proto/${proto_name}.grpc.pb.cc")
+            set(grpc_hdr "${CMAKE_BINARY_DIR}/proto/${proto_name}.grpc.pb.h")
+        endif()
 
         add_custom_command(
             OUTPUT ${proto_src} ${proto_hdr} ${grpc_src} ${grpc_hdr}
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/proto
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${proto_out_dir}
             COMMAND ${Protobuf_PROTOC_EXECUTABLE}
             ARGS --grpc_out=${CMAKE_BINARY_DIR}/proto
                  --cpp_out=${CMAKE_BINARY_DIR}/proto
@@ -102,6 +134,10 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     target_include_directories(ifex-proto-generated
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/proto>
+            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/proto/common>
+            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/proto/vehicle>
+            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/proto/cloud>
+            $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/proto/test-services>
             $<INSTALL_INTERFACE:include/ifex/proto>
     )
 

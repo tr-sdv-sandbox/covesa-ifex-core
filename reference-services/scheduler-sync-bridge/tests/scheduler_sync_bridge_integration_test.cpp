@@ -12,8 +12,8 @@
 #include "scheduler_sync_bridge.hpp"
 #include "ifex_content_ids.hpp"
 #include "scheduler-sync-v2.pb.h"
-#include "ifex-scheduler-service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "scheduler-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 
 #include <gtest/gtest.h>
 #include <glog/logging.h>

@@ -11,7 +11,7 @@
 #include "ifex/discovery.hpp"
 #include "ifex/network.hpp"
 #include "settings_server.hpp"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 
 using json = nlohmann::json;
 

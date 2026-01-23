@@ -1,0 +1,67 @@
+// Discovery Sync Envelope - Wire format for vehicle-to-cloud service registry sync
+// This is an internal protocol, NOT a gRPC service definition
+// See specs/protocols/discovery-sync-protocol.md for full specification
+syntax = "proto3";
+
+package swdv.discovery_sync_envelope;
+
+// Sync event type
+enum sync_event_type_t {
+    FULL_SYNC = 0;             // Complete state dump (on connect/reconnect)
+    SERVICE_REGISTERED = 1;    // New service registered
+    SERVICE_UNREGISTERED = 2;  // Service unregistered
+    SERVICE_STATUS_CHANGED = 3;// Service status or heartbeat changed
+    HEARTBEAT = 4;             // Sync bridge heartbeat (no state change)
+}
+
+// Service status
+enum service_status_t {
+    AVAILABLE = 0;
+    UNAVAILABLE = 1;
+    STARTING = 2;
+    STOPPING = 3;
+    ERROR = 4;
+}
+
+// Transport type
+enum transport_type_t {
+    GRPC = 0;
+    HTTP_REST = 1;
+    DBUS = 2;
+    SOMEIP = 3;
+    MQTT = 4;
+}
+
+// Hash-based sync messages
+message hash_entry_t {
+    string service_name = 1;
+    string version = 2;
+    string schema_hash = 3;     // SHA-256 hash of IFEX schema
+}
+
+message hash_list_t {
+    repeated hash_entry_t hashes = 1;
+}
+
+message schema_request_t {
+    repeated string hashes = 1;  // SHA-256 hashes cloud wants
+}
+
+message schema_entry_t {
+    string schema_hash = 1;
+    string ifex_schema = 2;      // Full IFEX YAML
+}
+
+message schema_map_t {
+    repeated schema_entry_t schemas = 1;
+}
+
+// Main envelope for discovery sync
+// Sent over v2c/{vehicle_id}/201 and c2v/{vehicle_id}/201
+message discovery_envelope_t {
+    string vehicle_id = 1;
+    string instance_id = 2;      // Bridge instance (for restart detection)
+    hash_list_t manifest = 3;    // V2C: vehicle's hash manifest
+    schema_request_t request = 4;// C2V: cloud requesting schemas
+    schema_map_t schemas = 5;    // V2C: requested schemas
+}

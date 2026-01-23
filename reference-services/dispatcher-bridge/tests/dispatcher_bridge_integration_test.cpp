@@ -329,7 +329,7 @@ private:
             } else if (name == "dispatcher") {
                 std::string listen_param = "--listen=" + listen_addr;
                 std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
-                std::string schema_path = get_schema_dir() + "/ifex-dispatcher-service.yml";
+                std::string schema_path = get_schema_dir() + "/dispatcher-service.ifex.yml";
                 std::string schema_param = "--ifex-schema=" + schema_path;
                 execl(executable.c_str(), executable.c_str(),
                       listen_param.c_str(),

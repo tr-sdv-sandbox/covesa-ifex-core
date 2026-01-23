@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 #include <glog/logging.h>
-#include "ifex-scheduler-service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "scheduler-service.grpc.pb.h"
+#include "scheduler-types.pb.h"
+#include "discovery-service.grpc.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -169,11 +170,11 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
     LOG(INFO) << "Job status after execution: " << job_status;
 
     // Job should have been executed (status COMPLETED or at least not PENDING)
-    EXPECT_NE(job_status, swdv::ifex_scheduler::PENDING)
+    EXPECT_NE(job_status, swdv::scheduler_types::JOB_STATUS_PENDING)
         << "Job should have been executed by now";
 
     // Verify the echo service response was captured
-    if (job_status == swdv::ifex_scheduler::COMPLETED) {
+    if (job_status == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
         const auto& result = get_response.job().result();
         EXPECT_FALSE(result.empty()) << "Completed job should have a result";
         LOG(INFO) << "Job result: " << result;
@@ -331,7 +332,7 @@ TEST_F(FullChainIntegrationTest, MultipleJobsExecuteInOrder) {
         auto status = get_stub->get_job(&context, request, &response);
         ASSERT_TRUE(status.ok());
 
-        if (response.job().status() == swdv::ifex_scheduler::COMPLETED) {
+        if (response.job().status() == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
             completed_count++;
         }
     }

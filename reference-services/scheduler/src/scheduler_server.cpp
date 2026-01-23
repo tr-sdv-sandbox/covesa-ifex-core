@@ -203,7 +203,7 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     }
 
     job->recurrence_rule = j.value("recurrence_rule", "");
-    job->status = static_cast<swdv::ifex_scheduler::job_status_t>(j.at("status").get<int>());
+    job->status = static_cast<swdv::scheduler_types::job_status_t>(j.at("status").get<int>());
 
     if (j.contains("created_at_ms")) {
         job->created_at = MsToTimePoint(j.at("created_at_ms").get<uint64_t>());
@@ -243,9 +243,9 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     }
 
     // Wake/Sleep policies (with defaults for backward compatibility)
-    job->wake_policy = static_cast<swdv::ifex_scheduler::wake_policy_t>(
+    job->wake_policy = static_cast<swdv::scheduler_types::wake_policy_t>(
         j.value("wake_policy", 0));
-    job->sleep_policy = static_cast<swdv::ifex_scheduler::sleep_policy_t>(
+    job->sleep_policy = static_cast<swdv::scheduler_types::sleep_policy_t>(
         j.value("sleep_policy", 0));
     job->wake_lead_time_s = j.value("wake_lead_time_s", 0u);
 
@@ -295,19 +295,19 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
 
     // Execution state (map scheduler status to sync status)
     switch (status) {
-        case swdv::ifex_scheduler::PENDING:
+        case swdv::scheduler_types::JOB_STATUS_PENDING:
             proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
             break;
-        case swdv::ifex_scheduler::RUNNING:
+        case swdv::scheduler_types::JOB_STATUS_RUNNING:
             proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_RUNNING);
             break;
-        case swdv::ifex_scheduler::COMPLETED:
+        case swdv::scheduler_types::JOB_STATUS_COMPLETED:
             proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
             break;
-        case swdv::ifex_scheduler::FAILED:
+        case swdv::scheduler_types::JOB_STATUS_FAILED:
             proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_FAILED);
             break;
-        case swdv::ifex_scheduler::CANCELLED:
+        case swdv::scheduler_types::JOB_STATUS_CANCELLED:
             proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED);
             break;
     }
@@ -320,10 +320,10 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
     }
 
     // Power management
-    proto->set_wake_policy(wake_policy == swdv::ifex_scheduler::WAKE_REQUIRED
+    proto->set_wake_policy(wake_policy == swdv::scheduler_types::WAKE_REQUIRED
         ? swdv::scheduler_sync_v2::WAKE_REQUIRED
         : swdv::scheduler_sync_v2::WAKE_NO_WAKE);
-    proto->set_sleep_policy(sleep_policy == swdv::ifex_scheduler::INHIBIT
+    proto->set_sleep_policy(sleep_policy == swdv::scheduler_types::SLEEP_INHIBIT
         ? swdv::scheduler_sync_v2::SLEEP_INHIBIT
         : swdv::scheduler_sync_v2::SLEEP_NORMAL);
     proto->set_wake_lead_time_s(wake_lead_time_s);
@@ -370,19 +370,19 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
     // Execution state (map sync status to scheduler status)
     switch (proto.status()) {
         case swdv::scheduler_sync_v2::JOB_STATUS_PENDING:
-            job->status = swdv::ifex_scheduler::PENDING;
+            job->status = swdv::scheduler_types::JOB_STATUS_PENDING;
             break;
         case swdv::scheduler_sync_v2::JOB_STATUS_RUNNING:
-            job->status = swdv::ifex_scheduler::RUNNING;
+            job->status = swdv::scheduler_types::JOB_STATUS_RUNNING;
             break;
         case swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED:
-            job->status = swdv::ifex_scheduler::COMPLETED;
+            job->status = swdv::scheduler_types::JOB_STATUS_COMPLETED;
             break;
         case swdv::scheduler_sync_v2::JOB_STATUS_FAILED:
-            job->status = swdv::ifex_scheduler::FAILED;
+            job->status = swdv::scheduler_types::JOB_STATUS_FAILED;
             break;
         case swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED:
-            job->status = swdv::ifex_scheduler::CANCELLED;
+            job->status = swdv::scheduler_types::JOB_STATUS_CANCELLED;
             break;
     }
 
@@ -395,11 +395,11 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
 
     // Power management
     job->wake_policy = (proto.wake_policy() == swdv::scheduler_sync_v2::WAKE_REQUIRED)
-        ? swdv::ifex_scheduler::WAKE_REQUIRED
-        : swdv::ifex_scheduler::NO_WAKE;
+        ? swdv::scheduler_types::WAKE_REQUIRED
+        : swdv::scheduler_types::WAKE_NO_WAKE;
     job->sleep_policy = (proto.sleep_policy() == swdv::scheduler_sync_v2::SLEEP_INHIBIT)
-        ? swdv::ifex_scheduler::INHIBIT
-        : swdv::ifex_scheduler::NORMAL;
+        ? swdv::scheduler_types::SLEEP_INHIBIT
+        : swdv::scheduler_types::SLEEP_NORMAL;
     job->wake_lead_time_s = proto.wake_lead_time_s();
 
     // Metadata
@@ -803,7 +803,7 @@ grpc::Status SchedulerServer::pause_job(grpc::ServerContext* context,
             auto& job = it->second;
 
             // Can only pause PENDING jobs
-            if (job->status != swdv::ifex_scheduler::PENDING) {
+            if (job->status != swdv::scheduler_types::JOB_STATUS_PENDING) {
                 response->set_success(false);
                 response->set_message("Can only pause PENDING jobs, current status: " +
                                      std::to_string(static_cast<int>(job->status)));
@@ -910,7 +910,7 @@ grpc::Status SchedulerServer::trigger_job(grpc::ServerContext* context,
             auto& job = it->second;
 
             // Can trigger PENDING jobs (whether paused or not)
-            if (job->status != swdv::ifex_scheduler::PENDING) {
+            if (job->status != swdv::scheduler_types::JOB_STATUS_PENDING) {
                 response->set_success(false);
                 response->set_message("Can only trigger PENDING jobs, current status: " +
                                      std::to_string(static_cast<int>(job->status)));
@@ -1095,7 +1095,7 @@ void SchedulerServer::JobExecutor() {
         {
             std::lock_guard<std::mutex> lock(jobs_mutex_);
             for (auto& [job_id, job] : jobs_) {
-                if (job->status == swdv::ifex_scheduler::PENDING &&
+                if (job->status == swdv::scheduler_types::JOB_STATUS_PENDING &&
                     !job->paused &&
                     job->scheduled_time <= now) {
                     jobs_to_execute.push_back(job.get());
@@ -1120,7 +1120,7 @@ void SchedulerServer::ExecuteJob(Job* job) {
 
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
-        job->status = swdv::ifex_scheduler::RUNNING;
+        job->status = swdv::scheduler_types::JOB_STATUS_RUNNING;
         job->updated_at = std::chrono::system_clock::now();
     }
 
@@ -1130,7 +1130,7 @@ void SchedulerServer::ExecuteJob(Job* job) {
 
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         if (success) {
-            job->status = swdv::ifex_scheduler::COMPLETED;
+            job->status = swdv::scheduler_types::JOB_STATUS_COMPLETED;
             job->executed_at = std::chrono::system_clock::now();
             job->updated_at = job->executed_at.value();
             LOG(INFO) << "Job " << job->id << " completed successfully";
@@ -1145,7 +1145,7 @@ void SchedulerServer::ExecuteJob(Job* job) {
                     auto new_job = std::make_unique<Job>(*job);
                     new_job->id = GenerateJobId();
                     new_job->scheduled_time = job->next_run_time.value();
-                    new_job->status = swdv::ifex_scheduler::PENDING;
+                    new_job->status = swdv::scheduler_types::JOB_STATUS_PENDING;
                     new_job->created_at = std::chrono::system_clock::now();
                     new_job->updated_at = new_job->created_at;
                     new_job->executed_at = std::nullopt;
@@ -1157,14 +1157,14 @@ void SchedulerServer::ExecuteJob(Job* job) {
                 }
             }
         } else {
-            job->status = swdv::ifex_scheduler::FAILED;
+            job->status = swdv::scheduler_types::JOB_STATUS_FAILED;
             job->updated_at = std::chrono::system_clock::now();
             LOG(ERROR) << "Job " << job->id << " failed";
         }
 
     } catch (const std::exception& e) {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
-        job->status = swdv::ifex_scheduler::FAILED;
+        job->status = swdv::scheduler_types::JOB_STATUS_FAILED;
         job->error_message = e.what();
         job->updated_at = std::chrono::system_clock::now();
         LOG(ERROR) << "Job " << job->id << " failed with exception: " << e.what();
@@ -1275,7 +1275,7 @@ bool SchedulerServer::MatchesFilter(const Job& job,
     }
 
     // Check completed filter
-    if (!filter.include_completed() && job.status == swdv::ifex_scheduler::COMPLETED) {
+    if (!filter.include_completed() && job.status == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
         return false;
     }
 

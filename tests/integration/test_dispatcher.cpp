@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <glog/logging.h>
-#include "ifex-dispatcher-service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "dispatcher-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <nlohmann/json.hpp>
 #include <thread>

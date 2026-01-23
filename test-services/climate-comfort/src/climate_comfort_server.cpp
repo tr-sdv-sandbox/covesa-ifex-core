@@ -5,7 +5,7 @@
 #include <sstream>
 #include <fstream>
 
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include "ifex/network.hpp"
 
 namespace swdv {

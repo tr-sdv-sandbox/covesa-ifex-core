@@ -27,7 +27,8 @@
 
 #include "backend_transport_client.hpp"
 #include "scheduler-sync-v2.pb.h"
-#include "ifex-scheduler-service.grpc.pb.h"
+#include "scheduler-service.grpc.pb.h"
+#include "scheduler-types.pb.h"
 
 // ifex-scheduler library (canonical job structure, hash, version vectors)
 #include "version_vector.hpp"
@@ -335,15 +336,15 @@ private:
 
     /// Map scheduler status to v2 status
     static swdv::scheduler_sync_v2::JobStatus MapStatus(
-        swdv::ifex_scheduler::job_status_t status);
+        swdv::scheduler_types::job_status_t status);
 
     /// Map scheduler wake policy to v2 wake policy
     static swdv::scheduler_sync_v2::WakePolicy MapWakePolicy(
-        swdv::ifex_scheduler::wake_policy_t policy);
+        swdv::scheduler_types::wake_policy_t policy);
 
     /// Map scheduler sleep policy to v2 sleep policy
     static swdv::scheduler_sync_v2::SleepPolicy MapSleepPolicy(
-        swdv::ifex_scheduler::sleep_policy_t policy);
+        swdv::scheduler_types::sleep_policy_t policy);
 
     // =========================================================================
     // Cloud Sync Handling (c2v)

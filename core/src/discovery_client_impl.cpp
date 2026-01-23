@@ -1,5 +1,5 @@
 #include "discovery_client_impl.hpp"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <glog/logging.h>
 #include <grpcpp/create_channel.h>
 #include <unordered_map>

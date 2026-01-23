@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "departure_orchestration_server.hpp"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 
 namespace {
 std::unique_ptr<grpc::Server> server;

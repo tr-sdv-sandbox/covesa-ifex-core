@@ -4,12 +4,21 @@
 {#   - uint8/uint16 → uint32 mapping #}
 {#   - Preserve explicit enum values #}
 {#   - Server-streaming RPCs for events #}
+{#   - IFEX includes → proto imports #}
 {# #}
 {# Based on COVESA IFEX AST_protobuf.tpl #}
 {# (C) 2022 Robert Bosch GmbH, (C) 2025 VEP Contributors, (C) 2025 COVESA #}
 // Generated from {{ item.name }}.ifex by covesa-ifex-core
 // DO NOT EDIT - regenerate with: ./generate_proto.sh
 syntax = "proto3";
+
+{# Generate proto imports from IFEX includes #}
+{# Convert specs/common/foo.ifex.yml → common/foo.proto #}
+{% for inc in item.includes|default([]) %}
+{%- set inc_path = inc.file -%}
+{%- set proto_path = inc_path|replace('specs/', '')|replace('.ifex.yml', '.proto')|replace('.yml', '.proto') -%}
+import "{{ proto_path }}";
+{% endfor %}
 
 {# Type mappings: IFEX → Protobuf #}
 {# Protobuf only has: int32, int64, uint32, uint64, sint32, sint64, bool, float, double, string, bytes #}
@@ -25,7 +34,9 @@ syntax = "proto3";
 {# boolean → bool #}
 {% set x=typedefs.__setitem__("boolean", "bool") %}
 
-{# Macro to convert IFEX types to protobuf, handling arrays #}
+{# Macro to convert IFEX types to protobuf, handling arrays and imported types #}
+{# Types with dots like "scheduler_types.job_status_t" are imported types - keep the dot #}
+{# Types without dots are local types #}
 {% macro convert_type(datatype) -%}
   {%- set is_array = datatype.endswith('[]') -%}
   {%- if is_array -%}
@@ -35,8 +46,11 @@ syntax = "proto3";
   {%- endif -%}
   {%- if base in typedefs -%}
     {%- set mapped = typedefs[base] -%}
+  {%- elif '.' in base -%}
+    {#- Imported type: convert package.type to package.type (keep dot for proto import) -#}
+    {%- set mapped = base -%}
   {%- else -%}
-    {%- set mapped = base|replace(".", "_") -%}
+    {%- set mapped = base -%}
   {%- endif -%}
   {%- if is_array -%}
 repeated {{ mapped }}

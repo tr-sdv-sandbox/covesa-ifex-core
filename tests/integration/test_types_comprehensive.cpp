@@ -1,7 +1,7 @@
 #include "test_fixture.hpp"
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 
 using json = nlohmann::json;
 

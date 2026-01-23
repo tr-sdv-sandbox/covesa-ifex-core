@@ -34,12 +34,10 @@ std::string LoadIFEXDefinition() {
     try {
         // Try multiple paths relative to common execution locations
         std::vector<std::string> paths = {
-            "reference-services/ifex/ifex-scheduler-service.yml",  // From project root
-            "../reference-services/ifex/ifex-scheduler-service.yml",  // From build dir
-            "../../reference-services/ifex/ifex-scheduler-service.yml",  // From build subdirectory
-            "../ifex/ifex-scheduler-service.yml",           // Legacy path
-            "ifex/ifex-scheduler-service.yml",              // Legacy path
-            "./ifex-scheduler-service.yml"                  // Current directory
+            "specs/vehicle/scheduler-service.ifex.yml",  // From project root
+            "../specs/vehicle/scheduler-service.ifex.yml",  // From build dir
+            "../../specs/vehicle/scheduler-service.ifex.yml",  // From build subdirectory
+            "./scheduler-service.ifex.yml"                  // Current directory
         };
 
         for (const auto& path : paths) {

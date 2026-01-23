@@ -12,7 +12,7 @@
 #include <glog/logging.h>
 
 #include "beverage-service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 
 namespace swdv {
 namespace beverage_service {

@@ -71,6 +71,7 @@ namespaces:
           - name: target_temperature
             datatype: float
             description: Target cabin temperature
+            default: 22.0
             constraints:
               min: 16.0
               max: 28.0

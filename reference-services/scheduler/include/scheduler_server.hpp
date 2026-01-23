@@ -15,8 +15,9 @@
 #include <optional>
 #include <regex>
 
-#include "ifex-scheduler-service.grpc.pb.h"
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "scheduler-service.grpc.pb.h"
+#include "scheduler-types.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 #include "scheduler-sync-v2.pb.h"
 #include <ifex/discovery.hpp>
 #include "version_vector.hpp"
@@ -40,11 +41,11 @@ struct Job {
     std::optional<std::chrono::system_clock::time_point> next_run_time;
 
     // Status tracking
-    swdv::ifex_scheduler::job_status_t status = swdv::ifex_scheduler::PENDING;
+    swdv::scheduler_types::job_status_t status = swdv::scheduler_types::JOB_STATUS_PENDING;
 
     // Wake/Sleep policies
-    swdv::ifex_scheduler::wake_policy_t wake_policy = swdv::ifex_scheduler::NO_WAKE;
-    swdv::ifex_scheduler::sleep_policy_t sleep_policy = swdv::ifex_scheduler::NORMAL;
+    swdv::scheduler_types::wake_policy_t wake_policy = swdv::scheduler_types::WAKE_NO_WAKE;
+    swdv::scheduler_types::sleep_policy_t sleep_policy = swdv::scheduler_types::SLEEP_NORMAL;
     uint32_t wake_lead_time_s = 0;
 
     // Timestamps

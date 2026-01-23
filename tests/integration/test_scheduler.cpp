@@ -1,7 +1,8 @@
 #include <gtest/gtest.h>
 #include <glog/logging.h>
-#include "ifex-scheduler-service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
+#include "scheduler-service.grpc.pb.h"
+#include "scheduler-types.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -135,7 +136,7 @@ TEST_F(SchedulerIntegrationTest, CreateAndGetJob) {
     EXPECT_EQ(retrieved_job.title(), "Test Job");
     EXPECT_EQ(retrieved_job.service(), "echo_service");
     EXPECT_EQ(retrieved_job.method(), "echo");
-    EXPECT_EQ(retrieved_job.status(), swdv::ifex_scheduler::PENDING);
+    EXPECT_EQ(retrieved_job.status(), swdv::scheduler_types::JOB_STATUS_PENDING);
 }
 
 TEST_F(SchedulerIntegrationTest, ListJobs) {
@@ -516,7 +517,7 @@ TEST_F(SchedulerIntegrationTest, PauseJob) {
 
         status = get_stub->get_job(&get_context, get_request, &get_response);
         ASSERT_TRUE(status.ok() && get_response.success());
-        EXPECT_EQ(get_response.job().status(), swdv::ifex_scheduler::PENDING);
+        EXPECT_EQ(get_response.job().status(), swdv::scheduler_types::JOB_STATUS_PENDING);
     }
 
     // Pause the job
@@ -652,7 +653,7 @@ TEST_F(SchedulerIntegrationTest, ResumeJob) {
 
         status = get_stub->get_job(&get_context, get_request, &get_response);
         ASSERT_TRUE(status.ok() && get_response.success());
-        EXPECT_EQ(get_response.job().status(), swdv::ifex_scheduler::PENDING)
+        EXPECT_EQ(get_response.job().status(), swdv::scheduler_types::JOB_STATUS_PENDING)
             << "Job should be PENDING after resume_job call";
     }
 }
@@ -735,8 +736,8 @@ TEST_F(SchedulerIntegrationTest, TriggerJob) {
         const auto& triggered_job = trigger_response.job();
         LOG(INFO) << "Triggered job status: " << triggered_job.status();
         // Job should have been executed (either COMPLETED or FAILED)
-        EXPECT_TRUE(triggered_job.status() == swdv::ifex_scheduler::COMPLETED ||
-                    triggered_job.status() == swdv::ifex_scheduler::FAILED)
+        EXPECT_TRUE(triggered_job.status() == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
+                    triggered_job.status() == swdv::scheduler_types::JOB_STATUS_FAILED)
             << "Triggered job should be in terminal state";
     }
 
@@ -834,7 +835,7 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
     LOG(INFO) << "Workflow test job: " << job_id;
 
     // Helper to get current status
-    auto get_status = [&]() -> swdv::ifex_scheduler::job_status_t {
+    auto get_status = [&]() -> swdv::scheduler_types::job_status_t {
         swdv::ifex_scheduler::get_job_request req;
         req.set_job_id(job_id);
         swdv::ifex_scheduler::get_job_response resp;
@@ -854,7 +855,7 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
     };
 
     // Step 1: Initial status should be PENDING and not paused
-    EXPECT_EQ(get_status(), swdv::ifex_scheduler::PENDING) << "Initial status should be PENDING";
+    EXPECT_EQ(get_status(), swdv::scheduler_types::JOB_STATUS_PENDING) << "Initial status should be PENDING";
     EXPECT_FALSE(get_paused()) << "Initial job should not be paused";
 
     // Step 2: Pause -> paused=true (status unchanged)
@@ -900,8 +901,8 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
         ASSERT_TRUE(status.ok() && resp.success());
     }
     auto final_status = get_status();
-    EXPECT_TRUE(final_status == swdv::ifex_scheduler::COMPLETED ||
-                final_status == swdv::ifex_scheduler::FAILED)
+    EXPECT_TRUE(final_status == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
+                final_status == swdv::scheduler_types::JOB_STATUS_FAILED)
         << "Status should be terminal after trigger";
 
     LOG(INFO) << "Workflow complete. Final status: " << final_status;

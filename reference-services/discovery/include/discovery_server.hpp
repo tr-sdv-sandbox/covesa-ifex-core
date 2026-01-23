@@ -1,6 +1,6 @@
 #pragma once
 
-#include "service-discovery-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <memory>
 #include <unordered_map>

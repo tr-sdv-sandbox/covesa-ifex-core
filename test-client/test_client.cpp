@@ -1,5 +1,5 @@
-#include "service-discovery-service.grpc.pb.h"
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 #include <grpcpp/grpcpp.h>
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>

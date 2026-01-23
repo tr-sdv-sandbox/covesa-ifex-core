@@ -29,6 +29,10 @@
 #include "ifex_content_ids.hpp"
 #include "time_utils.hpp"
 
+// Generated proto headers
+#include "cloud/cloud-scheduler-service.grpc.pb.h"
+#include "vehicle/scheduler-service.grpc.pb.h"
+
 #include <gtest/gtest.h>
 #include <glog/logging.h>
 #include <grpcpp/grpcpp.h>
@@ -74,6 +78,10 @@ void signal_handler(int sig) {
 }  // namespace
 
 namespace fs = std::filesystem;
+
+// Namespace aliases for generated proto types
+namespace cloud_sched = ::swdv::cloud_scheduler_service;
+namespace vehicle_sched = ::swdv::ifex_scheduler;
 
 namespace ifex::cloud::test {
 
@@ -370,13 +378,31 @@ protected:
         }
     }
 
-    // Client factories
-    std::unique_ptr<::ifex::cloud::scheduler::CloudSchedulerService::Stub>
-    createCloudSchedulerStub() {
-        auto channel = grpc::CreateChannel(
-            "localhost:" + std::to_string(cloud_scheduler_grpc_port_),
-            grpc::InsecureChannelCredentials());
-        return ::ifex::cloud::scheduler::CloudSchedulerService::NewStub(channel);
+    // Client helper for cloud scheduler per-method stubs
+    struct CloudSchedulerStubs {
+        std::shared_ptr<grpc::Channel> channel;
+        std::unique_ptr<cloud_sched::create_job_service::Stub> create_job;
+        std::unique_ptr<cloud_sched::update_job_service::Stub> update_job;
+        std::unique_ptr<cloud_sched::delete_job_service::Stub> delete_job;
+        std::unique_ptr<cloud_sched::get_job_service::Stub> get_job;
+        std::unique_ptr<cloud_sched::list_jobs_service::Stub> list_jobs;
+
+        static CloudSchedulerStubs Create(int port) {
+            CloudSchedulerStubs stubs;
+            stubs.channel = grpc::CreateChannel(
+                "localhost:" + std::to_string(port),
+                grpc::InsecureChannelCredentials());
+            stubs.create_job = cloud_sched::create_job_service::NewStub(stubs.channel);
+            stubs.update_job = cloud_sched::update_job_service::NewStub(stubs.channel);
+            stubs.delete_job = cloud_sched::delete_job_service::NewStub(stubs.channel);
+            stubs.get_job = cloud_sched::get_job_service::NewStub(stubs.channel);
+            stubs.list_jobs = cloud_sched::list_jobs_service::NewStub(stubs.channel);
+            return stubs;
+        }
+    };
+
+    CloudSchedulerStubs createCloudSchedulerStubs() {
+        return CloudSchedulerStubs::Create(cloud_scheduler_grpc_port_);
     }
 
 private:
@@ -530,8 +556,8 @@ private:
 
         // Set IFEX schema directory for the child process
         std::string ifex_schema_dir = build_dir + "/reference-services/ifex";
-        if (!fs::exists(ifex_schema_dir + "/ifex-dispatcher-service.yml")) {
-            LOG(ERROR) << "IFEX schema not found: " << ifex_schema_dir << "/ifex-dispatcher-service.yml";
+        if (!fs::exists(ifex_schema_dir + "/dispatcher-service.ifex.yml")) {
+            LOG(ERROR) << "IFEX schema not found: " << ifex_schema_dir << "/dispatcher-service.ifex.yml";
             return 0;
         }
 
@@ -574,9 +600,9 @@ private:
         }
 
         // Set IFEX schema directory for the child process
-        std::string ifex_schema_dir = build_dir + "/reference-services/ifex";
-        if (!fs::exists(ifex_schema_dir + "/ifex-scheduler-service.yml")) {
-            LOG(ERROR) << "IFEX schema not found: " << ifex_schema_dir << "/ifex-scheduler-service.yml";
+        std::string ifex_schema_dir = build_dir + "/../specs/vehicle";
+        if (!fs::exists(ifex_schema_dir + "/scheduler-service.ifex.yml")) {
+            LOG(ERROR) << "IFEX schema not found: " << ifex_schema_dir << "/scheduler-service.ifex.yml";
             return 0;
         }
 
@@ -766,7 +792,7 @@ private:
 
         grpc::ServerBuilder builder;
         builder.AddListeningPort("0.0.0.0:0", grpc::InsecureServerCredentials(), &cloud_scheduler_grpc_port_);
-        builder.RegisterService(cloud_scheduler_service_.get());
+        cloud_scheduler_service_->RegisterServices(builder);
 
         cloud_scheduler_grpc_server_ = builder.BuildAndStart();
         LOG(INFO) << "Cloud scheduler service listening on port " << cloud_scheduler_grpc_port_;
@@ -795,6 +821,9 @@ private:
         // Stop service first to signal streaming handlers to exit (check stopped_ flag)
         if (vehicle_transport_service_) {
             vehicle_transport_service_->Stop();
+            // Allow streaming handlers to see stopped_ flag and exit their loops
+            // (handlers check every 100ms, so 150ms gives them time to exit)
+            std::this_thread::sleep_for(150ms);
         }
         // Then shutdown gRPC which waits for handlers to complete
         if (vehicle_transport_grpc_server_) {
@@ -802,8 +831,6 @@ private:
             vehicle_transport_grpc_server_.reset();
         }
         if (vehicle_transport_service_) {
-            // Allow all internal threads to fully exit before destruction
-            std::this_thread::sleep_for(100ms);
             vehicle_transport_service_.reset();
         }
     }
@@ -812,6 +839,8 @@ private:
         // Stop service first to signal streaming handlers to exit
         if (cloud_transport_service_) {
             cloud_transport_service_->Stop();
+            // Allow streaming handlers to see stopped_ flag and exit their loops
+            std::this_thread::sleep_for(150ms);
         }
         // Then shutdown gRPC which waits for handlers to complete
         if (cloud_transport_grpc_server_) {
@@ -819,8 +848,6 @@ private:
             cloud_transport_grpc_server_.reset();
         }
         if (cloud_transport_service_) {
-            // Allow all internal threads to fully exit before destruction
-            std::this_thread::sleep_for(100ms);
             cloud_transport_service_.reset();
         }
     }
@@ -850,33 +877,34 @@ std::unique_ptr<ifex::reference::SchedulerSyncBridge> SchedulerBidirectionalSync
 // =============================================================================
 
 TEST_F(SchedulerBidirectionalSyncTest, CreateJobSendsCommandToVehicle) {
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Record initial job count (may have jobs synced from vehicle on startup)
     size_t initial_count = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
     LOG(INFO) << "Initial job count: " << initial_count;
 
-    ::ifex::cloud::scheduler::CreateJobRequest request;
-    request.set_vehicle_id(TEST_VEHICLE_ID);
-    request.set_title("Integration Test Job");
-    request.set_service("echo_service");
-    request.set_method("echo");
-    request.set_parameters_json(R"({"message": "Hello from scheduled job"})");
-    request.set_scheduled_time_ms(
+    cloud_sched::create_job_request request;
+    auto* req = request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Integration Test Job");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"message": "Hello from scheduled job"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-01-15T10:30:00Z"));  // Far future
-    request.set_recurrence_rule("FREQ=DAILY;BYHOUR=10;BYMINUTE=30");
+    req->set_recurrence_rule("FREQ=DAILY;BYHOUR=10;BYMINUTE=30");
 
-    ::ifex::cloud::scheduler::CreateJobResponse response;
+    cloud_sched::create_job_response response;
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto status = stub->CreateJob(&context, request, &response);
+    auto status = stubs.create_job->create_job(&context, request, &response);
 
     ASSERT_TRUE(status.ok()) << "gRPC call failed: " << status.error_message();
-    EXPECT_TRUE(response.success()) << "CreateJob failed: " << response.error_message();
-    EXPECT_FALSE(response.job_id().empty()) << "job_id should be set";
+    EXPECT_TRUE(response.result().success()) << "CreateJob failed: " << response.result().error_message();
+    EXPECT_FALSE(response.result().job_id().empty()) << "job_id should be set";
 
-    LOG(INFO) << "Created job: " << response.job_id();
+    LOG(INFO) << "Created job: " << response.result().job_id();
 
     // Verify job count increased by 1
     size_t new_count = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
@@ -897,31 +925,32 @@ TEST_F(SchedulerBidirectionalSyncTest, CreateJobSendsCommandToVehicle) {
 }
 
 TEST_F(SchedulerBidirectionalSyncTest, EpochMillisecondsFlowCorrectly) {
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Record initial stats
     auto initial_stats = vehicle_sync_bridge_->GetStats();
 
     // Create a job with specific timestamp
-    ::ifex::cloud::scheduler::CreateJobRequest request;
-    request.set_vehicle_id(TEST_VEHICLE_ID);
-    request.set_title("Epoch Ms Test Job");
-    request.set_service("echo_service");
-    request.set_method("echo");
-    request.set_parameters_json(R"({"message": "Epoch test"})");
-    request.set_scheduled_time_ms(
+    cloud_sched::create_job_request request;
+    auto* req = request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Epoch Ms Test Job");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"message": "Epoch test"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-01-15T10:30:00Z"));
-    request.set_end_time_ms(
+    req->set_end_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-12-31T23:59:59Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse response;
+    cloud_sched::create_job_response response;
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto status = stub->CreateJob(&context, request, &response);
+    auto status = stubs.create_job->create_job(&context, request, &response);
 
     ASSERT_TRUE(status.ok());
-    EXPECT_TRUE(response.success());
+    EXPECT_TRUE(response.result().success());
 
     // Wait for sync
     std::this_thread::sleep_for(3s);
@@ -934,139 +963,144 @@ TEST_F(SchedulerBidirectionalSyncTest, EpochMillisecondsFlowCorrectly) {
         << "Job should have been created from cloud sync";
 
     // Query the job back
-    ::ifex::cloud::scheduler::GetJobRequest get_request;
+    cloud_sched::get_job_request get_request;
     get_request.set_vehicle_id(TEST_VEHICLE_ID);
-    get_request.set_job_id(response.job_id());
+    get_request.set_job_id(response.result().job_id());
 
-    ::ifex::cloud::scheduler::GetJobResponse get_response;
+    cloud_sched::get_job_response get_response;
     grpc::ClientContext get_context;
     get_context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto get_status = stub->GetJob(&get_context, get_request, &get_response);
+    auto get_status = stubs.get_job->get_job(&get_context, get_request, &get_response);
 
     ASSERT_TRUE(get_status.ok());
-    EXPECT_TRUE(get_response.found());
-    EXPECT_EQ(get_response.job().title(), "Epoch Ms Test Job");
-    EXPECT_EQ(get_response.job().service(), "echo_service");
+    EXPECT_TRUE(get_response.result().found());
+    EXPECT_EQ(get_response.result().job().title(), "Epoch Ms Test Job");
+    EXPECT_EQ(get_response.result().job().service(), "echo_service");
 }
 
 TEST_F(SchedulerBidirectionalSyncTest, ListJobsReturnsCreatedJobs) {
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     size_t initial_count = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
 
     // Create multiple jobs
     for (int i = 0; i < 3; i++) {
-        ::ifex::cloud::scheduler::CreateJobRequest request;
-        request.set_vehicle_id(TEST_VEHICLE_ID);
-        request.set_title("List Test Job " + std::to_string(i));
-        request.set_service("echo_service");
-        request.set_method("echo");
-        request.set_parameters_json(R"({"message": "List test"})");
-        request.set_scheduled_time_ms(
+        cloud_sched::create_job_request request;
+        auto* req = request.mutable_request();
+        req->set_vehicle_id(TEST_VEHICLE_ID);
+        req->set_title("List Test Job " + std::to_string(i));
+        req->set_service("echo_service");
+        req->set_method("echo");
+        req->set_parameters_json(R"({"message": "List test"})");
+        req->set_scheduled_time_ms(
             ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-01-20T00:00:00Z"));
 
-        ::ifex::cloud::scheduler::CreateJobResponse response;
+        cloud_sched::create_job_response response;
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-        stub->CreateJob(&context, request, &response);
-        EXPECT_TRUE(response.success());
+        stubs.create_job->create_job(&context, request, &response);
+        EXPECT_TRUE(response.result().success());
     }
 
     // List jobs
-    ::ifex::cloud::scheduler::ListJobsRequest list_request;
-    list_request.set_vehicle_id_filter(TEST_VEHICLE_ID);
-    list_request.set_service_filter("echo_service");
+    cloud_sched::list_jobs_request list_request;
+    auto* filter = list_request.mutable_filter();
+    filter->set_vehicle_id_filter(TEST_VEHICLE_ID);
+    filter->set_service_filter("echo_service");
 
-    ::ifex::cloud::scheduler::ListJobsResponse list_response;
+    cloud_sched::list_jobs_response list_response;
     grpc::ClientContext list_context;
     list_context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto status = stub->ListJobs(&list_context, list_request, &list_response);
+    auto status = stubs.list_jobs->list_jobs(&list_context, list_request, &list_response);
 
     ASSERT_TRUE(status.ok());
-    EXPECT_GE(list_response.jobs_size(), 3);
-    LOG(INFO) << "Listed " << list_response.jobs_size() << " jobs";
+    EXPECT_GE(list_response.result().jobs_size(), 3);
+    LOG(INFO) << "Listed " << list_response.result().jobs_size() << " jobs";
 }
 
 TEST_F(SchedulerBidirectionalSyncTest, DeleteJobRemovesFromCloud) {
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Create a job first
-    ::ifex::cloud::scheduler::CreateJobRequest create_request;
-    create_request.set_vehicle_id(TEST_VEHICLE_ID);
-    create_request.set_title("Job To Delete");
-    create_request.set_service("echo_service");
-    create_request.set_method("echo");
-    create_request.set_parameters_json(R"({"message": "Delete test"})");
-    create_request.set_scheduled_time_ms(
+    cloud_sched::create_job_request create_request;
+    auto* req = create_request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Job To Delete");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"message": "Delete test"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-02-01T12:00:00Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse create_response;
+    cloud_sched::create_job_response create_response;
     grpc::ClientContext create_context;
     create_context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    stub->CreateJob(&create_context, create_request, &create_response);
-    ASSERT_TRUE(create_response.success());
-    std::string job_id = create_response.job_id();
+    stubs.create_job->create_job(&create_context, create_request, &create_response);
+    ASSERT_TRUE(create_response.result().success());
+    std::string job_id = create_response.result().job_id();
 
     size_t count_before = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
 
     // Delete the job
-    ::ifex::cloud::scheduler::DeleteJobRequest delete_request;
+    cloud_sched::delete_job_request delete_request;
     delete_request.set_vehicle_id(TEST_VEHICLE_ID);
     delete_request.set_job_id(job_id);
 
-    ::ifex::cloud::scheduler::DeleteJobResponse delete_response;
+    cloud_sched::delete_job_response delete_response;
     grpc::ClientContext delete_context;
     delete_context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto status = stub->DeleteJob(&delete_context, delete_request, &delete_response);
+    auto status = stubs.delete_job->delete_job(&delete_context, delete_request, &delete_response);
 
     ASSERT_TRUE(status.ok());
-    EXPECT_TRUE(delete_response.success());
+    EXPECT_TRUE(delete_response.result().success());
 
     size_t count_after = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
     EXPECT_EQ(count_after, count_before - 1);
 }
 
 TEST_F(SchedulerBidirectionalSyncTest, ValidationRejectsEmptyVehicleId) {
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
-    ::ifex::cloud::scheduler::CreateJobRequest request;
-    request.set_title("Invalid Job");
-    request.set_service("test");
-    request.set_method("test");
+    cloud_sched::create_job_request request;
+    auto* req = request.mutable_request();
+    req->set_title("Invalid Job");
+    req->set_service("test");
+    req->set_method("test");
 
-    ::ifex::cloud::scheduler::CreateJobResponse response;
+    cloud_sched::create_job_response response;
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto status = stub->CreateJob(&context, request, &response);
+    auto status = stubs.create_job->create_job(&context, request, &response);
 
     ASSERT_TRUE(status.ok());
-    EXPECT_FALSE(response.success());
-    EXPECT_FALSE(response.error_message().empty());
-    LOG(INFO) << "Validation error (expected): " << response.error_message();
+    EXPECT_FALSE(response.result().success());
+    EXPECT_FALSE(response.result().error_message().empty());
+    LOG(INFO) << "Validation error (expected): " << response.result().error_message();
 }
 
 TEST_F(SchedulerBidirectionalSyncTest, ValidationRejectsEmptyService) {
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
-    ::ifex::cloud::scheduler::CreateJobRequest request;
-    request.set_vehicle_id(TEST_VEHICLE_ID);
-    request.set_title("Invalid Job");
+    cloud_sched::create_job_request request;
+    auto* req = request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Invalid Job");
 
-    ::ifex::cloud::scheduler::CreateJobResponse response;
+    cloud_sched::create_job_response response;
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + 10s);
 
-    auto status = stub->CreateJob(&context, request, &response);
+    auto status = stubs.create_job->create_job(&context, request, &response);
 
     ASSERT_TRUE(status.ok());
-    EXPECT_FALSE(response.success());
-    EXPECT_FALSE(response.error_message().empty());
+    EXPECT_FALSE(response.result().success());
+    EXPECT_FALSE(response.result().error_message().empty());
 }
 
 // =============================================================================
@@ -1084,27 +1118,28 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneCloudInitiatedDelete) {
     // 5. Verify vehicle echoes the tombstone back
     // 6. Verify both sides converge to same tombstone state
 
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Step 1: Create a job from cloud
-    ::ifex::cloud::scheduler::CreateJobRequest create_request;
-    create_request.set_vehicle_id(TEST_VEHICLE_ID);
-    create_request.set_title("Tombstone Test Job - Cloud Delete");
-    create_request.set_service("echo_service");
-    create_request.set_method("echo");
-    create_request.set_parameters_json(R"({"test": "tombstone_cloud_delete"})");
-    create_request.set_scheduled_time_ms(
+    cloud_sched::create_job_request create_request;
+    auto* req = create_request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Tombstone Test Job - Cloud Delete");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"test": "tombstone_cloud_delete"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-06-01T12:00:00Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse create_response;
+    cloud_sched::create_job_response create_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->CreateJob(&context, create_request, &create_response);
+        auto status = stubs.create_job->create_job(&context, create_request, &create_response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(create_response.success()) << create_response.error_message();
+        ASSERT_TRUE(create_response.result().success()) << create_response.result().error_message();
     }
-    std::string job_id = create_response.job_id();
+    std::string job_id = create_response.result().job_id();
     LOG(INFO) << "Created job for tombstone test: " << job_id;
 
     // Step 2: Wait for job to sync to vehicle
@@ -1118,17 +1153,17 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneCloudInitiatedDelete) {
     auto stats_before = vehicle_sync_bridge_->GetStats();
 
     // Step 3: Delete the job from cloud (this creates a tombstone)
-    ::ifex::cloud::scheduler::DeleteJobRequest delete_request;
+    cloud_sched::delete_job_request delete_request;
     delete_request.set_vehicle_id(TEST_VEHICLE_ID);
     delete_request.set_job_id(job_id);
 
-    ::ifex::cloud::scheduler::DeleteJobResponse delete_response;
+    cloud_sched::delete_job_response delete_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->DeleteJob(&context, delete_request, &delete_response);
+        auto status = stubs.delete_job->delete_job(&context, delete_request, &delete_response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(delete_response.success()) << delete_response.error_message();
+        ASSERT_TRUE(delete_response.result().success()) << delete_response.result().error_message();
     }
     LOG(INFO) << "Deleted job (tombstone created): " << job_id;
 
@@ -1151,17 +1186,17 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneCloudInitiatedDelete) {
         << "Vehicle should have received tombstone sync";
 
     // Verify GetJob returns not found (tombstone exists but job is "deleted")
-    ::ifex::cloud::scheduler::GetJobRequest get_request;
+    cloud_sched::get_job_request get_request;
     get_request.set_vehicle_id(TEST_VEHICLE_ID);
     get_request.set_job_id(job_id);
 
-    ::ifex::cloud::scheduler::GetJobResponse get_response;
+    cloud_sched::get_job_response get_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->GetJob(&context, get_request, &get_response);
+        auto status = stubs.get_job->get_job(&context, get_request, &get_response);
         ASSERT_TRUE(status.ok());
-        EXPECT_FALSE(get_response.found())
+        EXPECT_FALSE(get_response.result().found())
             << "Deleted job should not be found via GetJob";
     }
 }
@@ -1174,27 +1209,28 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneVehicleInitiatedDelete) {
     // 1. A job created and synced can be deleted via the vehicle scheduler
     // 2. The tombstone syncs back to cloud
 
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Step 1: Create a job from cloud (it will sync to vehicle)
-    ::ifex::cloud::scheduler::CreateJobRequest create_request;
-    create_request.set_vehicle_id(TEST_VEHICLE_ID);
-    create_request.set_title("Tombstone Test Job - Vehicle Delete");
-    create_request.set_service("echo_service");
-    create_request.set_method("echo");
-    create_request.set_parameters_json(R"({"test": "tombstone_vehicle_delete"})");
-    create_request.set_scheduled_time_ms(
+    cloud_sched::create_job_request create_request;
+    auto* req = create_request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Tombstone Test Job - Vehicle Delete");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"test": "tombstone_vehicle_delete"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-06-02T12:00:00Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse create_response;
+    cloud_sched::create_job_response create_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->CreateJob(&context, create_request, &create_response);
+        auto status = stubs.create_job->create_job(&context, create_request, &create_response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(create_response.success()) << create_response.error_message();
+        ASSERT_TRUE(create_response.result().success()) << create_response.result().error_message();
     }
-    std::string job_id = create_response.job_id();
+    std::string job_id = create_response.result().job_id();
     LOG(INFO) << "Created job for vehicle delete test: " << job_id;
 
     // Step 2: Wait for job to sync to vehicle
@@ -1209,12 +1245,12 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneVehicleInitiatedDelete) {
     // Use vehicle scheduler gRPC directly
     auto scheduler_channel = grpc::CreateChannel(TEST_SCHEDULER_ADDRESS,
                                                   grpc::InsecureChannelCredentials());
-    auto scheduler_stub = swdv::ifex_scheduler::delete_job_service::NewStub(scheduler_channel);
+    auto scheduler_stub = vehicle_sched::delete_job_service::NewStub(scheduler_channel);
 
-    swdv::ifex_scheduler::delete_job_request vehicle_delete_request;
+    vehicle_sched::delete_job_request vehicle_delete_request;
     vehicle_delete_request.set_job_id(job_id);
 
-    swdv::ifex_scheduler::delete_job_response vehicle_delete_response;
+    vehicle_sched::delete_job_response vehicle_delete_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
@@ -1229,17 +1265,17 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneVehicleInitiatedDelete) {
     std::this_thread::sleep_for(3s);
 
     // Step 5: Verify cloud no longer returns the job
-    ::ifex::cloud::scheduler::GetJobRequest get_request;
+    cloud_sched::get_job_request get_request;
     get_request.set_vehicle_id(TEST_VEHICLE_ID);
     get_request.set_job_id(job_id);
 
-    ::ifex::cloud::scheduler::GetJobResponse get_response;
+    cloud_sched::get_job_response get_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->GetJob(&context, get_request, &get_response);
+        auto status = stubs.get_job->get_job(&context, get_request, &get_response);
         ASSERT_TRUE(status.ok());
-        EXPECT_FALSE(get_response.found())
+        EXPECT_FALSE(get_response.result().found())
             << "Job deleted from vehicle should not be found on cloud";
     }
     LOG(INFO) << "Verified tombstone synced from vehicle to cloud";
@@ -1284,30 +1320,31 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceConvergenceAfterChange) {
     // Test that after a change, sync messages are exchanged until
     // both sides converge and then go quiescent.
 
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Record stats before change
     auto stats_before = vehicle_sync_bridge_->GetStats();
 
     // Make a change - create a new job
-    ::ifex::cloud::scheduler::CreateJobRequest request;
-    request.set_vehicle_id(TEST_VEHICLE_ID);
-    request.set_title("Quiescence Convergence Test Job");
-    request.set_service("echo_service");
-    request.set_method("echo");
-    request.set_parameters_json(R"({"test": "quiescence_convergence"})");
-    request.set_scheduled_time_ms(
+    cloud_sched::create_job_request request;
+    auto* req = request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Quiescence Convergence Test Job");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"test": "quiescence_convergence"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-07-01T12:00:00Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse response;
+    cloud_sched::create_job_response response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->CreateJob(&context, request, &response);
+        auto status = stubs.create_job->create_job(&context, request, &response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(response.success());
+        ASSERT_TRUE(response.result().success());
     }
-    LOG(INFO) << "Created job to trigger sync convergence: " << response.job_id();
+    LOG(INFO) << "Created job to trigger sync convergence: " << response.result().job_id();
 
     // Wait for convergence
     std::this_thread::sleep_for(3s);
@@ -1331,15 +1368,15 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceConvergenceAfterChange) {
         << "Should be quiescent after convergence";
 
     // Cleanup
-    ::ifex::cloud::scheduler::DeleteJobRequest delete_request;
+    cloud_sched::delete_job_request delete_request;
     delete_request.set_vehicle_id(TEST_VEHICLE_ID);
-    delete_request.set_job_id(response.job_id());
+    delete_request.set_job_id(response.result().job_id());
 
-    ::ifex::cloud::scheduler::DeleteJobResponse delete_response;
+    cloud_sched::delete_job_response delete_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        stub->DeleteJob(&context, delete_request, &delete_response);
+        stubs.delete_job->delete_job(&context, delete_request, &delete_response);
     }
 }
 
@@ -1361,22 +1398,23 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceChecksumConsistency) {
         << "Checksum should be stable when no changes occur";
 
     // Make a change and verify checksum changes
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
-    ::ifex::cloud::scheduler::CreateJobRequest request;
-    request.set_vehicle_id(TEST_VEHICLE_ID);
-    request.set_title("Checksum Change Test Job");
-    request.set_service("echo_service");
-    request.set_method("echo");
-    request.set_parameters_json(R"({"test": "checksum_change"})");
-    request.set_scheduled_time_ms(
+    cloud_sched::create_job_request request;
+    auto* req = request.mutable_request();
+    req->set_vehicle_id(TEST_VEHICLE_ID);
+    req->set_title("Checksum Change Test Job");
+    req->set_service("echo_service");
+    req->set_method("echo");
+    req->set_parameters_json(R"({"test": "checksum_change"})");
+    req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-08-01T12:00:00Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse response;
+    cloud_sched::create_job_response response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        stub->CreateJob(&context, request, &response);
+        stubs.create_job->create_job(&context, request, &response);
     }
 
     // Wait for sync
@@ -1392,15 +1430,15 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceChecksumConsistency) {
         << "Checksum should change after adding a job";
 
     // Cleanup
-    ::ifex::cloud::scheduler::DeleteJobRequest delete_request;
+    cloud_sched::delete_job_request delete_request;
     delete_request.set_vehicle_id(TEST_VEHICLE_ID);
-    delete_request.set_job_id(response.job_id());
+    delete_request.set_job_id(response.result().job_id());
 
-    ::ifex::cloud::scheduler::DeleteJobResponse delete_response;
+    cloud_sched::delete_job_response delete_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        stub->DeleteJob(&context, delete_request, &delete_response);
+        stubs.delete_job->delete_job(&context, delete_request, &delete_response);
     }
 }
 
@@ -1414,46 +1452,48 @@ TEST_F(SchedulerBidirectionalSyncTest, SyncVersionDominanceCloudWins) {
     // This tests that when cloud and vehicle have concurrent modifications,
     // the cloud-authoritative job resolves to cloud's content.
 
-    auto stub = createCloudSchedulerStub();
+    auto stubs = createCloudSchedulerStubs();
 
     // Create a job from cloud
-    ::ifex::cloud::scheduler::CreateJobRequest create_request;
-    create_request.set_vehicle_id(TEST_VEHICLE_ID);
-    create_request.set_title("Original Title From Cloud");
-    create_request.set_service("echo_service");
-    create_request.set_method("echo");
-    create_request.set_parameters_json(R"({"source": "cloud"})");
-    create_request.set_scheduled_time_ms(
+    cloud_sched::create_job_request create_request;
+    auto* create_req = create_request.mutable_request();
+    create_req->set_vehicle_id(TEST_VEHICLE_ID);
+    create_req->set_title("Original Title From Cloud");
+    create_req->set_service("echo_service");
+    create_req->set_method("echo");
+    create_req->set_parameters_json(R"({"source": "cloud"})");
+    create_req->set_scheduled_time_ms(
         ifex::cloud::scheduler::TimeUtils::Iso8601ToEpochMs("2099-09-01T10:00:00Z"));
 
-    ::ifex::cloud::scheduler::CreateJobResponse create_response;
+    cloud_sched::create_job_response create_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->CreateJob(&context, create_request, &create_response);
+        auto status = stubs.create_job->create_job(&context, create_request, &create_response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(create_response.success());
+        ASSERT_TRUE(create_response.result().success());
     }
-    std::string job_id = create_response.job_id();
+    std::string job_id = create_response.result().job_id();
     LOG(INFO) << "Created cloud-authoritative job: " << job_id;
 
     // Wait for initial sync
     std::this_thread::sleep_for(3s);
 
     // Update from cloud (simulates cloud modification)
-    ::ifex::cloud::scheduler::UpdateJobRequest update_request;
-    update_request.set_vehicle_id(TEST_VEHICLE_ID);
-    update_request.set_job_id(job_id);
-    update_request.set_title("Updated Title From Cloud");
-    update_request.set_parameters_json(R"({"source": "cloud", "updated": true})");
+    cloud_sched::update_job_request update_request;
+    auto* update_req = update_request.mutable_request();
+    update_req->set_vehicle_id(TEST_VEHICLE_ID);
+    update_req->set_job_id(job_id);
+    update_req->set_title("Updated Title From Cloud");
+    update_req->set_parameters_json(R"({"source": "cloud", "updated": true})");
 
-    ::ifex::cloud::scheduler::UpdateJobResponse update_response;
+    cloud_sched::update_job_response update_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->UpdateJob(&context, update_request, &update_response);
+        auto status = stubs.update_job->update_job(&context, update_request, &update_response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(update_response.success()) << update_response.error_message();
+        ASSERT_TRUE(update_response.result().success()) << update_response.result().error_message();
     }
     LOG(INFO) << "Updated job from cloud";
 
@@ -1461,32 +1501,32 @@ TEST_F(SchedulerBidirectionalSyncTest, SyncVersionDominanceCloudWins) {
     std::this_thread::sleep_for(3s);
 
     // Verify cloud's version is preserved
-    ::ifex::cloud::scheduler::GetJobRequest get_request;
+    cloud_sched::get_job_request get_request;
     get_request.set_vehicle_id(TEST_VEHICLE_ID);
     get_request.set_job_id(job_id);
 
-    ::ifex::cloud::scheduler::GetJobResponse get_response;
+    cloud_sched::get_job_response get_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        auto status = stub->GetJob(&context, get_request, &get_response);
+        auto status = stubs.get_job->get_job(&context, get_request, &get_response);
         ASSERT_TRUE(status.ok());
-        ASSERT_TRUE(get_response.found());
+        ASSERT_TRUE(get_response.result().found());
     }
 
-    EXPECT_EQ(get_response.job().title(), "Updated Title From Cloud")
+    EXPECT_EQ(get_response.result().job().title(), "Updated Title From Cloud")
         << "Cloud's updated title should be preserved";
 
     // Cleanup
-    ::ifex::cloud::scheduler::DeleteJobRequest delete_request;
+    cloud_sched::delete_job_request delete_request;
     delete_request.set_vehicle_id(TEST_VEHICLE_ID);
     delete_request.set_job_id(job_id);
 
-    ::ifex::cloud::scheduler::DeleteJobResponse delete_response;
+    cloud_sched::delete_job_response delete_response;
     {
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 10s);
-        stub->DeleteJob(&context, delete_request, &delete_response);
+        stubs.delete_job->delete_job(&context, delete_request, &delete_response);
     }
 }
 

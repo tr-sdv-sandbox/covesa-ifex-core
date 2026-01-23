@@ -15,8 +15,8 @@
 #include <vector>
 
 #include "departure-orchestration-service.grpc.pb.h"
-#include "service-discovery-service.grpc.pb.h"
-#include "ifex-dispatcher-service.grpc.pb.h"
+#include "discovery-service.grpc.pb.h"
+#include "dispatcher-service.grpc.pb.h"
 #include <ifex/parser.hpp>
 #include <yaml-cpp/yaml.h>
 

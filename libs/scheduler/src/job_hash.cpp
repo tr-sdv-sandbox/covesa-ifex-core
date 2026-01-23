@@ -7,11 +7,29 @@
 // Golden ratio constant 0x9e3779b9 for hash mixing (FNV-1a style)
 
 #include "job_hash.hpp"
+#include <nlohmann/json.hpp>
 #include <functional>
 #include <algorithm>
 #include <stdexcept>
 
 namespace ifex::scheduler {
+
+// Normalize JSON string for consistent hashing.
+// Parses and re-serializes to ensure consistent key ordering and formatting.
+// This ensures the same hash regardless of whitespace or key order differences.
+static std::string normalize_json(const std::string& json_str) {
+    if (json_str.empty()) {
+        return "";
+    }
+    try {
+        auto j = nlohmann::json::parse(json_str);
+        // dump() produces consistent output (sorted keys, no extra whitespace)
+        return j.dump();
+    } catch (const nlohmann::json::parse_error&) {
+        // If not valid JSON, return as-is (will still hash consistently)
+        return json_str;
+    }
+}
 
 // Hash mixing with golden ratio constant
 uint64_t hash_mix(uint64_t h, uint64_t value) {
@@ -33,11 +51,14 @@ uint64_t compute_job_content_hash(const Job& job) {
     // Start with job_id
     uint64_t h = str_hash(job.job_id);
 
+    // Normalize parameters_json for consistent hashing across different JSON formatters
+    std::string normalized_params = normalize_json(job.parameters_json);
+
     // Mix in content fields (same order as original implementations)
     h ^= str_hash(job.title) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(job.service) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(job.method) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= str_hash(job.parameters_json) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= str_hash(normalized_params) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= uint64_hash(job.scheduled_time_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= str_hash(job.recurrence_rule) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= uint64_hash(job.end_time_ms) + 0x9e3779b9 + (h << 6) + (h >> 2);

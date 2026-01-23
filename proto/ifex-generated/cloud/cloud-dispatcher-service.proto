@@ -1,0 +1,159 @@
+// Generated from cloud_dispatcher_service.ifex by covesa-ifex-core
+// DO NOT EDIT - regenerate with: ./generate_proto.sh
+syntax = "proto3";
+
+
+
+
+package swdv.cloud_dispatcher_service;
+
+// Namespace: dispatcher
+// Cloud-to-vehicle method invocation
+
+// Remote method call execution status
+enum call_status_t {
+  SUCCESS = 0;
+  FAILED = 1;
+  TIMEOUT = 2;
+  SERVICE_UNAVAILABLE = 3;
+  METHOD_NOT_FOUND = 4;
+  INVALID_PARAMETERS = 5;
+  TRANSPORT_ERROR = 6;
+  VEHICLE_OFFLINE = 7;
+  DUPLICATE_REQUEST = 8;
+}
+
+// Request to invoke a method on a vehicle service
+message call_request_t {
+  string vehicle_id = 1;
+  string service_name = 2;
+  string method_name = 3;
+  string parameters_json = 4;
+  uint32 timeout_ms = 5;
+}
+
+// Result of remote method invocation
+message call_response_t {
+  string correlation_id = 1;
+  call_status_t status = 2;
+  string result_json = 3;
+  string error_message = 4;
+  uint32 duration_ms = 5;
+  string service_endpoint = 6;
+}
+
+// Information about a pending call
+message pending_call_info_t {
+  string correlation_id = 1;
+  string vehicle_id = 2;
+  string service_name = 3;
+  string method_name = 4;
+  sint64 created_at_ms = 5;
+  uint32 timeout_ms = 6;
+  sint64 expires_at_ms = 7;
+}
+
+// Method: call_method
+// Invoke a method on a vehicle's Dispatcher service. Returns immediately with correlation_id; result delivered asynchronously or synchronously depending on implementation.
+
+message call_method_request {
+  call_request_t request = 1;
+}
+
+message call_method_response {
+  call_response_t result = 1;
+}
+
+service call_method_service {
+  rpc call_method(call_method_request) returns (call_method_response);
+}
+
+// Method: call_method_async
+// Invoke a method asynchronously. Returns correlation_id immediately. Use get_call_result to poll for result, or subscribe to on_call_result.
+
+message call_method_async_request {
+  call_request_t request = 1;
+}
+
+message call_method_async_response {
+  string correlation_id = 1;
+  bool accepted = 2;
+}
+
+service call_method_async_service {
+  rpc call_method_async(call_method_async_request) returns (call_method_async_response);
+}
+
+// Method: get_call_result
+// Get result of an async call by correlation_id
+message get_call_result_request {
+  string correlation_id = 1;
+}
+
+message get_call_result_response {
+  bool found = 1;
+  bool completed = 2;
+  call_response_t result = 3;
+}
+
+service get_call_result_service {
+  rpc get_call_result(get_call_result_request) returns (get_call_result_response);
+}
+
+// Method: list_pending_calls
+// List calls that are still awaiting response
+message list_pending_calls_request {
+  string vehicle_id = 1;
+}
+
+message list_pending_calls_response {
+  repeated pending_call_info_t calls = 1;
+}
+
+service list_pending_calls_service {
+  rpc list_pending_calls(list_pending_calls_request) returns (list_pending_calls_response);
+}
+
+// Method: cancel_call
+// Cancel a pending async call
+message cancel_call_request {
+  string correlation_id = 1;
+}
+
+message cancel_call_response {
+  bool success = 1;
+  string error_message = 2;
+}
+
+service cancel_call_service {
+  rpc cancel_call(cancel_call_request) returns (cancel_call_response);
+}
+
+// Method: healthy
+// Check if dispatcher service is ready
+message healthy_request {
+}
+
+message healthy_response {
+  bool is_healthy = 1;
+}
+
+service healthy_service {
+  rpc healthy(healthy_request) returns (healthy_response);
+}
+
+// Event: on_call_result
+// Emitted when an async call completes
+message on_call_result {
+  call_response_t result = 1;
+}
+
+message on_call_result_subscribe_request {
+}
+
+service on_call_result_service {
+  // Server-streaming RPC for event subscription
+  rpc subscribe(on_call_result_subscribe_request) returns (stream on_call_result);
+}
+
+

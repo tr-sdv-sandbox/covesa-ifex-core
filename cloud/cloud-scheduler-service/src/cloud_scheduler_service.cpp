@@ -12,14 +12,14 @@
 namespace ifex::cloud {
 
 namespace sync_v2 = swdv::scheduler_sync_v2;
-namespace sched = ::ifex::cloud::scheduler;
+namespace scheduler_types_pb = swdv::scheduler_types;
 namespace sched_lib = ifex::scheduler;
 
 // =============================================================================
-// Helper: Convert JobInfo to library Job for hash computation
+// Helper: Convert job_info_t to library Job for hash computation
 // =============================================================================
 
-static sched_lib::Job JobInfoToLibraryJob(const sched::JobInfo& job) {
+static sched_lib::Job JobInfoToLibraryJob(const sched::job_info_t& job) {
     sched_lib::Job lib_job;
     lib_job.job_id = job.job_id();
     lib_job.title = job.title();
@@ -37,6 +37,64 @@ static sched_lib::Job JobInfoToLibraryJob(const sched::JobInfo& job) {
     lib_job.authority = static_cast<sched_lib::JobAuthority>(job.authority());
     lib_job.deleted = job.deleted();
     return lib_job;
+}
+
+// Map IFEX job status to sync v2 job status
+// Note: Cloud-specific statuses map to closest common status
+static sync_v2::JobStatus JobStatusToSyncV2(sched::cloud_job_status_t status) {
+    switch (status) {
+        case sched::JOB_PENDING: return sync_v2::JOB_STATUS_PENDING;
+        case sched::JOB_SCHEDULED: return sync_v2::JOB_STATUS_PENDING;  // Cloud-specific, map to pending
+        case sched::JOB_RUNNING: return sync_v2::JOB_STATUS_RUNNING;
+        case sched::JOB_COMPLETED: return sync_v2::JOB_STATUS_COMPLETED;
+        case sched::JOB_FAILED: return sync_v2::JOB_STATUS_FAILED;
+        case sched::JOB_CANCELLED: return sync_v2::JOB_STATUS_CANCELLED;
+        case sched::JOB_PAUSED: return sync_v2::JOB_STATUS_PENDING;  // Cloud-specific, map to pending
+        case sched::JOB_DELETING: return sync_v2::JOB_STATUS_CANCELLED;  // Cloud-specific, map to cancelled
+        default: return sync_v2::JOB_STATUS_PENDING;
+    }
+}
+
+// Map sync v2 job status to IFEX job status
+static sched::cloud_job_status_t SyncV2ToJobStatus(sync_v2::JobStatus status) {
+    switch (status) {
+        case sync_v2::JOB_STATUS_PENDING: return sched::JOB_PENDING;
+        case sync_v2::JOB_STATUS_RUNNING: return sched::JOB_RUNNING;
+        case sync_v2::JOB_STATUS_COMPLETED: return sched::JOB_COMPLETED;
+        case sync_v2::JOB_STATUS_FAILED: return sched::JOB_FAILED;
+        case sync_v2::JOB_STATUS_CANCELLED: return sched::JOB_CANCELLED;
+        default: return sched::JOB_PENDING;
+    }
+}
+
+// Map IFEX authority to sync v2 authority
+static sync_v2::JobAuthority AuthorityToSyncV2(scheduler_types_pb::job_authority_t auth) {
+    return (auth == scheduler_types_pb::AUTHORITY_CLOUD) ? sync_v2::AUTHORITY_CLOUD : sync_v2::AUTHORITY_VEHICLE;
+}
+
+// Map sync v2 authority to IFEX authority
+static scheduler_types_pb::job_authority_t SyncV2ToAuthority(sync_v2::JobAuthority auth) {
+    return (auth == sync_v2::AUTHORITY_CLOUD) ? scheduler_types_pb::AUTHORITY_CLOUD : scheduler_types_pb::AUTHORITY_VEHICLE;
+}
+
+// Map IFEX wake policy to sync v2
+static sync_v2::WakePolicy WakePolicyToSyncV2(scheduler_types_pb::wake_policy_t policy) {
+    return (policy == scheduler_types_pb::WAKE_REQUIRED) ? sync_v2::WAKE_REQUIRED : sync_v2::WAKE_NO_WAKE;
+}
+
+// Map sync v2 wake policy to IFEX
+static scheduler_types_pb::wake_policy_t SyncV2ToWakePolicy(sync_v2::WakePolicy policy) {
+    return (policy == sync_v2::WAKE_REQUIRED) ? scheduler_types_pb::WAKE_REQUIRED : scheduler_types_pb::WAKE_NO_WAKE;
+}
+
+// Map IFEX sleep policy to sync v2
+static sync_v2::SleepPolicy SleepPolicyToSyncV2(scheduler_types_pb::sleep_policy_t policy) {
+    return (policy == scheduler_types_pb::SLEEP_INHIBIT) ? sync_v2::SLEEP_INHIBIT : sync_v2::SLEEP_NORMAL;
+}
+
+// Map sync v2 sleep policy to IFEX
+static scheduler_types_pb::sleep_policy_t SyncV2ToSleepPolicy(sync_v2::SleepPolicy policy) {
+    return (policy == sync_v2::SLEEP_INHIBIT) ? scheduler_types_pb::SLEEP_INHIBIT : scheduler_types_pb::SLEEP_NORMAL;
 }
 
 CloudSchedulerService::CloudSchedulerService(const CloudSchedulerServiceConfig& config)
@@ -84,6 +142,22 @@ void CloudSchedulerService::Stop() {
     }
 
     LOG(INFO) << "CloudSchedulerService stopped";
+}
+
+void CloudSchedulerService::RegisterServices(grpc::ServerBuilder& builder) {
+    builder.RegisterService(static_cast<sched::create_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::update_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::delete_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::pause_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::resume_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::trigger_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::get_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::list_jobs_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::get_job_executions_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::create_fleet_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::delete_fleet_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::get_fleet_job_stats_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::healthy_service::Service*>(this));
 }
 
 std::string CloudSchedulerService::GenerateJobId() {
@@ -203,20 +277,23 @@ void CloudSchedulerService::HandleSyncMessage(
 // gRPC Methods
 // =========================================================================
 
-grpc::Status CloudSchedulerService::CreateJob(
+grpc::Status CloudSchedulerService::create_job(
     grpc::ServerContext* context,
-    const sched::CreateJobRequest* request,
-    sched::CreateJobResponse* response) {
+    const sched::create_job_request* request,
+    sched::create_job_response* response) {
 
-    if (request->vehicle_id().empty()) {
-        response->set_success(false);
-        response->set_error_message("vehicle_id is required");
+    auto* result = response->mutable_result();
+    const auto& req = request->request();
+
+    if (req.vehicle_id().empty()) {
+        result->set_success(false);
+        result->set_error_message("vehicle_id is required");
         return grpc::Status::OK;
     }
 
-    if (request->service().empty() || request->method().empty()) {
-        response->set_success(false);
-        response->set_error_message("service and method are required");
+    if (req.service().empty() || req.method().empty()) {
+        result->set_success(false);
+        result->set_error_message("service and method are required");
         return grpc::Status::OK;
     }
 
@@ -227,49 +304,52 @@ grpc::Status CloudSchedulerService::CreateJob(
     // Store job locally with pending sync state
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
-        sched::JobInfo job;
-        job.set_vehicle_id(request->vehicle_id());
+        sched::job_info_t job;
+        job.set_vehicle_id(req.vehicle_id());
         job.set_job_id(job_id);
-        job.set_title(request->title());
-        job.set_service(request->service());
-        job.set_method(request->method());
-        job.set_parameters_json(request->parameters_json());
-        job.set_scheduled_time_ms(request->scheduled_time_ms());
-        job.set_recurrence_rule(request->recurrence_rule());
-        job.set_end_time_ms(request->end_time_ms());
-        job.set_status(sync_v2::JOB_STATUS_PENDING);
+        job.set_title(req.title());
+        job.set_service(req.service());
+        job.set_method(req.method());
+        job.set_parameters_json(req.parameters_json());
+        job.set_scheduled_time_ms(req.scheduled_time_ms());
+        job.set_recurrence_rule(req.recurrence_rule());
+        job.set_end_time_ms(req.end_time_ms());
+        job.set_status(sched::JOB_PENDING);
         job.set_created_at_ms(now_ms);
         job.set_updated_at_ms(now_ms);
-        job.set_created_by(request->created_by());
-        job.set_paused(request->paused());
-        job.set_authority(sync_v2::AUTHORITY_CLOUD);  // Cloud-created jobs
-        job.set_wake_policy(request->wake_policy());
-        job.set_sleep_policy(request->sleep_policy());
-        job.set_wake_lead_time_s(request->wake_lead_time_s());
-        jobs_[request->vehicle_id()][job_id] = job;
+        job.set_created_by(req.created_by());
+        job.set_paused(req.paused());
+        job.set_authority(scheduler_types_pb::AUTHORITY_CLOUD);  // Cloud-created jobs
+        job.set_wake_policy(req.wake_policy());
+        job.set_sleep_policy(req.sleep_policy());
+        job.set_wake_lead_time_s(req.wake_lead_time_s());
+        jobs_[req.vehicle_id()][job_id] = job;
 
         // Initialize v2 sync state for cloud-created job
-        job_versions_[request->vehicle_id()][job_id] = sched_lib::VersionVector{1, 0};
-        job_sync_states_[request->vehicle_id()][job_id] = sched::CLOUD_SYNC_PENDING;
+        job_versions_[req.vehicle_id()][job_id] = sched_lib::VersionVector{1, 0};
+        job_sync_states_[req.vehicle_id()][job_id] = scheduler_types_pb::SYNC_PENDING;
     }
 
     // Send C2V_SyncMessage with the new job to the vehicle
-    SendPendingJobsToVehicle(request->vehicle_id());
+    SendPendingJobsToVehicle(req.vehicle_id());
 
-    response->set_success(true);
-    response->set_job_id(job_id);
-    LOG(INFO) << "Created job " << job_id << " on " << request->vehicle_id();
+    result->set_success(true);
+    result->set_job_id(job_id);
+    LOG(INFO) << "Created job " << job_id << " on " << req.vehicle_id();
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::UpdateJob(
+grpc::Status CloudSchedulerService::update_job(
     grpc::ServerContext* context,
-    const sched::UpdateJobRequest* request,
-    sched::UpdateJobResponse* response) {
+    const sched::update_job_request* request,
+    sched::update_job_response* response) {
 
-    if (request->vehicle_id().empty() || request->job_id().empty()) {
-        response->set_success(false);
-        response->set_error_message("vehicle_id and job_id are required");
+    auto* result = response->mutable_result();
+    const auto& req = request->request();
+
+    if (req.vehicle_id().empty() || req.job_id().empty()) {
+        result->set_success(false);
+        result->set_error_message("vehicle_id and job_id are required");
         return grpc::Status::OK;
     }
 
@@ -279,44 +359,50 @@ grpc::Status CloudSchedulerService::UpdateJob(
     // Update job locally and mark as pending sync
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
-        auto& vehicle_jobs = jobs_[request->vehicle_id()];
-        auto it = vehicle_jobs.find(request->job_id());
+        auto& vehicle_jobs = jobs_[req.vehicle_id()];
+        auto it = vehicle_jobs.find(req.job_id());
         if (it == vehicle_jobs.end()) {
-            response->set_success(false);
-            response->set_error_message("Job not found");
+            result->set_success(false);
+            result->set_error_message("Job not found");
             return grpc::Status::OK;
         }
 
-        // Update job fields
+        // Update job fields (use has_ flags for optional fields)
         auto& job = it->second;
-        if (!request->title().empty()) job.set_title(request->title());
-        if (request->scheduled_time_ms() > 0) job.set_scheduled_time_ms(request->scheduled_time_ms());
-        if (!request->recurrence_rule().empty()) job.set_recurrence_rule(request->recurrence_rule());
-        if (!request->parameters_json().empty()) job.set_parameters_json(request->parameters_json());
-        if (request->end_time_ms() > 0) job.set_end_time_ms(request->end_time_ms());
+        if (!req.title().empty()) job.set_title(req.title());
+        if (req.scheduled_time_ms() > 0) job.set_scheduled_time_ms(req.scheduled_time_ms());
+        if (!req.recurrence_rule().empty()) job.set_recurrence_rule(req.recurrence_rule());
+        if (!req.parameters_json().empty()) job.set_parameters_json(req.parameters_json());
+        if (req.end_time_ms() > 0) job.set_end_time_ms(req.end_time_ms());
+        if (req.has_paused()) job.set_paused(req.paused());
+        if (req.has_wake_policy()) job.set_wake_policy(req.wake_policy());
+        if (req.has_sleep_policy()) job.set_sleep_policy(req.sleep_policy());
+        if (req.has_wake_lead_time()) job.set_wake_lead_time_s(req.wake_lead_time_s());
         job.set_updated_at_ms(now_ms);
 
         // Increment version for cloud change
-        auto& version = job_versions_[request->vehicle_id()][request->job_id()];
+        auto& version = job_versions_[req.vehicle_id()][req.job_id()];
         version.increment_cloud();
-        job_sync_states_[request->vehicle_id()][request->job_id()] = sched::CLOUD_SYNC_PENDING;
+        job_sync_states_[req.vehicle_id()][req.job_id()] = scheduler_types_pb::SYNC_PENDING;
     }
 
     // Send updated job state to vehicle
-    SendPendingJobsToVehicle(request->vehicle_id());
+    SendPendingJobsToVehicle(req.vehicle_id());
 
-    response->set_success(true);
+    result->set_success(true);
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::DeleteJob(
+grpc::Status CloudSchedulerService::delete_job(
     grpc::ServerContext* context,
-    const sched::DeleteJobRequest* request,
-    sched::DeleteJobResponse* response) {
+    const sched::delete_job_request* request,
+    sched::delete_job_response* response) {
+
+    auto* result = response->mutable_result();
 
     if (request->vehicle_id().empty() || request->job_id().empty()) {
-        response->set_success(false);
-        response->set_error_message("vehicle_id and job_id are required");
+        result->set_success(false);
+        result->set_error_message("vehicle_id and job_id are required");
         return grpc::Status::OK;
     }
 
@@ -336,7 +422,7 @@ grpc::Status CloudSchedulerService::DeleteJob(
             // Increment version for cloud change
             auto& version = job_versions_[request->vehicle_id()][request->job_id()];
             version.increment_cloud();
-            job_sync_states_[request->vehicle_id()][request->job_id()] = sched::CLOUD_SYNC_PENDING;
+            job_sync_states_[request->vehicle_id()][request->job_id()] = scheduler_types_pb::SYNC_PENDING;
         }
     }
 
@@ -346,18 +432,20 @@ grpc::Status CloudSchedulerService::DeleteJob(
     LOG(INFO) << "Marked job " << request->job_id() << " as deleted for "
               << request->vehicle_id();
 
-    response->set_success(true);
+    result->set_success(true);
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::PauseJob(
+grpc::Status CloudSchedulerService::pause_job(
     grpc::ServerContext* context,
-    const sched::PauseJobRequest* request,
-    sched::PauseJobResponse* response) {
+    const sched::pause_job_request* request,
+    sched::pause_job_response* response) {
+
+    auto* result = response->mutable_result();
 
     if (request->vehicle_id().empty() || request->job_id().empty()) {
-        response->set_success(false);
-        response->set_error_message("vehicle_id and job_id are required");
+        result->set_success(false);
+        result->set_error_message("vehicle_id and job_id are required");
         return grpc::Status::OK;
     }
 
@@ -370,8 +458,8 @@ grpc::Status CloudSchedulerService::PauseJob(
         auto& vehicle_jobs = jobs_[request->vehicle_id()];
         auto it = vehicle_jobs.find(request->job_id());
         if (it == vehicle_jobs.end()) {
-            response->set_success(false);
-            response->set_error_message("Job not found");
+            result->set_success(false);
+            result->set_error_message("Job not found");
             return grpc::Status::OK;
         }
 
@@ -381,24 +469,26 @@ grpc::Status CloudSchedulerService::PauseJob(
         // Increment version for cloud change
         auto& version = job_versions_[request->vehicle_id()][request->job_id()];
         version.increment_cloud();
-        job_sync_states_[request->vehicle_id()][request->job_id()] = sched::CLOUD_SYNC_PENDING;
+        job_sync_states_[request->vehicle_id()][request->job_id()] = scheduler_types_pb::SYNC_PENDING;
     }
 
     // Send updated state to vehicle
     SendPendingJobsToVehicle(request->vehicle_id());
 
-    response->set_success(true);
+    result->set_success(true);
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::ResumeJob(
+grpc::Status CloudSchedulerService::resume_job(
     grpc::ServerContext* context,
-    const sched::ResumeJobRequest* request,
-    sched::ResumeJobResponse* response) {
+    const sched::resume_job_request* request,
+    sched::resume_job_response* response) {
+
+    auto* result = response->mutable_result();
 
     if (request->vehicle_id().empty() || request->job_id().empty()) {
-        response->set_success(false);
-        response->set_error_message("vehicle_id and job_id are required");
+        result->set_success(false);
+        result->set_error_message("vehicle_id and job_id are required");
         return grpc::Status::OK;
     }
 
@@ -411,8 +501,8 @@ grpc::Status CloudSchedulerService::ResumeJob(
         auto& vehicle_jobs = jobs_[request->vehicle_id()];
         auto it = vehicle_jobs.find(request->job_id());
         if (it == vehicle_jobs.end()) {
-            response->set_success(false);
-            response->set_error_message("Job not found");
+            result->set_success(false);
+            result->set_error_message("Job not found");
             return grpc::Status::OK;
         }
 
@@ -422,209 +512,223 @@ grpc::Status CloudSchedulerService::ResumeJob(
         // Increment version for cloud change
         auto& version = job_versions_[request->vehicle_id()][request->job_id()];
         version.increment_cloud();
-        job_sync_states_[request->vehicle_id()][request->job_id()] = sched::CLOUD_SYNC_PENDING;
+        job_sync_states_[request->vehicle_id()][request->job_id()] = scheduler_types_pb::SYNC_PENDING;
     }
 
     // Send updated state to vehicle
     SendPendingJobsToVehicle(request->vehicle_id());
 
-    response->set_success(true);
+    result->set_success(true);
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::TriggerJob(
+grpc::Status CloudSchedulerService::trigger_job(
     grpc::ServerContext* context,
-    const sched::TriggerJobRequest* request,
-    sched::TriggerJobResponse* response) {
+    const sched::trigger_job_request* request,
+    sched::trigger_job_response* response) {
+
+    auto* result = response->mutable_result();
 
     if (request->vehicle_id().empty() || request->job_id().empty()) {
-        response->set_success(false);
-        response->set_error_message("vehicle_id and job_id are required");
+        result->set_success(false);
+        result->set_error_message("vehicle_id and job_id are required");
         return grpc::Status::OK;
     }
 
     // TriggerJob is the only imperative command - send TriggerJobRequest
     if (!SendTriggerJobRequest(request->vehicle_id(), request->job_id(), "cloud-scheduler")) {
-        response->set_success(false);
-        response->set_error_message("Failed to send trigger request to vehicle");
+        result->set_success(false);
+        result->set_error_message("Failed to send trigger request to vehicle");
         return grpc::Status::OK;
     }
 
-    response->set_success(true);
+    result->set_success(true);
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::GetJob(
+grpc::Status CloudSchedulerService::get_job(
     grpc::ServerContext* context,
-    const sched::GetJobRequest* request,
-    sched::GetJobResponse* response) {
+    const sched::get_job_request* request,
+    sched::get_job_response* response) {
 
+    auto* result = response->mutable_result();
     std::lock_guard<std::mutex> lock(jobs_mutex_);
 
     auto vehicle_it = jobs_.find(request->vehicle_id());
     if (vehicle_it == jobs_.end()) {
-        response->set_found(false);
+        result->set_found(false);
         return grpc::Status::OK;
     }
 
     auto job_it = vehicle_it->second.find(request->job_id());
     if (job_it == vehicle_it->second.end()) {
-        response->set_found(false);
+        result->set_found(false);
         return grpc::Status::OK;
     }
 
-    // Tombstones (deleted jobs) should not be found via GetJob
+    // Tombstones (deleted jobs) should not be found via get_job
     if (job_it->second.deleted()) {
-        response->set_found(false);
+        result->set_found(false);
         return grpc::Status::OK;
     }
 
-    response->set_found(true);
-    *response->mutable_job() = job_it->second;
+    result->set_found(true);
+    *result->mutable_job() = job_it->second;
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::ListJobs(
+grpc::Status CloudSchedulerService::list_jobs(
     grpc::ServerContext* context,
-    const sched::ListJobsRequest* request,
-    sched::ListJobsResponse* response) {
+    const sched::list_jobs_request* request,
+    sched::list_jobs_response* response) {
 
+    auto* result = response->mutable_result();
+    const auto& filter = request->filter();
     std::lock_guard<std::mutex> lock(jobs_mutex_);
 
     int count = 0;
     for (const auto& [vehicle_id, vehicle_jobs] : jobs_) {
         // Apply vehicle filter
-        if (!request->vehicle_id_filter().empty() &&
-            vehicle_id != request->vehicle_id_filter()) {
+        if (!filter.vehicle_id_filter().empty() &&
+            vehicle_id != filter.vehicle_id_filter()) {
             continue;
         }
 
         for (const auto& [job_id, job] : vehicle_jobs) {
             // Filter out deleted jobs unless include_deleted is true
-            if (job.deleted() && !request->include_deleted()) {
+            if (job.deleted() && !filter.include_deleted()) {
                 continue;
             }
 
             // Apply service filter
-            if (!request->service_filter().empty() &&
-                job.service() != request->service_filter()) {
+            if (!filter.service_filter().empty() &&
+                job.service() != filter.service_filter()) {
                 continue;
             }
 
             // Apply paused_only filter
-            if (request->paused_only() && !job.paused()) {
+            if (filter.paused_only() && !job.paused()) {
                 continue;
             }
 
-            *response->add_jobs() = job;
+            *result->add_jobs() = job;
             count++;
         }
     }
 
-    response->set_total_count(count);
+    result->set_total_count(count);
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::GetJobExecutions(
+grpc::Status CloudSchedulerService::get_job_executions(
     grpc::ServerContext* context,
-    const sched::GetJobExecutionsRequest* request,
-    sched::GetJobExecutionsResponse* response) {
+    const sched::get_job_executions_request* request,
+    sched::get_job_executions_response* response) {
 
+    auto* result = response->mutable_result();
+    const auto& req = request->request();
     std::lock_guard<std::mutex> lock(executions_mutex_);
 
-    response->set_vehicle_id(request->vehicle_id());
-    response->set_job_id(request->job_id());
+    result->set_vehicle_id(req.vehicle_id());
+    result->set_job_id(req.job_id());
 
-    auto vehicle_it = executions_.find(request->vehicle_id());
+    auto vehicle_it = executions_.find(req.vehicle_id());
     if (vehicle_it == executions_.end()) {
-        response->set_total_count(0);
+        result->set_total_count(0);
         return grpc::Status::OK;
     }
 
-    auto job_it = vehicle_it->second.find(request->job_id());
+    auto job_it = vehicle_it->second.find(req.job_id());
     if (job_it == vehicle_it->second.end()) {
-        response->set_total_count(0);
+        result->set_total_count(0);
         return grpc::Status::OK;
     }
 
-    int limit = request->limit() > 0 ? request->limit() : 100;
+    int limit = req.limit() > 0 ? req.limit() : 100;
     int count = 0;
     for (const auto& exec : job_it->second) {
-        if (request->since_ms() > 0 && exec.executed_at_ms() < request->since_ms()) {
+        if (req.since_ms() > 0 && exec.executed_at_ms() < req.since_ms()) {
             continue;
         }
-        *response->add_executions() = exec;
+        *result->add_executions() = exec;
         if (++count >= limit) break;
     }
 
-    response->set_total_count(static_cast<int>(job_it->second.size()));
+    result->set_total_count(static_cast<int>(job_it->second.size()));
     return grpc::Status::OK;
 }
 
 // Fleet operations - simplified stubs for testing
-grpc::Status CloudSchedulerService::CreateFleetJob(
+grpc::Status CloudSchedulerService::create_fleet_job(
     grpc::ServerContext* context,
-    const sched::CreateFleetJobRequest* request,
-    sched::CreateFleetJobResponse* response) {
+    const sched::create_fleet_job_request* request,
+    sched::create_fleet_job_response* response) {
+
+    auto* result = response->mutable_result();
+    const auto& req = request->request();
 
     // For testing, just create jobs on each specified vehicle
     int successful = 0;
     int failed = 0;
 
-    for (const auto& vehicle_id : request->vehicle_ids()) {
-        sched::CreateJobRequest single_request;
-        single_request.set_vehicle_id(vehicle_id);
-        single_request.set_title(request->title());
-        single_request.set_service(request->service());
-        single_request.set_method(request->method());
-        single_request.set_parameters_json(request->parameters_json());
-        single_request.set_scheduled_time_ms(request->scheduled_time_ms());
-        single_request.set_recurrence_rule(request->recurrence_rule());
-        single_request.set_end_time_ms(request->end_time_ms());
-        single_request.set_created_by(request->created_by());
+    for (const auto& vehicle_id : req.vehicle_ids()) {
+        sched::create_job_request single_request;
+        auto* single_req = single_request.mutable_request();
+        single_req->set_vehicle_id(vehicle_id);
+        single_req->set_title(req.title());
+        single_req->set_service(req.service());
+        single_req->set_method(req.method());
+        single_req->set_parameters_json(req.parameters_json());
+        single_req->set_scheduled_time_ms(req.scheduled_time_ms());
+        single_req->set_recurrence_rule(req.recurrence_rule());
+        single_req->set_end_time_ms(req.end_time_ms());
+        single_req->set_created_by(req.created_by());
 
-        sched::CreateJobResponse single_response;
-        CreateJob(context, &single_request, &single_response);
+        sched::create_job_response single_response;
+        create_job(context, &single_request, &single_response);
 
-        auto* result = response->add_results();
-        result->set_vehicle_id(vehicle_id);
-        result->set_success(single_response.success());
-        result->set_job_id(single_response.job_id());
-        result->set_error_message(single_response.error_message());
+        auto* fleet_result = result->add_results();
+        fleet_result->set_vehicle_id(vehicle_id);
+        fleet_result->set_success(single_response.result().success());
+        fleet_result->set_job_id(single_response.result().job_id());
+        fleet_result->set_error_message(single_response.result().error_message());
 
-        if (single_response.success()) {
+        if (single_response.result().success()) {
             successful++;
         } else {
             failed++;
         }
     }
 
-    response->set_total_vehicles(request->vehicle_ids_size());
-    response->set_successful(successful);
-    response->set_failed(failed);
-    response->set_fleet_job_id(GenerateJobId());
+    result->set_total_vehicles(req.vehicle_ids_size());
+    result->set_successful(successful);
+    result->set_failed(failed);
+    result->set_fleet_job_id(GenerateJobId());
 
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::DeleteFleetJob(
+grpc::Status CloudSchedulerService::delete_fleet_job(
     grpc::ServerContext* context,
-    const sched::DeleteFleetJobRequest* request,
-    sched::DeleteFleetJobResponse* response) {
+    const sched::delete_fleet_job_request* request,
+    sched::delete_fleet_job_response* response) {
+
+    auto* result = response->mutable_result();
+    const auto& req = request->request();
 
     int successful = 0;
     int failed = 0;
 
-    for (const auto& vehicle_id : request->vehicle_ids()) {
-        for (const auto& job_id : request->job_ids()) {
-            sched::DeleteJobRequest single_request;
+    for (const auto& vehicle_id : req.vehicle_ids()) {
+        for (const auto& job_id : req.job_ids()) {
+            sched::delete_job_request single_request;
             single_request.set_vehicle_id(vehicle_id);
             single_request.set_job_id(job_id);
 
-            sched::DeleteJobResponse single_response;
-            DeleteJob(context, &single_request, &single_response);
+            sched::delete_job_response single_response;
+            delete_job(context, &single_request, &single_response);
 
-            if (single_response.success()) {
+            if (single_response.result().success()) {
                 successful++;
             } else {
                 failed++;
@@ -632,18 +736,19 @@ grpc::Status CloudSchedulerService::DeleteFleetJob(
         }
     }
 
-    response->set_total_deletions(request->vehicle_ids_size() * request->job_ids_size());
-    response->set_successful(successful);
-    response->set_failed(failed);
+    result->set_total_deletions(req.vehicle_ids_size() * req.job_ids_size());
+    result->set_successful(successful);
+    result->set_failed(failed);
 
     return grpc::Status::OK;
 }
 
-grpc::Status CloudSchedulerService::GetFleetJobStats(
+grpc::Status CloudSchedulerService::get_fleet_job_stats(
     grpc::ServerContext* context,
-    const sched::GetFleetJobStatsRequest* request,
-    sched::GetFleetJobStatsResponse* response) {
+    const sched::get_fleet_job_stats_request* request,
+    sched::get_fleet_job_stats_response* response) {
 
+    auto* result = response->mutable_result();
     std::lock_guard<std::mutex> lock(jobs_mutex_);
 
     int total_jobs = 0;
@@ -660,13 +765,24 @@ grpc::Status CloudSchedulerService::GetFleetJobStats(
         }
     }
 
-    response->set_total_jobs(total_jobs);
-    response->set_total_vehicles_with_jobs(static_cast<int>(vehicles_with_jobs.size()));
+    result->set_total_jobs(total_jobs);
+    result->set_total_vehicles_with_jobs(static_cast<int>(vehicles_with_jobs.size()));
 
     for (const auto& [status, count] : by_status) {
-        (*response->mutable_by_status())[std::to_string(status)] = count;
+        auto* status_count = result->add_by_status();
+        status_count->set_status(std::to_string(status));
+        status_count->set_count(count);
     }
 
+    return grpc::Status::OK;
+}
+
+grpc::Status CloudSchedulerService::healthy(
+    grpc::ServerContext* context,
+    const sched::healthy_request* request,
+    sched::healthy_response* response) {
+
+    response->set_is_healthy(running_);
     return grpc::Status::OK;
 }
 
@@ -716,7 +832,7 @@ void CloudSchedulerService::ClearAllJobs() {
 // Sync Protocol v2 Methods
 // =========================================================================
 
-uint64_t CloudSchedulerService::ComputeJobHash(const sched::JobInfo& job) {
+uint64_t CloudSchedulerService::ComputeJobHash(const sched::job_info_t& job) {
     // Use centralized hash computation from ifex-scheduler library
     return sched_lib::compute_job_content_hash(JobInfoToLibraryJob(job));
 }
@@ -776,7 +892,7 @@ void CloudSchedulerService::HandleV2SyncMessage(
         for (const auto& [job_id, version] : job_versions_[vehicle_id]) {
             auto sync_state_it = job_sync_states_[vehicle_id].find(job_id);
             if (sync_state_it != job_sync_states_[vehicle_id].end() &&
-                sync_state_it->second == sched::CLOUD_SYNC_PENDING) {
+                sync_state_it->second == scheduler_types_pb::SYNC_PENDING) {
                 need_push = true;
                 break;
             }
@@ -818,12 +934,12 @@ void CloudSchedulerService::ProcessVehicleJob(
     switch (result.action) {
         case sched_lib::SyncResult::ACCEPT_REMOTE: {
             // Accept vehicle's version
-            sched::JobInfo job;
+            sched::job_info_t job;
             RecordToJobInfo(record, &job);
             job.set_vehicle_id(vehicle_id);
             jobs_[vehicle_id][record.job_id()] = job;
             vehicle_versions[record.job_id()] = result.resolved_version;
-            job_sync_states_[vehicle_id][record.job_id()] = sched::CLOUD_SYNC_SYNCED;
+            job_sync_states_[vehicle_id][record.job_id()] = scheduler_types_pb::SYNC_SYNCED;
             LOG(INFO) << "Accepted job " << record.job_id() << " from " << vehicle_id
                       << " version={" << result.resolved_version.cloud_seq << ","
                       << result.resolved_version.vehicle_seq << "}";
@@ -832,7 +948,7 @@ void CloudSchedulerService::ProcessVehicleJob(
 
         case sched_lib::SyncResult::REJECT_REMOTE: {
             // Keep our version, will push to vehicle in SendV2SyncMessage
-            job_sync_states_[vehicle_id][record.job_id()] = sched::CLOUD_SYNC_PENDING;
+            job_sync_states_[vehicle_id][record.job_id()] = scheduler_types_pb::SYNC_PENDING;
             LOG(INFO) << "Rejected job " << record.job_id() << " from " << vehicle_id
                       << " (keeping cloud version)";
             break;
@@ -844,17 +960,17 @@ void CloudSchedulerService::ProcessVehicleJob(
             bool we_won = (result.winner == "cloud");
             if (!we_won) {
                 // Vehicle wins, accept their version
-                sched::JobInfo job;
+                sched::job_info_t job;
                 RecordToJobInfo(record, &job);
                 job.set_vehicle_id(vehicle_id);
                 jobs_[vehicle_id][record.job_id()] = job;
                 vehicle_versions[record.job_id()] = result.resolved_version;
-                job_sync_states_[vehicle_id][record.job_id()] = sched::CLOUD_SYNC_SYNCED;
+                job_sync_states_[vehicle_id][record.job_id()] = scheduler_types_pb::SYNC_SYNCED;
                 LOG(INFO) << "Conflict resolved: accepted vehicle job " << record.job_id();
             } else {
                 // Cloud wins, keep our version and push
                 vehicle_versions[record.job_id()] = result.resolved_version;
-                job_sync_states_[vehicle_id][record.job_id()] = sched::CLOUD_SYNC_PENDING;
+                job_sync_states_[vehicle_id][record.job_id()] = scheduler_types_pb::SYNC_PENDING;
                 LOG(INFO) << "Conflict resolved: keeping cloud job " << record.job_id();
             }
             break;
@@ -869,13 +985,13 @@ void CloudSchedulerService::ProcessVehicleJob(
     // Handle deleted jobs (tombstones)
     if (record.deleted()) {
         // Keep the tombstone record but mark as synced
-        sched::JobInfo job;
+        sched::job_info_t job;
         RecordToJobInfo(record, &job);
         job.set_vehicle_id(vehicle_id);
         job.set_deleted(true);
         jobs_[vehicle_id][record.job_id()] = job;
         vehicle_versions[record.job_id()] = result.resolved_version;
-        job_sync_states_[vehicle_id][record.job_id()] = sched::CLOUD_SYNC_SYNCED;
+        job_sync_states_[vehicle_id][record.job_id()] = scheduler_types_pb::SYNC_SYNCED;
         LOG(INFO) << "Processed tombstone for job " << record.job_id() << " from " << vehicle_id;
     }
 }
@@ -887,15 +1003,15 @@ void CloudSchedulerService::ProcessVehicleExecutions(
     std::lock_guard<std::mutex> exec_lock(executions_mutex_);
 
     for (const auto& exec_record : executions) {
-        sched::ExecutionInfo exec;
+        sched::execution_info_t exec;
         exec.set_execution_id(exec_record.execution_id());
         exec.set_executed_at_ms(exec_record.executed_at_ms());
         exec.set_duration_ms(exec_record.duration_ms());
         exec.set_result_json(exec_record.result_json());
         exec.set_error_message(exec_record.error_message());
 
-        // Copy status directly - ExecutionInfo.status uses sync_v2::JobStatus
-        exec.set_status(exec_record.status());
+        // Map sync v2 status to IFEX status
+        exec.set_status(SyncV2ToJobStatus(exec_record.status()));
 
         // Check for duplicate execution_id (append-only, no duplicates)
         auto& job_execs = executions_[vehicle_id][exec_record.job_id()];
@@ -935,7 +1051,7 @@ void CloudSchedulerService::SendV2SyncMessage(const std::string& vehicle_id) {
     for (const auto& [job_id, job] : jobs_[vehicle_id]) {
         auto sync_state_it = job_sync_states_[vehicle_id].find(job_id);
         if (sync_state_it != job_sync_states_[vehicle_id].end() &&
-            sync_state_it->second == sched::CLOUD_SYNC_PENDING) {
+            sync_state_it->second == scheduler_types_pb::SYNC_PENDING) {
 
             auto* record = msg.add_jobs();
             auto version_it = job_versions_[vehicle_id].find(job_id);
@@ -986,7 +1102,7 @@ void CloudSchedulerService::SendV2SyncMessage(const std::string& vehicle_id) {
 }
 
 void CloudSchedulerService::JobInfoToRecord(
-    const sched::JobInfo& job,
+    const sched::job_info_t& job,
     const sched_lib::VersionVector& version,
     sync_v2::JobRecord* record) {
 
@@ -1011,8 +1127,8 @@ void CloudSchedulerService::JobInfoToRecord(
     v->set_cloud_seq(version.cloud_seq);
     v->set_vehicle_seq(version.vehicle_seq);
 
-    // Copy status directly - JobInfo.status uses sync_v2::JobStatus
-    record->set_status(job.status());
+    // Map IFEX status to sync v2 status
+    record->set_status(JobStatusToSyncV2(job.status()));
 
     // Paused is a separate boolean field (user intent, synced)
     record->set_paused(job.paused());
@@ -1021,17 +1137,17 @@ void CloudSchedulerService::JobInfoToRecord(
     record->set_deleted(job.deleted());
 
     // Wake/sleep policies
-    record->set_wake_policy(job.wake_policy());
-    record->set_sleep_policy(job.sleep_policy());
+    record->set_wake_policy(WakePolicyToSyncV2(job.wake_policy()));
+    record->set_sleep_policy(SleepPolicyToSyncV2(job.sleep_policy()));
     record->set_wake_lead_time_s(job.wake_lead_time_s());
 
-    // Authority - cloud-created jobs have AUTHORITY_CLOUD
-    record->set_authority(job.authority());
+    // Authority
+    record->set_authority(AuthorityToSyncV2(job.authority()));
 }
 
 void CloudSchedulerService::RecordToJobInfo(
     const sync_v2::JobRecord& record,
-    sched::JobInfo* job) {
+    sched::job_info_t* job) {
 
     job->set_job_id(record.job_id());
     job->set_title(record.title());
@@ -1045,8 +1161,8 @@ void CloudSchedulerService::RecordToJobInfo(
     job->set_next_run_time_ms(record.next_run_time_ms());
     job->set_end_time_ms(record.end_time_ms());
 
-    // Copy status directly - JobInfo.status uses sync_v2::JobStatus
-    job->set_status(record.status());
+    // Map sync v2 status to IFEX status
+    job->set_status(SyncV2ToJobStatus(record.status()));
 
     // Paused is a separate boolean field
     job->set_paused(record.paused());
@@ -1055,12 +1171,12 @@ void CloudSchedulerService::RecordToJobInfo(
     job->set_deleted(record.deleted());
 
     // Wake/sleep policies
-    job->set_wake_policy(record.wake_policy());
-    job->set_sleep_policy(record.sleep_policy());
+    job->set_wake_policy(SyncV2ToWakePolicy(record.wake_policy()));
+    job->set_sleep_policy(SyncV2ToSleepPolicy(record.sleep_policy()));
     job->set_wake_lead_time_s(record.wake_lead_time_s());
 
     // Authority
-    job->set_authority(record.authority());
+    job->set_authority(SyncV2ToAuthority(record.authority()));
 }
 
 }  // namespace ifex::cloud

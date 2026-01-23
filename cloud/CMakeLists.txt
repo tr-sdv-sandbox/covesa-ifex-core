@@ -8,12 +8,20 @@
 message(STATUS "Building cloud reference services (test-only)")
 
 # Generate proto from cloud IFEX specs
-set(CLOUD_IFEX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ifex)
+# Primary location: specs/cloud/ (source of truth)
+set(CLOUD_IFEX_DIR ${CMAKE_SOURCE_DIR}/specs/cloud)
 set(CLOUD_PROTO_DIR ${CMAKE_CURRENT_BINARY_DIR}/proto)
 
 file(MAKE_DIRECTORY ${CLOUD_PROTO_DIR})
 
-# TODO: Add proto generation for cloud-backend-transport-service.yml
+# Copy cloud IFEX specs to build directory
+file(GLOB CLOUD_IFEX_FILES "${CLOUD_IFEX_DIR}/*.ifex.yml")
+foreach(IFEX_FILE ${CLOUD_IFEX_FILES})
+    get_filename_component(IFEX_NAME ${IFEX_FILE} NAME)
+    configure_file(${IFEX_FILE} ${CMAKE_BINARY_DIR}/ifex/${IFEX_NAME} COPYONLY)
+endforeach()
+
+# TODO: Add proto generation for cloud IFEX specs
 # Similar to reference-services/ifex generation
 
 # Cloud Backend Transport Reference Service

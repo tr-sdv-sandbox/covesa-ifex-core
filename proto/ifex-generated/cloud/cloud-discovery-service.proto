@@ -1,0 +1,224 @@
+// Generated from cloud_discovery_service.ifex by covesa-ifex-core
+// DO NOT EDIT - regenerate with: ./generate_proto.sh
+syntax = "proto3";
+
+
+
+
+package swdv.cloud_discovery_service;
+
+// Namespace: discovery
+// Fleet-wide service discovery operations
+
+// Service availability status
+enum service_status_t {
+  AVAILABLE = 0;
+  UNAVAILABLE = 1;
+  STARTING = 2;
+  STOPPING = 3;
+  ERROR = 4;
+}
+
+// Service transport protocol
+enum transport_type_t {
+  GRPC = 0;
+  HTTP_REST = 1;
+  DBUS = 2;
+  SOMEIP = 3;
+  MQTT = 4;
+}
+
+// Vehicle sync status
+enum sync_status_t {
+  UNKNOWN = 0;
+  SYNCED = 1;
+  STALE = 2;
+  SYNCING = 3;
+}
+
+// Service method metadata
+message method_info_t {
+  string name = 1;
+  string description = 2;
+}
+
+// Service namespace with methods
+message namespace_info_t {
+  string name = 1;
+  repeated method_info_t methods = 2;
+}
+
+// Service network endpoint
+message service_endpoint_t {
+  string address = 1;
+  transport_type_t transport = 2;
+}
+
+// Service registered on a specific vehicle
+message vehicle_service_t {
+  string vehicle_id = 1;
+  string registration_id = 2;
+  string name = 3;
+  string version = 4;
+  string description = 5;
+  service_endpoint_t endpoint = 6;
+  service_status_t status = 7;
+  sint64 last_heartbeat_ms = 8;
+  repeated namespace_info_t namespaces = 9;
+  string schema_hash = 10;
+}
+
+// Vehicle discovery sync state
+message vehicle_sync_info_t {
+  string vehicle_id = 1;
+  sync_status_t sync_status = 2;
+  sint64 last_sync_ms = 3;
+  uint32 service_count = 4;
+  uint32 state_checksum = 5;
+}
+
+// Full IFEX schema for a service
+message service_schema_t {
+  string schema_hash = 1;
+  string service_name = 2;
+  string version = 3;
+  string ifex_yaml = 4;
+  sint64 first_seen_ms = 5;
+  uint32 vehicle_count = 6;
+}
+
+// Filter criteria for service queries
+message service_filter_t {
+  string vehicle_id = 1;
+  string fleet_id = 2;
+  string service_name = 3;
+  string has_method = 4;
+  service_status_t status = 5;
+  bool include_offline_vehicles = 6;
+}
+
+// Aggregated capability across fleet
+message fleet_capability_t {
+  string service_name = 1;
+  string version = 2;
+  uint32 vehicle_count = 3;
+  uint32 available_count = 4;
+  repeated string methods = 5;
+}
+
+// Method: get_vehicle_services
+// Get all services registered on a specific vehicle
+message get_vehicle_services_request {
+  string vehicle_id = 1;
+}
+
+message get_vehicle_services_response {
+  repeated vehicle_service_t services = 1;
+  vehicle_sync_info_t sync_info = 2;
+}
+
+service get_vehicle_services_service {
+  rpc get_vehicle_services(get_vehicle_services_request) returns (get_vehicle_services_response);
+}
+
+// Method: find_services
+// Search for services across fleet
+message find_services_request {
+  service_filter_t filter = 1;
+}
+
+message find_services_response {
+  repeated vehicle_service_t services = 1;
+  uint32 total_count = 2;
+}
+
+service find_services_service {
+  rpc find_services(find_services_request) returns (find_services_response);
+}
+
+// Method: get_fleet_capabilities
+// Get aggregated service capabilities across fleet
+message get_fleet_capabilities_request {
+  string fleet_id = 1;
+}
+
+message get_fleet_capabilities_response {
+  repeated fleet_capability_t capabilities = 1;
+}
+
+service get_fleet_capabilities_service {
+  rpc get_fleet_capabilities(get_fleet_capabilities_request) returns (get_fleet_capabilities_response);
+}
+
+// Method: get_schema
+// Get full IFEX schema by hash
+message get_schema_request {
+  string schema_hash = 1;
+}
+
+message get_schema_response {
+  bool found = 1;
+  service_schema_t schema = 2;
+}
+
+service get_schema_service {
+  rpc get_schema(get_schema_request) returns (get_schema_response);
+}
+
+// Method: list_schemas
+// List all known service schemas
+message list_schemas_request {
+  string service_name_filter = 1;
+}
+
+message list_schemas_response {
+  repeated service_schema_t schemas = 1;
+}
+
+service list_schemas_service {
+  rpc list_schemas(list_schemas_request) returns (list_schemas_response);
+}
+
+// Method: get_vehicle_sync_status
+// Get sync status for a vehicle
+message get_vehicle_sync_status_request {
+  string vehicle_id = 1;
+}
+
+message get_vehicle_sync_status_response {
+  vehicle_sync_info_t info = 1;
+}
+
+service get_vehicle_sync_status_service {
+  rpc get_vehicle_sync_status(get_vehicle_sync_status_request) returns (get_vehicle_sync_status_response);
+}
+
+// Method: list_vehicles
+// List vehicles with their sync status
+message list_vehicles_request {
+  string fleet_id = 1;
+  sync_status_t sync_status_filter = 2;
+}
+
+message list_vehicles_response {
+  repeated vehicle_sync_info_t vehicles = 1;
+}
+
+service list_vehicles_service {
+  rpc list_vehicles(list_vehicles_request) returns (list_vehicles_response);
+}
+
+// Method: healthy
+// Check if discovery service is ready
+message healthy_request {
+}
+
+message healthy_response {
+  bool is_healthy = 1;
+}
+
+service healthy_service {
+  rpc healthy(healthy_request) returns (healthy_response);
+}
+
+

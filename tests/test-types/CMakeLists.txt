@@ -8,6 +8,7 @@ target_include_directories(ifex-test-types-service
     PRIVATE
         ${CMAKE_SOURCE_DIR}/core/include
         ${CMAKE_BINARY_DIR}/proto
+        ${CMAKE_BINARY_DIR}/proto/test-services
 )
 
 target_link_libraries(ifex-test-types-service

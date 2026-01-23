@@ -22,6 +22,7 @@ namespace ifex::reference {
 using namespace std::chrono_literals;
 namespace sync_v2 = swdv::scheduler_sync_v2;
 namespace scheduler_pb = swdv::ifex_scheduler;
+namespace scheduler_types_pb = swdv::scheduler_types;
 namespace sched_lib = ifex::scheduler;
 
 // =============================================================================
@@ -460,7 +461,7 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
             }
         } else {
             // Existing job - check for changes
-            const auto& synced = it->second;
+            auto& synced = it->second;
 
             // Check if job transitioned to terminal state
             bool was_terminal = synced.IsTerminal();
@@ -478,9 +479,16 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                 );
                 LOG(INFO) << "Job completed: " << job.title << " (id=" << job.job_id
                           << ", status=" << static_cast<int>(job.status) << ")";
+
+                // Update the synced state's status to prevent re-detecting this transition
+                // on subsequent polls. Status is excluded from ComputeHash(), so we must
+                // update it explicitly here.
+                synced.status = job.status;
+                synced.updated_at_ms = job.updated_at_ms;
+                synced.needs_sync = true;
             }
 
-            // Update synced state if job changed
+            // Update synced state if job content changed (status is excluded from hash)
             if (job.ComputeHash() != synced.ComputeHash()) {
                 SyncedJobState updated_state = job;
                 updated_state.version = synced.version;
@@ -581,41 +589,41 @@ void SchedulerSyncBridge::UpdateStats(uint64_t bytes_sent, bool is_full_sync,
 }
 
 sync_v2::JobStatus SchedulerSyncBridge::MapStatus(
-    scheduler_pb::job_status_t status) {
+    scheduler_types_pb::job_status_t status) {
     // Map IFEX scheduler status to sync v2 status
     // Note: IFEX scheduler no longer has PAUSED status - it uses paused boolean
     switch (status) {
-        case scheduler_pb::PENDING:
+        case scheduler_types_pb::JOB_STATUS_PENDING:
             return sync_v2::JOB_STATUS_PENDING;
-        case scheduler_pb::RUNNING:
+        case scheduler_types_pb::JOB_STATUS_RUNNING:
             return sync_v2::JOB_STATUS_RUNNING;
-        case scheduler_pb::COMPLETED:
+        case scheduler_types_pb::JOB_STATUS_COMPLETED:
             return sync_v2::JOB_STATUS_COMPLETED;
-        case scheduler_pb::FAILED:
+        case scheduler_types_pb::JOB_STATUS_FAILED:
             return sync_v2::JOB_STATUS_FAILED;
-        case scheduler_pb::CANCELLED:
+        case scheduler_types_pb::JOB_STATUS_CANCELLED:
             return sync_v2::JOB_STATUS_CANCELLED;
     }
     return sync_v2::JOB_STATUS_PENDING;  // Default
 }
 
 sync_v2::WakePolicy SchedulerSyncBridge::MapWakePolicy(
-    scheduler_pb::wake_policy_t policy) {
+    scheduler_types_pb::wake_policy_t policy) {
     switch (policy) {
-        case scheduler_pb::WAKE_REQUIRED:
+        case scheduler_types_pb::WAKE_REQUIRED:
             return sync_v2::WAKE_REQUIRED;
-        case scheduler_pb::NO_WAKE:
+        case scheduler_types_pb::WAKE_NO_WAKE:
         default:
             return sync_v2::WAKE_NO_WAKE;
     }
 }
 
 sync_v2::SleepPolicy SchedulerSyncBridge::MapSleepPolicy(
-    scheduler_pb::sleep_policy_t policy) {
+    scheduler_types_pb::sleep_policy_t policy) {
     switch (policy) {
-        case scheduler_pb::INHIBIT:
+        case scheduler_types_pb::SLEEP_INHIBIT:
             return sync_v2::SLEEP_INHIBIT;
-        case scheduler_pb::NORMAL:
+        case scheduler_types_pb::SLEEP_NORMAL:
         default:
             return sync_v2::SLEEP_NORMAL;
     }
@@ -678,9 +686,9 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::CreateJobFromCloud(
 
     // Map wake/sleep policies
     new_job->set_wake_policy(job.wake_policy() == sync_v2::WAKE_REQUIRED
-        ? scheduler_pb::WAKE_REQUIRED : scheduler_pb::NO_WAKE);
+        ? scheduler_types_pb::WAKE_REQUIRED : scheduler_types_pb::WAKE_NO_WAKE);
     new_job->set_sleep_policy(job.sleep_policy() == sync_v2::SLEEP_INHIBIT
-        ? scheduler_pb::INHIBIT : scheduler_pb::NORMAL);
+        ? scheduler_types_pb::SLEEP_INHIBIT : scheduler_types_pb::SLEEP_NORMAL);
     new_job->set_wake_lead_time_s(job.wake_lead_time_s());
 
     // Set paused state from the paused boolean field
