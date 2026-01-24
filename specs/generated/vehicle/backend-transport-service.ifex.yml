@@ -1,0 +1,294 @@
+# AUTO-GENERATED - DO NOT EDIT
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/specs/vehicle/backend-transport-service.ifex.yml
+# Regenerate with: ./generate_proto.sh
+---
+name: backend_transport_service
+major_version: 1
+minor_version: 0
+description: 'Bidirectional backend transport service for vehicle-to-cloud communication.
+  Provides a transport-agnostic gRPC interface for IFEX services to send/receive data
+  without knowing the underlying protocol (MQTT, SOME/IP gateways, etc.).
+
+  Channel model: Each service instance (handle) is bound to a single content ID. Apps
+  receive a pre-configured handle from the platform and cannot accidentally publish
+  to the wrong topic. Use get_content_id() to query the bound content ID.
+
+  Design principles: - Content ID is implicit in channel - no accidental cross-topic
+  writes - Persistence levels abstract transport QoS (clients specify intent, not
+  mechanism) - Server-assigned sequences enable non-blocking publish and gap-based
+  failure detection - Acks indicate success only; gaps in sequence numbers indicate
+  failed deliveries - Queue level feedback in publish response enables adaptive throttling
+  - Payloads are opaque bytes; encoding/decoding is the caller''s responsibility
+
+  '
+namespaces:
+- name: transport
+  description: Backend transport operations
+  enumerations:
+  - name: connection_state_t
+    datatype: uint8
+    description: Transport connection state
+    options:
+    - name: UNKNOWN
+      value: 0
+    - name: CONNECTED
+      value: 1
+    - name: DISCONNECTED
+      value: 2
+    - name: CONNECTING
+      value: 3
+    - name: RECONNECTING
+      value: 4
+  - name: publish_status_t
+    datatype: uint8
+    description: 'Result of publish operation. Since publish is non-blocking and messages
+      queue during disconnect, only queue acceptance errors are reported here. Delivery
+      failures are indicated by gaps in on_ack sequences.
+
+      '
+    options:
+    - name: OK
+      value: 0
+      description: Message accepted into queue
+    - name: QUEUE_FULL
+      value: 1
+      description: Queue at capacity, message rejected
+    - name: MESSAGE_TOO_LONG
+      value: 2
+      description: Payload exceeds maximum size
+    - name: INVALID_REQUEST
+      value: 3
+      description: Malformed request (invalid content_id, etc.)
+  - name: queue_level_t
+    datatype: uint8
+    description: 'Queue fill level for adaptive throttling. Returned in publish response
+      and broadcast via on_queue_status_changed for bidirectional feedback.
+
+      '
+    options:
+    - name: EMPTY
+      value: 0
+      description: Queue is empty (0%)
+    - name: LOW
+      value: 1
+      description: Queue has capacity (< 25%)
+    - name: NORMAL
+      value: 2
+      description: Queue at normal level (25-50%)
+    - name: HIGH
+      value: 3
+      description: Queue filling up (50-75%) - consider throttling
+    - name: CRITICAL
+      value: 4
+      description: Queue nearly full (75-95%) - throttle or pause low-priority
+    - name: FULL
+      value: 5
+      description: Queue at capacity (> 95%) - only high-priority accepted
+  - name: disconnect_reason_t
+    datatype: uint8
+    description: Reason for connection state change
+    options:
+    - name: NONE
+      value: 0
+      description: No disconnect (connected state)
+    - name: REQUESTED
+      value: 1
+      description: Client or service requested disconnect
+    - name: NETWORK_ERROR
+      value: 2
+      description: Network failure (timeout, unreachable)
+    - name: BROKER_UNAVAILABLE
+      value: 3
+      description: Cannot reach broker
+    - name: AUTHENTICATION_FAILED
+      value: 4
+      description: Credentials rejected
+    - name: PROTOCOL_ERROR
+      value: 5
+      description: Protocol violation
+    - name: TLS_ERROR
+      value: 6
+      description: TLS/SSL handshake failure
+  - name: persistence_t
+    datatype: uint8
+    description: Message persistence level (all levels preserve ordering)
+    options:
+    - name: BEST_EFFORT
+      value: 0
+      description: 'Queued for ordering, but pruned if stale. No retry on send failure.
+        Implementation may drop after TTL expires during disconnect.
+
+        '
+    - name: VOLATILE
+      value: 1
+      description: 'Retry until delivered. Kept in memory queue, lost on any shutdown.
+
+        '
+    - name: DURABLE
+      value: 2
+      description: 'Retry until delivered. Persisted on graceful shutdown (signal
+        handler), survives controlled restart. NOT crash-safe - protects embedded
+        flash from constant writes.
+
+        '
+  structs:
+  - name: publish_request_t
+    description: 'Request to publish data to cloud. Content ID is implicit in the
+      channel/handle - apps cannot accidentally publish to wrong topic.
+
+      '
+    members:
+    - name: payload
+      datatype: bytes
+      description: Binary payload (opaque - caller handles encoding)
+    - name: persistence
+      datatype: persistence_t
+      default: 0
+  - name: publish_response_t
+    description: Result of publish operation (returned immediately, non-blocking)
+    members:
+    - name: sequence
+      datatype: uint64
+      description: 'Server-assigned sequence number for this content_id. Monotonically
+        increasing. Use to correlate with on_ack events; gaps indicate failures.
+
+        '
+    - name: status
+      datatype: publish_status_t
+    - name: queue_level
+      datatype: queue_level_t
+      description: 'Current queue level after accepting this message. Use for adaptive
+        throttling (e.g., pause low-priority data when HIGH or above).
+
+        '
+  - name: delivery_ack_t
+    description: 'Delivery confirmation for a successfully sent message. Only emitted
+      for successful deliveries; gaps in sequence numbers indicate failures.
+
+      '
+    members:
+    - name: sequence
+      datatype: uint64
+      description: The sequence number from publish_response_t
+  - name: connection_status_t
+    description: Current connection status
+    members:
+    - name: state
+      datatype: connection_state_t
+    - name: reason
+      datatype: disconnect_reason_t
+      description: Reason for disconnect (NONE when connected)
+    - name: timestamp_ms
+      datatype: int64
+  - name: queue_status_t
+    description: 'Outbound queue status for adaptive throttling. Broadcast via on_queue_status_changed
+      when level changes, enabling clients to resume sending after queue drains.
+
+      '
+    members:
+    - name: level
+      datatype: queue_level_t
+      description: Current queue fill level
+    - name: queue_size
+      datatype: uint32
+      description: Current number of messages in queue
+    - name: queue_capacity
+      datatype: uint32
+      description: Maximum queue capacity
+  - name: transport_stats_t
+    description: Transport statistics
+    members:
+    - name: messages_sent
+      datatype: uint64
+    - name: messages_failed
+      datatype: uint64
+    - name: bytes_sent
+      datatype: uint64
+    - name: messages_received
+      datatype: uint64
+    - name: bytes_received
+      datatype: uint64
+    - name: last_send_timestamp_ms
+      datatype: int64
+    - name: last_receive_timestamp_ms
+      datatype: int64
+  - name: content_message_t
+    description: 'Incoming message from cloud (c2v). Content ID is implicit in the
+      channel/handle this message arrives on.
+
+      '
+    members:
+    - name: payload
+      datatype: bytes
+  methods:
+  - name: publish
+    description: Queue message for cloud delivery (v2c)
+    input:
+    - name: request
+      datatype: publish_request_t
+      mandatory: true
+    output:
+    - name: result
+      datatype: publish_response_t
+  - name: get_connection_status
+    description: Get current connection status
+    output:
+    - name: status
+      datatype: connection_status_t
+  - name: get_queue_status
+    description: Get outbound queue status
+    output:
+    - name: status
+      datatype: queue_status_t
+  - name: get_stats
+    description: Get transport statistics
+    output:
+    - name: stats
+      datatype: transport_stats_t
+  - name: healthy
+    description: Check if transport is ready
+    output:
+    - name: is_healthy
+      datatype: boolean
+  - name: get_content_id
+    description: 'Get the content ID this channel is bound to. Useful for logging
+      or when the app needs to know its assigned content ID.
+
+      '
+    output:
+    - name: content_id
+      datatype: uint32
+  events:
+  - name: on_content
+    description: 'Incoming content from cloud (c2v) for this channel''s content ID.
+
+      '
+    input:
+    - name: message
+      datatype: content_message_t
+      description: The received message (streamed)
+  - name: on_ack
+    description: 'Delivery confirmation stream for this channel. Only successful deliveries
+      generate acks. Messages are sent in FIFO order, so receiving an ack for sequence
+      N confirms that all prior sequences have completed. Gaps in acked sequence numbers
+      indicate messages that failed to deliver.
+
+      '
+    input:
+    - name: ack
+      datatype: delivery_ack_t
+      description: Delivery confirmation with sequence number (success only)
+  - name: on_connection_changed
+    description: Connection status changed
+    input:
+    - name: status
+      datatype: connection_status_t
+  - name: on_queue_status_changed
+    description: 'Queue level changed. Subscribe to receive feedback when queue drains,
+      enabling adaptive throttling. Example: pause logs when level >= HIGH, resume
+      when level drops to LOW.
+
+      '
+    input:
+    - name: status
+      datatype: queue_status_t

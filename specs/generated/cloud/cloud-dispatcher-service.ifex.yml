@@ -1,0 +1,187 @@
+# AUTO-GENERATED - DO NOT EDIT
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/specs/cloud/cloud-dispatcher-service.ifex.yml
+# Regenerate with: ./generate_proto.sh
+---
+name: cloud_dispatcher_service
+major_version: 1
+minor_version: 0
+description: 'Cloud-side service for invoking methods on vehicle Dispatcher services.
+  Provides request-response semantics with correlation IDs and timeouts. Messages
+  are transported via Backend Transport using content_id=200.
+
+  '
+namespaces:
+- name: dispatcher
+  description: Cloud-to-vehicle method invocation
+  enumerations:
+  - name: call_status_t
+    datatype: uint8
+    description: Remote method call execution status
+    options:
+    - name: SUCCESS
+      value: 0
+      description: Method call completed successfully
+    - name: FAILED
+      value: 1
+      description: Method call failed
+    - name: TIMEOUT
+      value: 2
+      description: Method call timed out
+    - name: SERVICE_UNAVAILABLE
+      value: 3
+      description: Target service not available on vehicle
+    - name: METHOD_NOT_FOUND
+      value: 4
+      description: Method not found on target service
+    - name: INVALID_PARAMETERS
+      value: 5
+      description: Parameters validation failed
+    - name: TRANSPORT_ERROR
+      value: 6
+      description: Backend Transport failure
+    - name: VEHICLE_OFFLINE
+      value: 7
+      description: Vehicle is not connected
+    - name: DUPLICATE_REQUEST
+      value: 8
+      description: Request with same correlation_id already pending
+  structs:
+  - name: call_request_t
+    description: Request to invoke a method on a vehicle service
+    members:
+    - name: vehicle_id
+      datatype: string
+      description: Target vehicle identifier
+    - name: service_name
+      datatype: string
+      description: Target IFEX service name (e.g., "climate_comfort")
+    - name: method_name
+      datatype: string
+      description: Method to invoke (e.g., "set_temperature")
+    - name: parameters_json
+      datatype: string
+      description: JSON-encoded method parameters
+      mandatory: false
+    - name: timeout_ms
+      datatype: uint32
+      description: Request timeout in milliseconds
+      default: 30000
+  - name: call_response_t
+    description: Result of remote method invocation
+    members:
+    - name: correlation_id
+      datatype: string
+      description: Unique identifier for this call (for tracking)
+    - name: status
+      datatype: call_status_t
+      description: Execution status
+    - name: result_json
+      datatype: string
+      description: JSON-encoded result from service method
+      mandatory: false
+    - name: error_message
+      datatype: string
+      description: Error details when status != SUCCESS
+      mandatory: false
+    - name: duration_ms
+      datatype: uint32
+      description: Time spent executing the method (vehicle-side)
+    - name: service_endpoint
+      datatype: string
+      description: Resolved onboard endpoint (for debugging)
+      mandatory: false
+  - name: pending_call_info_t
+    description: Information about a pending call
+    members:
+    - name: correlation_id
+      datatype: string
+    - name: vehicle_id
+      datatype: string
+    - name: service_name
+      datatype: string
+    - name: method_name
+      datatype: string
+    - name: created_at_ms
+      datatype: int64
+    - name: timeout_ms
+      datatype: uint32
+    - name: expires_at_ms
+      datatype: int64
+  methods:
+  - name: call_method
+    description: 'Invoke a method on a vehicle''s Dispatcher service. Returns immediately
+      with correlation_id; result delivered asynchronously or synchronously depending
+      on implementation.
+
+      '
+    input:
+    - name: request
+      datatype: call_request_t
+      mandatory: true
+    output:
+    - name: result
+      datatype: call_response_t
+  - name: call_method_async
+    description: 'Invoke a method asynchronously. Returns correlation_id immediately.
+      Use get_call_result to poll for result, or subscribe to on_call_result.
+
+      '
+    input:
+    - name: request
+      datatype: call_request_t
+      mandatory: true
+    output:
+    - name: correlation_id
+      datatype: string
+      description: Use to retrieve result later
+    - name: accepted
+      datatype: boolean
+      description: Whether request was accepted for delivery
+  - name: get_call_result
+    description: Get result of an async call by correlation_id
+    input:
+    - name: correlation_id
+      datatype: string
+      mandatory: true
+    output:
+    - name: found
+      datatype: boolean
+    - name: completed
+      datatype: boolean
+      description: Whether call has completed (success or failure)
+    - name: result
+      datatype: call_response_t
+      mandatory: false
+  - name: list_pending_calls
+    description: List calls that are still awaiting response
+    input:
+    - name: vehicle_id
+      datatype: string
+      description: Filter by vehicle (empty for all)
+      mandatory: false
+    output:
+    - name: calls
+      datatype: pending_call_info_t[]
+  - name: cancel_call
+    description: Cancel a pending async call
+    input:
+    - name: correlation_id
+      datatype: string
+      mandatory: true
+    output:
+    - name: success
+      datatype: boolean
+    - name: error_message
+      datatype: string
+      mandatory: false
+  - name: healthy
+    description: Check if dispatcher service is ready
+    output:
+    - name: is_healthy
+      datatype: boolean
+  events:
+  - name: on_call_result
+    description: Emitted when an async call completes
+    input:
+    - name: result
+      datatype: call_response_t

@@ -30,11 +30,25 @@ void SignalHandler(int signal) {
     }
 }
 
-std::string LoadIFEXDefinition() {
+std::string LoadIFEXDefinition(const std::string& explicit_path = "") {
     try {
+        // If explicit path provided, try it first
+        if (!explicit_path.empty()) {
+            std::ifstream file(explicit_path);
+            if (file.is_open()) {
+                LOG(INFO) << "Found IFEX definition at: " << explicit_path;
+                std::stringstream buffer;
+                buffer << file.rdbuf();
+                return buffer.str();
+            }
+            LOG(WARNING) << "Could not open IFEX definition at specified path: " << explicit_path;
+        }
+
         // Try multiple paths relative to common execution locations
         std::vector<std::string> paths = {
-            "specs/vehicle/scheduler-service.ifex.yml",  // From project root
+            "/app/ifex/scheduler-service.ifex.yml",       // Docker container
+            "specs/vehicle/scheduler-service.ifex.yml",   // From project root
+            "specs/generated/vehicle/scheduler-service.ifex.yml",  // Flattened
             "../specs/vehicle/scheduler-service.ifex.yml",  // From build dir
             "../../specs/vehicle/scheduler-service.ifex.yml",  // From build subdirectory
             "./scheduler-service.ifex.yml"                  // Current directory
@@ -59,7 +73,7 @@ std::string LoadIFEXDefinition() {
 }
 
 void RunServer(const std::string& listen_address, const std::string& service_discovery_endpoint,
-               const std::string& persistence_dir) {
+               const std::string& persistence_dir, const std::string& ifex_schema_path) {
     LOG(INFO) << "IFEX Scheduler Service (C++)";
     LOG(INFO) << "  - Listen: " << listen_address;
     LOG(INFO) << "  - Service discovery: " << service_discovery_endpoint;
@@ -72,7 +86,7 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
     LOG(INFO) << "";
 
     // Load IFEX definition
-    std::string ifex_schema = LoadIFEXDefinition();
+    std::string ifex_schema = LoadIFEXDefinition(ifex_schema_path);
 
     // Create service with config
     ifex::reference::SchedulerServer::Config config;
@@ -162,6 +176,7 @@ int main(int argc, char** argv) {
     std::string listen_address = "0.0.0.0:0";  // Random port by default (auto-discovered)
     std::string service_discovery_endpoint;
     std::string persistence_dir;
+    std::string ifex_schema_path;
 
     // Parse command line arguments (supports --key=value format)
     for (int i = 1; i < argc; i++) {
@@ -172,6 +187,8 @@ int main(int argc, char** argv) {
             service_discovery_endpoint = arg.substr(12);
         } else if (arg.rfind("--persistence-dir=", 0) == 0) {
             persistence_dir = arg.substr(18);
+        } else if (arg.rfind("--ifex-schema=", 0) == 0) {
+            ifex_schema_path = arg.substr(14);
         } else if (arg == "--help") {
             std::cout << "IFEX Scheduler Service\n"
                       << "Usage: " << argv[0] << " [options]\n"
@@ -179,6 +196,7 @@ int main(int argc, char** argv) {
                       << "  --listen=<addr>         Listen address (default: 0.0.0.0:0 for auto-assigned port)\n"
                       << "  --discovery=<addr>      Service discovery endpoint (overrides SERVICE_DISCOVERY_ENDPOINT env var)\n"
                       << "  --persistence-dir=<dir> Directory for job persistence (default: none)\n"
+                      << "  --ifex-schema=<path>    Path to IFEX schema file\n"
                       << "  --help                  Show this help message\n"
                       << "\n"
                       << "Environment variables:\n"
@@ -216,9 +234,12 @@ int main(int argc, char** argv) {
     if (!persistence_dir.empty()) {
         LOG(INFO) << "Using persistence directory: " << persistence_dir;
     }
+    if (!ifex_schema_path.empty()) {
+        LOG(INFO) << "Using IFEX schema path: " << ifex_schema_path;
+    }
 
     try {
-        RunServer(listen_address, service_discovery_endpoint, persistence_dir);
+        RunServer(listen_address, service_discovery_endpoint, persistence_dir, ifex_schema_path);
     } catch (const std::exception& e) {
         LOG(ERROR) << "Server failed: " << e.what();
         return 1;

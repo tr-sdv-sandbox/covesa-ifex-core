@@ -50,6 +50,7 @@ log_info "Starting Scheduler Service..."
     --listen=0.0.0.0:$SCHEDULER_PORT \
     --discovery=localhost:$DISCOVERY_PORT \
     --persistence-dir=/app/data \
+    --ifex-schema=/app/ifex/scheduler-service.ifex.yml \
     > /app/logs/scheduler.log 2>&1 &
 SCHEDULER_PID=$!
 sleep 1
@@ -78,7 +79,7 @@ log_info "Starting Dispatcher Service..."
 /app/bin/ifex-dispatcher-service \
     --listen=0.0.0.0:$DISPATCHER_PORT \
     --discovery=localhost:$DISCOVERY_PORT \
-    --ifex-schema=/app/ifex/ifex-dispatcher-service.yml \
+    --ifex-schema=/app/ifex/dispatcher-service.ifex.yml \
     > /app/logs/dispatcher.log 2>&1 &
 DISPATCHER_PID=$!
 sleep 1

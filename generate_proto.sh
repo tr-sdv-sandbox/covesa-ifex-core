@@ -2,19 +2,126 @@
 
 # Script to generate proto files from IFEX YAML definitions
 # Uses the official IFEX Docker-based tool
+#
+# This script performs two steps:
+# 1. Flatten IFEX files (resolve includes) -> specs/generated/
+# 2. Generate proto files from flattened IFEX -> proto/ifex-generated/
 
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROTO_BASE_DIR="${SCRIPT_DIR}/proto/ifex-generated"
+FLATTENED_BASE_DIR="${SCRIPT_DIR}/specs/generated"
 
-echo "Generating proto files from IFEX YAML definitions..."
+echo "=============================================="
+echo "IFEX Processing: Flatten + Proto Generation"
+echo "=============================================="
+echo ""
+
+# =============================================================================
+# Step 1: Flatten IFEX files (resolve includes)
+# =============================================================================
+echo "Step 1: Flattening IFEX files (resolving includes)..."
 echo ""
 echo "Output structure:"
-echo "  proto/ifex-generated/common/      <- specs/common/"
-echo "  proto/ifex-generated/vehicle/     <- specs/vehicle/"
-echo "  proto/ifex-generated/cloud/       <- specs/cloud/"
-echo "  proto/ifex-generated/test-services/ <- test-services/"
+echo "  specs/generated/vehicle/      <- specs/vehicle/ (flattened)"
+echo "  specs/generated/cloud/        <- specs/cloud/ (flattened)"
+echo "  specs/generated/test-services/ <- test-services/ (flattened)"
+echo ""
+
+# Check if Python3 and PyYAML are available
+if ! command -v python3 &> /dev/null; then
+    echo "Error: python3 not found."
+    exit 1
+fi
+
+if ! python3 -c "import yaml" 2>/dev/null; then
+    echo "Error: PyYAML not found. Install with: pip3 install pyyaml"
+    exit 1
+fi
+
+FLATTEN_SCRIPT="${SCRIPT_DIR}/scripts/flatten_ifex.py"
+
+# Create output directories
+mkdir -p "${FLATTENED_BASE_DIR}/vehicle"
+mkdir -p "${FLATTENED_BASE_DIR}/cloud"
+mkdir -p "${FLATTENED_BASE_DIR}/test-services"
+mkdir -p "${FLATTENED_BASE_DIR}/common"
+
+# Function to flatten IFEX files in a directory
+flatten_directory() {
+    local source_dir="$1"
+    local output_subdir="$2"
+    local full_source="${SCRIPT_DIR}/${source_dir}"
+    local full_output="${FLATTENED_BASE_DIR}/${output_subdir}"
+
+    if [ -d "$full_source" ]; then
+        echo "Flattening ${source_dir}/ -> specs/generated/${output_subdir}/"
+        find "$full_source" -maxdepth 1 -name "*.ifex.yml" | sort | while read yaml_file; do
+            if [ -f "$yaml_file" ]; then
+                base_name=$(basename "$yaml_file")
+                python3 "$FLATTEN_SCRIPT" \
+                    "$yaml_file" \
+                    "${full_output}/${base_name}" \
+                    --base-dir "$SCRIPT_DIR" \
+                    --quiet
+                echo "  ${base_name}"
+            fi
+        done
+        echo ""
+    fi
+}
+
+# Flatten all IFEX directories
+flatten_directory "specs/common" "common"
+flatten_directory "specs/vehicle" "vehicle"
+flatten_directory "specs/cloud" "cloud"
+
+# Flatten test services (they're in subdirectories)
+echo "Flattening test-services/ -> specs/generated/test-services/"
+for service_dir in "${SCRIPT_DIR}/test-services"/*; do
+    if [ -d "$service_dir" ]; then
+        for yaml_file in "$service_dir"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                base_name=$(basename "$yaml_file")
+                python3 "$FLATTEN_SCRIPT" \
+                    "$yaml_file" \
+                    "${FLATTENED_BASE_DIR}/test-services/${base_name}" \
+                    --base-dir "$SCRIPT_DIR" \
+                    --quiet
+                echo "  ${base_name}"
+            fi
+        done
+    fi
+done
+
+# Also flatten test-types
+for yaml_file in "${SCRIPT_DIR}/tests/test-types"/*.ifex.yml; do
+    if [ -f "$yaml_file" ]; then
+        base_name=$(basename "$yaml_file")
+        python3 "$FLATTEN_SCRIPT" \
+            "$yaml_file" \
+            "${FLATTENED_BASE_DIR}/test-services/${base_name}" \
+            --base-dir "$SCRIPT_DIR" \
+            --quiet
+        echo "  ${base_name}"
+    fi
+done
+echo ""
+
+echo "Flattening complete!"
+echo ""
+
+# =============================================================================
+# Step 2: Generate proto files from flattened IFEX
+# =============================================================================
+echo "Step 2: Generating proto files from flattened IFEX..."
+echo ""
+echo "Output structure:"
+echo "  proto/ifex-generated/common/      <- specs/generated/common/"
+echo "  proto/ifex-generated/vehicle/     <- specs/generated/vehicle/"
+echo "  proto/ifex-generated/cloud/       <- specs/generated/cloud/"
+echo "  proto/ifex-generated/test-services/ <- specs/generated/test-services/"
 echo ""
 
 # Check if ifex Docker image is available
@@ -49,13 +156,13 @@ process_ifex_file() {
 }
 
 # Define source directories, patterns, and output subdirectories
+# Use flattened files as source for proto generation
 # Format: "source_dir:pattern:output_subdir"
 IFEX_SOURCES=(
-    "specs/common:*.ifex.yml:common"
-    "specs/vehicle:*.ifex.yml:vehicle"
-    "specs/cloud:*.ifex.yml:cloud"
-    "test-services:*.ifex.yml:test-services"
-    "tests/test-types:*.ifex.yml:test-services"
+    "specs/generated/common:*.ifex.yml:common"
+    "specs/generated/vehicle:*.ifex.yml:vehicle"
+    "specs/generated/cloud:*.ifex.yml:cloud"
+    "specs/generated/test-services:*.ifex.yml:test-services"
 )
 
 # Process IFEX files from all source directories
