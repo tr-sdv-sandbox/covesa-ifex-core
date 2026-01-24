@@ -12,6 +12,10 @@ The flattened output is suitable for:
 - Service registration with Discovery (no include resolution needed)
 - Syncing to cloud (self-contained schema)
 - Runtime loading (no file dependencies)
+
+Note: Type references keep their namespace prefixes (e.g., "scheduler_types.job_status_t")
+because proto generation uses the original IFEX files with imports, not the flattened files.
+This ensures wire compatibility via shared proto types.
 """
 
 import argparse

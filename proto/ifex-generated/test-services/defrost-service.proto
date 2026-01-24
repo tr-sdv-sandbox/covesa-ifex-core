@@ -5,6 +5,8 @@ syntax = "proto3";
 
 
 
+
+
 package swdv.defrost_service;
 
 // Namespace: defrost

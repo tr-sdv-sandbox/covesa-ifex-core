@@ -11,67 +11,62 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
+from common import scheduler_types_pb2 as common_dot_scheduler__types__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17scheduler-service.proto\x12\x13swdv.ifex_scheduler\"\xf8\x03\n\x05job_t\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0f\n\x07service\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\x12\x12\n\nparameters\x18\x05 \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\x06 \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x07 \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x08 \x01(\x04\x12\x0e\n\x06paused\x18\t \x01(\x08\x12\x31\n\x06status\x18\n \x01(\x0e\x32!.swdv.ifex_scheduler.job_status_t\x12\x15\n\rcreated_at_ms\x18\x0b \x01(\x04\x12\x15\n\rupdated_at_ms\x18\x0c \x01(\x04\x12\x16\n\x0e\x65xecuted_at_ms\x18\r \x01(\x04\x12\x18\n\x10next_run_time_ms\x18\x0e \x01(\x04\x12\x15\n\rerror_message\x18\x0f \x01(\t\x12\x0e\n\x06result\x18\x10 \x01(\t\x12\x37\n\x0bwake_policy\x18\x11 \x01(\x0e\x32\".swdv.ifex_scheduler.wake_policy_t\x12\x39\n\x0csleep_policy\x18\x12 \x01(\x0e\x32#.swdv.ifex_scheduler.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\x13 \x01(\r\"\xc9\x01\n\x0cjob_filter_t\x12\x15\n\rstart_time_ms\x18\x01 \x01(\x04\x12\x13\n\x0b\x65nd_time_ms\x18\x02 \x01(\x04\x12\x0f\n\x07service\x18\x03 \x01(\t\x12\x31\n\x06status\x18\x04 \x01(\x0e\x32!.swdv.ifex_scheduler.job_status_t\x12\x19\n\x11has_status_filter\x18\x05 \x01(\x08\x12\x19\n\x11include_completed\x18\x06 \x01(\x08\x12\x13\n\x0bpaused_only\x18\x07 \x01(\x08\"\xc9\x02\n\x0cjob_create_t\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0f\n\x07service\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\x12\x12\n\nparameters\x18\x05 \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\x06 \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x07 \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x08 \x01(\x04\x12\x0e\n\x06paused\x18\t \x01(\x08\x12\x37\n\x0bwake_policy\x18\n \x01(\x0e\x32\".swdv.ifex_scheduler.wake_policy_t\x12\x39\n\x0csleep_policy\x18\x0b \x01(\x0e\x32#.swdv.ifex_scheduler.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\x0c \x01(\r\"\x98\x02\n\x0cjob_update_t\x12\r\n\x05title\x18\x01 \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\x02 \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x03 \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x04 \x01(\x04\x12\x12\n\nparameters\x18\x05 \x01(\t\x12\x0e\n\x06paused\x18\x06 \x01(\x08\x12\x37\n\x0bwake_policy\x18\x07 \x01(\x0e\x32\".swdv.ifex_scheduler.wake_policy_t\x12\x39\n\x0csleep_policy\x18\x08 \x01(\x0e\x32#.swdv.ifex_scheduler.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\t \x01(\r\"D\n\x12\x63reate_job_request\x12.\n\x03job\x18\x01 \x01(\x0b\x32!.swdv.ifex_scheduler.job_create_t\"G\n\x13\x63reate_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0e\n\x06job_id\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\"E\n\x10get_jobs_request\x12\x31\n\x06\x66ilter\x18\x01 \x01(\x0b\x32!.swdv.ifex_scheduler.job_filter_t\"N\n\x11get_jobs_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12(\n\x04jobs\x18\x02 \x03(\x0b\x32\x1a.swdv.ifex_scheduler.job_t\"!\n\x0fget_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"]\n\x10get_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\'\n\x03job\x18\x02 \x01(\x0b\x32\x1a.swdv.ifex_scheduler.job_t\x12\x0f\n\x07message\x18\x03 \x01(\t\"X\n\x12update_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x32\n\x07updates\x18\x02 \x01(\x0b\x32!.swdv.ifex_scheduler.job_update_t\"7\n\x13update_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"$\n\x12\x64\x65lete_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"7\n\x13\x64\x65lete_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"#\n\x11pause_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"6\n\x12pause_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"$\n\x12resume_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"7\n\x13resume_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"%\n\x13trigger_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"a\n\x14trigger_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\'\n\x03job\x18\x02 \x01(\x0b\x32\x1a.swdv.ifex_scheduler.job_t\x12\x0f\n\x07message\x18\x03 \x01(\t\"}\n\x19get_calendar_view_request\x12\x33\n\tview_type\x18\x01 \x01(\x0e\x32 .swdv.ifex_scheduler.view_type_t\x12\x19\n\x11reference_time_ms\x18\x02 \x01(\x04\x12\x10\n\x08timezone\x18\x03 \x01(\t\"\x83\x01\n\x1aget_calendar_view_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rstart_time_ms\x18\x02 \x01(\x04\x12\x13\n\x0b\x65nd_time_ms\x18\x03 \x01(\x04\x12(\n\x04jobs\x18\x04 \x03(\x0b\x32\x1a.swdv.ifex_scheduler.job_t*R\n\x0cjob_status_t\x12\x0b\n\x07PENDING\x10\x00\x12\x0b\n\x07RUNNING\x10\x01\x12\r\n\tCOMPLETED\x10\x02\x12\n\n\x06\x46\x41ILED\x10\x03\x12\r\n\tCANCELLED\x10\x04*6\n\x0bview_type_t\x12\x07\n\x03\x44\x41Y\x10\x00\x12\x08\n\x04WEEK\x10\x01\x12\t\n\x05MONTH\x10\x02\x12\t\n\x05RANGE\x10\x03*/\n\rwake_policy_t\x12\x0b\n\x07NO_WAKE\x10\x00\x12\x11\n\rWAKE_REQUIRED\x10\x01*)\n\x0esleep_policy_t\x12\n\n\x06NORMAL\x10\x00\x12\x0b\n\x07INHIBIT\x10\x01\x32u\n\x12\x63reate_job_service\x12_\n\ncreate_job\x12\'.swdv.ifex_scheduler.create_job_request\x1a(.swdv.ifex_scheduler.create_job_response2m\n\x10get_jobs_service\x12Y\n\x08get_jobs\x12%.swdv.ifex_scheduler.get_jobs_request\x1a&.swdv.ifex_scheduler.get_jobs_response2i\n\x0fget_job_service\x12V\n\x07get_job\x12$.swdv.ifex_scheduler.get_job_request\x1a%.swdv.ifex_scheduler.get_job_response2u\n\x12update_job_service\x12_\n\nupdate_job\x12\'.swdv.ifex_scheduler.update_job_request\x1a(.swdv.ifex_scheduler.update_job_response2u\n\x12\x64\x65lete_job_service\x12_\n\ndelete_job\x12\'.swdv.ifex_scheduler.delete_job_request\x1a(.swdv.ifex_scheduler.delete_job_response2q\n\x11pause_job_service\x12\\\n\tpause_job\x12&.swdv.ifex_scheduler.pause_job_request\x1a\'.swdv.ifex_scheduler.pause_job_response2u\n\x12resume_job_service\x12_\n\nresume_job\x12\'.swdv.ifex_scheduler.resume_job_request\x1a(.swdv.ifex_scheduler.resume_job_response2y\n\x13trigger_job_service\x12\x62\n\x0btrigger_job\x12(.swdv.ifex_scheduler.trigger_job_request\x1a).swdv.ifex_scheduler.trigger_job_response2\x91\x01\n\x19get_calendar_view_service\x12t\n\x11get_calendar_view\x12..swdv.ifex_scheduler.get_calendar_view_request\x1a/.swdv.ifex_scheduler.get_calendar_view_responseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17scheduler-service.proto\x12\x13swdv.ifex_scheduler\x1a\x1c\x63ommon/scheduler-types.proto\"\x85\x05\n\x05job_t\x12\n\n\x02id\x18\x01 \x01(\t\x12\x38\n\tauthority\x18\x02 \x01(\x0e\x32%.swdv.scheduler_types.job_authority_t\x12\x11\n\tcloud_seq\x18\x03 \x01(\x04\x12\x13\n\x0bvehicle_seq\x18\x04 \x01(\x04\x12\x0f\n\x07\x64\x65leted\x18\x05 \x01(\x08\x12\x15\n\rdeleted_at_ms\x18\x06 \x01(\x04\x12\r\n\x05title\x18\x07 \x01(\t\x12\x0f\n\x07service\x18\x08 \x01(\t\x12\x0e\n\x06method\x18\t \x01(\t\x12\x12\n\nparameters\x18\n \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\x0b \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x0c \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\r \x01(\x04\x12\x0e\n\x06paused\x18\x0e \x01(\x08\x12\x32\n\x06status\x18\x0f \x01(\x0e\x32\".swdv.scheduler_types.job_status_t\x12\x15\n\rcreated_at_ms\x18\x10 \x01(\x04\x12\x15\n\rupdated_at_ms\x18\x11 \x01(\x04\x12\x16\n\x0e\x65xecuted_at_ms\x18\x12 \x01(\x04\x12\x18\n\x10next_run_time_ms\x18\x13 \x01(\x04\x12\x15\n\rerror_message\x18\x14 \x01(\t\x12\x0e\n\x06result\x18\x15 \x01(\t\x12\x38\n\x0bwake_policy\x18\x16 \x01(\x0e\x32#.swdv.scheduler_types.wake_policy_t\x12:\n\x0csleep_policy\x18\x17 \x01(\x0e\x32$.swdv.scheduler_types.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\x18 \x01(\r\"\xca\x01\n\x0cjob_filter_t\x12\x15\n\rstart_time_ms\x18\x01 \x01(\x04\x12\x13\n\x0b\x65nd_time_ms\x18\x02 \x01(\x04\x12\x0f\n\x07service\x18\x03 \x01(\t\x12\x32\n\x06status\x18\x04 \x01(\x0e\x32\".swdv.scheduler_types.job_status_t\x12\x19\n\x11has_status_filter\x18\x05 \x01(\x08\x12\x19\n\x11include_completed\x18\x06 \x01(\x08\x12\x13\n\x0bpaused_only\x18\x07 \x01(\x08\"\xcb\x02\n\x0cjob_create_t\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0f\n\x07service\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\x12\x12\n\nparameters\x18\x05 \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\x06 \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x07 \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x08 \x01(\x04\x12\x0e\n\x06paused\x18\t \x01(\x08\x12\x38\n\x0bwake_policy\x18\n \x01(\x0e\x32#.swdv.scheduler_types.wake_policy_t\x12:\n\x0csleep_policy\x18\x0b \x01(\x0e\x32$.swdv.scheduler_types.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\x0c \x01(\r\"\x9a\x02\n\x0cjob_update_t\x12\r\n\x05title\x18\x01 \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\x02 \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x03 \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x04 \x01(\x04\x12\x12\n\nparameters\x18\x05 \x01(\t\x12\x0e\n\x06paused\x18\x06 \x01(\x08\x12\x38\n\x0bwake_policy\x18\x07 \x01(\x0e\x32#.swdv.scheduler_types.wake_policy_t\x12:\n\x0csleep_policy\x18\x08 \x01(\x0e\x32$.swdv.scheduler_types.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\t \x01(\r\"D\n\x12\x63reate_job_request\x12.\n\x03job\x18\x01 \x01(\x0b\x32!.swdv.ifex_scheduler.job_create_t\"G\n\x13\x63reate_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0e\n\x06job_id\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\"E\n\x10get_jobs_request\x12\x31\n\x06\x66ilter\x18\x01 \x01(\x0b\x32!.swdv.ifex_scheduler.job_filter_t\"N\n\x11get_jobs_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12(\n\x04jobs\x18\x02 \x03(\x0b\x32\x1a.swdv.ifex_scheduler.job_t\"!\n\x0fget_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"]\n\x10get_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\'\n\x03job\x18\x02 \x01(\x0b\x32\x1a.swdv.ifex_scheduler.job_t\x12\x0f\n\x07message\x18\x03 \x01(\t\"X\n\x12update_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x32\n\x07updates\x18\x02 \x01(\x0b\x32!.swdv.ifex_scheduler.job_update_t\"7\n\x13update_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"$\n\x12\x64\x65lete_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"7\n\x13\x64\x65lete_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"#\n\x11pause_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"6\n\x12pause_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"$\n\x12resume_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"7\n\x13resume_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"%\n\x13trigger_job_request\x12\x0e\n\x06job_id\x18\x01 \x01(\t\"a\n\x14trigger_job_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\'\n\x03job\x18\x02 \x01(\x0b\x32\x1a.swdv.ifex_scheduler.job_t\x12\x0f\n\x07message\x18\x03 \x01(\t\"}\n\x19get_calendar_view_request\x12\x33\n\tview_type\x18\x01 \x01(\x0e\x32 .swdv.ifex_scheduler.view_type_t\x12\x19\n\x11reference_time_ms\x18\x02 \x01(\x04\x12\x10\n\x08timezone\x18\x03 \x01(\t\"\x83\x01\n\x1aget_calendar_view_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rstart_time_ms\x18\x02 \x01(\x04\x12\x13\n\x0b\x65nd_time_ms\x18\x03 \x01(\x04\x12(\n\x04jobs\x18\x04 \x03(\x0b\x32\x1a.swdv.ifex_scheduler.job_t*6\n\x0bview_type_t\x12\x07\n\x03\x44\x41Y\x10\x00\x12\x08\n\x04WEEK\x10\x01\x12\t\n\x05MONTH\x10\x02\x12\t\n\x05RANGE\x10\x03\x32u\n\x12\x63reate_job_service\x12_\n\ncreate_job\x12\'.swdv.ifex_scheduler.create_job_request\x1a(.swdv.ifex_scheduler.create_job_response2m\n\x10get_jobs_service\x12Y\n\x08get_jobs\x12%.swdv.ifex_scheduler.get_jobs_request\x1a&.swdv.ifex_scheduler.get_jobs_response2i\n\x0fget_job_service\x12V\n\x07get_job\x12$.swdv.ifex_scheduler.get_job_request\x1a%.swdv.ifex_scheduler.get_job_response2u\n\x12update_job_service\x12_\n\nupdate_job\x12\'.swdv.ifex_scheduler.update_job_request\x1a(.swdv.ifex_scheduler.update_job_response2u\n\x12\x64\x65lete_job_service\x12_\n\ndelete_job\x12\'.swdv.ifex_scheduler.delete_job_request\x1a(.swdv.ifex_scheduler.delete_job_response2q\n\x11pause_job_service\x12\\\n\tpause_job\x12&.swdv.ifex_scheduler.pause_job_request\x1a\'.swdv.ifex_scheduler.pause_job_response2u\n\x12resume_job_service\x12_\n\nresume_job\x12\'.swdv.ifex_scheduler.resume_job_request\x1a(.swdv.ifex_scheduler.resume_job_response2y\n\x13trigger_job_service\x12\x62\n\x0btrigger_job\x12(.swdv.ifex_scheduler.trigger_job_request\x1a).swdv.ifex_scheduler.trigger_job_response2\x91\x01\n\x19get_calendar_view_service\x12t\n\x11get_calendar_view\x12..swdv.ifex_scheduler.get_calendar_view_request\x1a/.swdv.ifex_scheduler.get_calendar_view_responseb\x06proto3')
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'scheduler_service_pb2', globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
-  _JOB_STATUS_T._serialized_start=2627
-  _JOB_STATUS_T._serialized_end=2709
-  _VIEW_TYPE_T._serialized_start=2711
-  _VIEW_TYPE_T._serialized_end=2765
-  _WAKE_POLICY_T._serialized_start=2767
-  _WAKE_POLICY_T._serialized_end=2814
-  _SLEEP_POLICY_T._serialized_start=2816
-  _SLEEP_POLICY_T._serialized_end=2857
-  _JOB_T._serialized_start=49
-  _JOB_T._serialized_end=553
-  _JOB_FILTER_T._serialized_start=556
-  _JOB_FILTER_T._serialized_end=757
-  _JOB_CREATE_T._serialized_start=760
-  _JOB_CREATE_T._serialized_end=1089
-  _JOB_UPDATE_T._serialized_start=1092
-  _JOB_UPDATE_T._serialized_end=1372
-  _CREATE_JOB_REQUEST._serialized_start=1374
-  _CREATE_JOB_REQUEST._serialized_end=1442
-  _CREATE_JOB_RESPONSE._serialized_start=1444
-  _CREATE_JOB_RESPONSE._serialized_end=1515
-  _GET_JOBS_REQUEST._serialized_start=1517
-  _GET_JOBS_REQUEST._serialized_end=1586
-  _GET_JOBS_RESPONSE._serialized_start=1588
-  _GET_JOBS_RESPONSE._serialized_end=1666
-  _GET_JOB_REQUEST._serialized_start=1668
-  _GET_JOB_REQUEST._serialized_end=1701
-  _GET_JOB_RESPONSE._serialized_start=1703
-  _GET_JOB_RESPONSE._serialized_end=1796
-  _UPDATE_JOB_REQUEST._serialized_start=1798
-  _UPDATE_JOB_REQUEST._serialized_end=1886
-  _UPDATE_JOB_RESPONSE._serialized_start=1888
-  _UPDATE_JOB_RESPONSE._serialized_end=1943
-  _DELETE_JOB_REQUEST._serialized_start=1945
-  _DELETE_JOB_REQUEST._serialized_end=1981
-  _DELETE_JOB_RESPONSE._serialized_start=1983
-  _DELETE_JOB_RESPONSE._serialized_end=2038
-  _PAUSE_JOB_REQUEST._serialized_start=2040
-  _PAUSE_JOB_REQUEST._serialized_end=2075
-  _PAUSE_JOB_RESPONSE._serialized_start=2077
-  _PAUSE_JOB_RESPONSE._serialized_end=2131
-  _RESUME_JOB_REQUEST._serialized_start=2133
-  _RESUME_JOB_REQUEST._serialized_end=2169
-  _RESUME_JOB_RESPONSE._serialized_start=2171
-  _RESUME_JOB_RESPONSE._serialized_end=2226
-  _TRIGGER_JOB_REQUEST._serialized_start=2228
-  _TRIGGER_JOB_REQUEST._serialized_end=2265
-  _TRIGGER_JOB_RESPONSE._serialized_start=2267
-  _TRIGGER_JOB_RESPONSE._serialized_end=2364
-  _GET_CALENDAR_VIEW_REQUEST._serialized_start=2366
-  _GET_CALENDAR_VIEW_REQUEST._serialized_end=2491
-  _GET_CALENDAR_VIEW_RESPONSE._serialized_start=2494
-  _GET_CALENDAR_VIEW_RESPONSE._serialized_end=2625
+  _VIEW_TYPE_T._serialized_start=2803
+  _VIEW_TYPE_T._serialized_end=2857
+  _JOB_T._serialized_start=79
+  _JOB_T._serialized_end=724
+  _JOB_FILTER_T._serialized_start=727
+  _JOB_FILTER_T._serialized_end=929
+  _JOB_CREATE_T._serialized_start=932
+  _JOB_CREATE_T._serialized_end=1263
+  _JOB_UPDATE_T._serialized_start=1266
+  _JOB_UPDATE_T._serialized_end=1548
+  _CREATE_JOB_REQUEST._serialized_start=1550
+  _CREATE_JOB_REQUEST._serialized_end=1618
+  _CREATE_JOB_RESPONSE._serialized_start=1620
+  _CREATE_JOB_RESPONSE._serialized_end=1691
+  _GET_JOBS_REQUEST._serialized_start=1693
+  _GET_JOBS_REQUEST._serialized_end=1762
+  _GET_JOBS_RESPONSE._serialized_start=1764
+  _GET_JOBS_RESPONSE._serialized_end=1842
+  _GET_JOB_REQUEST._serialized_start=1844
+  _GET_JOB_REQUEST._serialized_end=1877
+  _GET_JOB_RESPONSE._serialized_start=1879
+  _GET_JOB_RESPONSE._serialized_end=1972
+  _UPDATE_JOB_REQUEST._serialized_start=1974
+  _UPDATE_JOB_REQUEST._serialized_end=2062
+  _UPDATE_JOB_RESPONSE._serialized_start=2064
+  _UPDATE_JOB_RESPONSE._serialized_end=2119
+  _DELETE_JOB_REQUEST._serialized_start=2121
+  _DELETE_JOB_REQUEST._serialized_end=2157
+  _DELETE_JOB_RESPONSE._serialized_start=2159
+  _DELETE_JOB_RESPONSE._serialized_end=2214
+  _PAUSE_JOB_REQUEST._serialized_start=2216
+  _PAUSE_JOB_REQUEST._serialized_end=2251
+  _PAUSE_JOB_RESPONSE._serialized_start=2253
+  _PAUSE_JOB_RESPONSE._serialized_end=2307
+  _RESUME_JOB_REQUEST._serialized_start=2309
+  _RESUME_JOB_REQUEST._serialized_end=2345
+  _RESUME_JOB_RESPONSE._serialized_start=2347
+  _RESUME_JOB_RESPONSE._serialized_end=2402
+  _TRIGGER_JOB_REQUEST._serialized_start=2404
+  _TRIGGER_JOB_REQUEST._serialized_end=2441
+  _TRIGGER_JOB_RESPONSE._serialized_start=2443
+  _TRIGGER_JOB_RESPONSE._serialized_end=2540
+  _GET_CALENDAR_VIEW_REQUEST._serialized_start=2542
+  _GET_CALENDAR_VIEW_REQUEST._serialized_end=2667
+  _GET_CALENDAR_VIEW_RESPONSE._serialized_start=2670
+  _GET_CALENDAR_VIEW_RESPONSE._serialized_end=2801
   _CREATE_JOB_SERVICE._serialized_start=2859
   _CREATE_JOB_SERVICE._serialized_end=2976
   _GET_JOBS_SERVICE._serialized_start=2978

@@ -129,22 +129,21 @@ fi
 echo ""
 echo -e "${YELLOW}Setting up IFEX Docker tool...${NC}"
 
-ORIGINAL_PROJECT="${SCRIPT_DIR}/../covesa_ifex_playground"
-if [ -d "${ORIGINAL_PROJECT}/tools/ifex" ]; then
+IFEX_TOOLS_DIR="${SCRIPT_DIR}/tools/ifex"
+if [ -d "${IFEX_TOOLS_DIR}" ]; then
     if docker images | grep -q "ifex-tools"; then
         echo -e "${GREEN}✓ IFEX Docker image already exists${NC}"
         echo "  To rebuild: docker rmi ifex-tools:latest && ./install_deps.sh"
     else
         echo "Building IFEX Docker image..."
-        cd "${ORIGINAL_PROJECT}/tools/ifex"
+        cd "${IFEX_TOOLS_DIR}"
         ./build_ifex.sh
         cd "${SCRIPT_DIR}"
         echo -e "${GREEN}✓ IFEX Docker image built${NC}"
     fi
 else
-    echo -e "${YELLOW}⚠ IFEX tools not found at ${ORIGINAL_PROJECT}/tools/ifex${NC}"
+    echo -e "${YELLOW}⚠ IFEX tools not found at ${IFEX_TOOLS_DIR}${NC}"
     echo "  Proto generation will not work without ifex-tools Docker image."
-    echo "  Please ensure covesa_ifex_playground is in the parent directory."
 fi
 
 # Setup cpp-mcp for MCP server

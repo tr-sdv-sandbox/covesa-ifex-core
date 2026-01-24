@@ -6,6 +6,8 @@ import "common/scheduler-types.proto";
 
 
 
+
+
 package swdv.cloud_scheduler_service;
 
 // Namespace: scheduler
@@ -433,6 +435,100 @@ message healthy_response {
 
 service healthy_service {
   rpc healthy(healthy_request) returns (healthy_response);
+}
+
+// Namespace: internal
+// Internal API for cloud-scheduler-sync-bridge. Generic job CRUD with version vectors - no sync protocol types. The scheduler maintains cloud_checksum on job changes.
+
+
+// Per-vehicle sync state (checksums for quiescence detection)
+message vehicle_sync_state_t {
+  string vehicle_id = 1;
+  uint64 cloud_checksum = 2;
+  uint64 last_seen_v2c_checksum = 3;
+  uint64 last_sync_timestamp_ms = 4;
+}
+
+// Method: get_jobs_for_vehicle
+// Get all jobs assigned to a vehicle. Used by sync bridge to build C2V messages.
+
+message get_jobs_for_vehicle_request {
+  string vehicle_id = 1;
+  bool include_deleted = 2;
+}
+
+message get_jobs_for_vehicle_response {
+  repeated job_info_t jobs = 1;
+}
+
+service get_jobs_for_vehicle_service {
+  rpc get_jobs_for_vehicle(get_jobs_for_vehicle_request) returns (get_jobs_for_vehicle_response);
+}
+
+// Method: upsert_job
+// Create or update a job with version vector fields. Used by sync bridge when processing V2C messages. Scheduler stores data and recomputes cloud_checksum.
+
+message upsert_job_request {
+  job_info_t job = 1;
+}
+
+message upsert_job_response {
+  bool success = 1;
+  job_info_t updated_job = 2;
+}
+
+service upsert_job_service {
+  rpc upsert_job(upsert_job_request) returns (upsert_job_response);
+}
+
+// Method: record_execution
+// Record a job execution (append-only, idempotent by execution_id). Used by sync bridge when processing V2C execution reports.
+
+message record_execution_request {
+  string vehicle_id = 1;
+  string job_id = 2;
+  execution_info_t execution = 3;
+}
+
+message record_execution_response {
+  bool success = 1;
+  bool is_duplicate = 2;
+}
+
+service record_execution_service {
+  rpc record_execution(record_execution_request) returns (record_execution_response);
+}
+
+// Method: get_vehicle_sync_state
+// Get sync state for a vehicle (checksums for quiescence detection).
+
+message get_vehicle_sync_state_request {
+  string vehicle_id = 1;
+}
+
+message get_vehicle_sync_state_response {
+  vehicle_sync_state_t state = 1;
+  bool found = 2;
+}
+
+service get_vehicle_sync_state_service {
+  rpc get_vehicle_sync_state(get_vehicle_sync_state_request) returns (get_vehicle_sync_state_response);
+}
+
+// Method: update_vehicle_sync_state
+// Update sync state for a vehicle after processing V2C message. Only updates last_seen_v2c_checksum and timestamp. cloud_checksum is maintained internally by scheduler.
+
+message update_vehicle_sync_state_request {
+  string vehicle_id = 1;
+  uint64 last_seen_v2c_checksum = 2;
+}
+
+message update_vehicle_sync_state_response {
+  bool success = 1;
+}
+
+service update_vehicle_sync_state_service {
+  rpc update_vehicle_sync_state(update_vehicle_sync_state_request) returns (update_vehicle_sync_state_response);
 }
 
 

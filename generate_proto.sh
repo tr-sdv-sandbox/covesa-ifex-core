@@ -3,9 +3,17 @@
 # Script to generate proto files from IFEX YAML definitions
 # Uses the official IFEX Docker-based tool
 #
-# This script performs two steps:
-# 1. Flatten IFEX files (resolve includes) -> specs/generated/
-# 2. Generate proto files from flattened IFEX -> proto/ifex-generated/
+# This script performs two separate steps:
+# 1. Flatten IFEX files (resolve includes) -> specs/generated/ (for runtime)
+# 2. Generate proto files from ORIGINAL IFEX -> proto/ifex-generated/ (for wire compatibility)
+#
+# Why separate?
+# - Flattened IFEX: Self-contained for runtime (dynamic gRPC, service registration)
+# - Original IFEX for proto: Uses imports for shared types (wire compatible across services)
+#
+# Type references like "scheduler_types.job_record_t" map to:
+# - Flattened IFEX: inlined types in scheduler_types namespace
+# - Proto: import "common/scheduler-types.proto" with swdv.scheduler_types.job_record_t
 
 set -e
 
@@ -19,9 +27,10 @@ echo "=============================================="
 echo ""
 
 # =============================================================================
-# Step 1: Flatten IFEX files (resolve includes)
+# Step 1: Flatten IFEX files (resolve includes) - for RUNTIME use
 # =============================================================================
 echo "Step 1: Flattening IFEX files (resolving includes)..."
+echo "       (Self-contained IFEX for runtime - keeps type prefixes)"
 echo ""
 echo "Output structure:"
 echo "  specs/generated/vehicle/      <- specs/vehicle/ (flattened)"
@@ -113,15 +122,16 @@ echo "Flattening complete!"
 echo ""
 
 # =============================================================================
-# Step 2: Generate proto files from flattened IFEX
+# Step 2: Generate proto files from ORIGINAL IFEX (for wire compatibility)
 # =============================================================================
-echo "Step 2: Generating proto files from flattened IFEX..."
+echo "Step 2: Generating proto files from ORIGINAL IFEX..."
+echo "       (Uses imports for shared types - wire compatible)"
 echo ""
 echo "Output structure:"
-echo "  proto/ifex-generated/common/      <- specs/generated/common/"
-echo "  proto/ifex-generated/vehicle/     <- specs/generated/vehicle/"
-echo "  proto/ifex-generated/cloud/       <- specs/generated/cloud/"
-echo "  proto/ifex-generated/test-services/ <- specs/generated/test-services/"
+echo "  proto/ifex-generated/common/      <- specs/common/"
+echo "  proto/ifex-generated/vehicle/     <- specs/vehicle/"
+echo "  proto/ifex-generated/cloud/       <- specs/cloud/"
+echo "  proto/ifex-generated/test-services/ <- test-services/"
 echo ""
 
 # Check if ifex Docker image is available
@@ -155,17 +165,16 @@ process_ifex_file() {
         ifexgen -d /templates/protobuf "${relative_path}" > "${proto_file}"
 }
 
-# Define source directories, patterns, and output subdirectories
-# Use flattened files as source for proto generation
+# Process ORIGINAL IFEX files (not flattened) for proto generation
+# This preserves includes -> proto imports for shared types
 # Format: "source_dir:pattern:output_subdir"
 IFEX_SOURCES=(
-    "specs/generated/common:*.ifex.yml:common"
-    "specs/generated/vehicle:*.ifex.yml:vehicle"
-    "specs/generated/cloud:*.ifex.yml:cloud"
-    "specs/generated/test-services:*.ifex.yml:test-services"
+    "specs/common:*.ifex.yml:common"
+    "specs/vehicle:*.ifex.yml:vehicle"
+    "specs/cloud:*.ifex.yml:cloud"
 )
 
-# Process IFEX files from all source directories
+# Process IFEX files from source directories
 for source_entry in "${IFEX_SOURCES[@]}"; do
     IFS=':' read -r source_dir pattern output_subdir <<< "$source_entry"
     full_dir="${SCRIPT_DIR}/${source_dir}"
@@ -175,7 +184,7 @@ for source_entry in "${IFEX_SOURCES[@]}"; do
         echo "Processing ${source_dir}/ -> proto/ifex-generated/${output_subdir}/"
 
         # Find all matching files
-        find "$full_dir" -name "$pattern" | sort | while read yaml_file; do
+        find "$full_dir" -maxdepth 1 -name "$pattern" | sort | while read yaml_file; do
             if [ -f "$yaml_file" ]; then
                 # Get relative path from script dir
                 relative_path="${yaml_file#$SCRIPT_DIR/}"
@@ -191,6 +200,37 @@ for source_entry in "${IFEX_SOURCES[@]}"; do
         echo ""
     fi
 done
+
+# Process test services (they're in subdirectories)
+echo "Processing test-services/ -> proto/ifex-generated/test-services/"
+output_dir="${PROTO_BASE_DIR}/test-services"
+mkdir -p "$output_dir"
+
+for service_dir in "${SCRIPT_DIR}/test-services"/*; do
+    if [ -d "$service_dir" ]; then
+        for yaml_file in "$service_dir"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                relative_path="${yaml_file#$SCRIPT_DIR/}"
+                base_name=$(basename "$yaml_file")
+                base_name="${base_name%.ifex.yml}"
+                base_name="${base_name%.yml}"
+                process_ifex_file "$yaml_file" "$relative_path" "$output_dir" "$base_name"
+            fi
+        done
+    fi
+done
+
+# Also process test-types
+for yaml_file in "${SCRIPT_DIR}/tests/test-types"/*.ifex.yml; do
+    if [ -f "$yaml_file" ]; then
+        relative_path="${yaml_file#$SCRIPT_DIR/}"
+        base_name=$(basename "$yaml_file")
+        base_name="${base_name%.ifex.yml}"
+        base_name="${base_name%.yml}"
+        process_ifex_file "$yaml_file" "$relative_path" "$output_dir" "$base_name"
+    fi
+done
+echo ""
 
 echo "Proto generation complete!"
 echo ""
@@ -218,9 +258,11 @@ else
                            --grpc_python_out="${python_dir}" \
                            --plugin=protoc-gen-grpc_python=$(which grpc_python_plugin) \
                            --proto_path="${proto_dir}" \
+                           --proto_path="${PROTO_BASE_DIR}" \
                            "$(basename "$proto_file")" 2>/dev/null || \
                     protoc --python_out="${python_dir}" \
                            --proto_path="${proto_dir}" \
+                           --proto_path="${PROTO_BASE_DIR}" \
                            "$(basename "$proto_file")"
                 fi
             done

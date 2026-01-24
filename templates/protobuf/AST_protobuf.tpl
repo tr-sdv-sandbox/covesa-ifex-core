@@ -34,9 +34,26 @@ import "{{ proto_path }}";
 {# boolean → bool #}
 {% set x=typedefs.__setitem__("boolean", "bool") %}
 
-{# Macro to convert IFEX types to protobuf, handling arrays and imported types #}
-{# Types with dots like "scheduler_types.job_status_t" are imported types - keep the dot #}
-{# Types without dots are local types #}
+{# Build set of imported service names (from includes) #}
+{# These are external types that should keep their qualified names #}
+{% set imported_namespaces = [] %}
+{% for inc in item.includes|default([]) %}
+  {#- Extract service name from include path: specs/common/scheduler_types.ifex.yml -> scheduler_types -#}
+  {%- set inc_file = inc.file.split('/')[-1] -%}
+  {%- set service_name = inc_file.replace('.ifex.yml', '').replace('.yml', '').replace('-', '_') -%}
+  {% set _ = imported_namespaces.append(service_name) %}
+{% endfor %}
+
+{# Build set of local namespace names (from this file) #}
+{# These are internal types - strip prefix when referencing #}
+{% set local_namespaces = [] %}
+{% for n in item.namespaces %}
+  {% set _ = local_namespaces.append(n.name) %}
+{% endfor %}
+
+{# Macro to convert IFEX types to protobuf, handling arrays and qualified names #}
+{# - Imported types (scheduler_types.foo) → keep qualified for proto import resolution #}
+{# - Local types (scheduler.foo) → strip prefix, all in same proto package #}
 {% macro convert_type(datatype) -%}
   {%- set is_array = datatype.endswith('[]') -%}
   {%- if is_array -%}
@@ -47,8 +64,16 @@ import "{{ proto_path }}";
   {%- if base in typedefs -%}
     {%- set mapped = typedefs[base] -%}
   {%- elif '.' in base -%}
-    {#- Imported type: convert package.type to package.type (keep dot for proto import) -#}
-    {%- set mapped = base -%}
+    {#- Qualified type reference -#}
+    {%- set ns_name = base.split('.')[0] -%}
+    {%- set type_name = base.split('.')[1] -%}
+    {%- if ns_name in local_namespaces -%}
+      {#- Local namespace: strip prefix (same proto package) -#}
+      {%- set mapped = type_name -%}
+    {%- else -%}
+      {#- Imported namespace: keep qualified for proto import -#}
+      {%- set mapped = base -%}
+    {%- endif -%}
   {%- else -%}
     {%- set mapped = base -%}
   {%- endif -%}

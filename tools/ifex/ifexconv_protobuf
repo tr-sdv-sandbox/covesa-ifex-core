@@ -1,0 +1,7 @@
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="${SCRIPT_DIR}/../.."
+
+# Run ifexconv_protobuf using Docker
+# Mount the entire project directory to allow access to IFEX files and output directories
+exec docker run --rm -v "${PROJECT_ROOT}:/workspace" -w /workspace ifex-tools:latest ifexconv_protobuf "$@"

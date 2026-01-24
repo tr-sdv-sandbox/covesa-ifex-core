@@ -839,3 +839,107 @@ namespaces:
     output:
     - name: is_healthy
       datatype: boolean
+- name: internal
+  description: 'Internal API for cloud-scheduler-sync-bridge. Generic job CRUD with
+    version vectors - no sync protocol types. The scheduler maintains cloud_checksum
+    on job changes.
+
+    '
+  structs:
+  - name: vehicle_sync_state_t
+    description: Per-vehicle sync state (checksums for quiescence detection)
+    members:
+    - name: vehicle_id
+      datatype: string
+    - name: cloud_checksum
+      datatype: uint64
+      description: 'Checksum of cloud''s job state for this vehicle. MAINTAINED BY
+        SCHEDULER: recomputed on every job create/update/delete.
+
+        '
+    - name: last_seen_v2c_checksum
+      datatype: uint64
+      description: Last V2C checksum received from vehicle (updated by sync bridge)
+    - name: last_sync_timestamp_ms
+      datatype: uint64
+  methods:
+  - name: get_jobs_for_vehicle
+    description: 'Get all jobs assigned to a vehicle. Used by sync bridge to build
+      C2V messages.
+
+      '
+    input:
+    - name: vehicle_id
+      datatype: string
+      mandatory: true
+    - name: include_deleted
+      datatype: boolean
+      description: Include soft-deleted jobs (tombstones)
+      mandatory: false
+    output:
+    - name: jobs
+      datatype: scheduler.job_info_t[]
+  - name: upsert_job
+    description: 'Create or update a job with version vector fields. Used by sync
+      bridge when processing V2C messages. Scheduler stores data and recomputes cloud_checksum.
+
+      '
+    input:
+    - name: job
+      datatype: scheduler.job_info_t
+      mandatory: true
+    output:
+    - name: success
+      datatype: boolean
+    - name: updated_job
+      datatype: scheduler.job_info_t
+  - name: record_execution
+    description: 'Record a job execution (append-only, idempotent by execution_id).
+      Used by sync bridge when processing V2C execution reports.
+
+      '
+    input:
+    - name: vehicle_id
+      datatype: string
+      mandatory: true
+    - name: job_id
+      datatype: string
+      mandatory: true
+    - name: execution
+      datatype: scheduler.execution_info_t
+      mandatory: true
+    output:
+    - name: success
+      datatype: boolean
+    - name: is_duplicate
+      datatype: boolean
+      description: True if execution_id already existed
+  - name: get_vehicle_sync_state
+    description: 'Get sync state for a vehicle (checksums for quiescence detection).
+
+      '
+    input:
+    - name: vehicle_id
+      datatype: string
+      mandatory: true
+    output:
+    - name: state
+      datatype: vehicle_sync_state_t
+    - name: found
+      datatype: boolean
+  - name: update_vehicle_sync_state
+    description: 'Update sync state for a vehicle after processing V2C message. Only
+      updates last_seen_v2c_checksum and timestamp. cloud_checksum is maintained internally
+      by scheduler.
+
+      '
+    input:
+    - name: vehicle_id
+      datatype: string
+      mandatory: true
+    - name: last_seen_v2c_checksum
+      datatype: uint64
+      mandatory: true
+    output:
+    - name: success
+      datatype: boolean

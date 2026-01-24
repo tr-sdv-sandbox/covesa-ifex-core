@@ -796,3 +796,308 @@ class healthy_service(object):
             cloud__scheduler__service__pb2.healthy_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class get_jobs_for_vehicle_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.get_jobs_for_vehicle = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.get_jobs_for_vehicle_service/get_jobs_for_vehicle',
+                request_serializer=cloud__scheduler__service__pb2.get_jobs_for_vehicle_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.get_jobs_for_vehicle_response.FromString,
+                )
+
+
+class get_jobs_for_vehicle_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def get_jobs_for_vehicle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_get_jobs_for_vehicle_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'get_jobs_for_vehicle': grpc.unary_unary_rpc_method_handler(
+                    servicer.get_jobs_for_vehicle,
+                    request_deserializer=cloud__scheduler__service__pb2.get_jobs_for_vehicle_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.get_jobs_for_vehicle_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_service.get_jobs_for_vehicle_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class get_jobs_for_vehicle_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def get_jobs_for_vehicle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.get_jobs_for_vehicle_service/get_jobs_for_vehicle',
+            cloud__scheduler__service__pb2.get_jobs_for_vehicle_request.SerializeToString,
+            cloud__scheduler__service__pb2.get_jobs_for_vehicle_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class upsert_job_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.upsert_job = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.upsert_job_service/upsert_job',
+                request_serializer=cloud__scheduler__service__pb2.upsert_job_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.upsert_job_response.FromString,
+                )
+
+
+class upsert_job_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def upsert_job(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_upsert_job_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'upsert_job': grpc.unary_unary_rpc_method_handler(
+                    servicer.upsert_job,
+                    request_deserializer=cloud__scheduler__service__pb2.upsert_job_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.upsert_job_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_service.upsert_job_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class upsert_job_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def upsert_job(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.upsert_job_service/upsert_job',
+            cloud__scheduler__service__pb2.upsert_job_request.SerializeToString,
+            cloud__scheduler__service__pb2.upsert_job_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class record_execution_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.record_execution = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.record_execution_service/record_execution',
+                request_serializer=cloud__scheduler__service__pb2.record_execution_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.record_execution_response.FromString,
+                )
+
+
+class record_execution_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def record_execution(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_record_execution_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'record_execution': grpc.unary_unary_rpc_method_handler(
+                    servicer.record_execution,
+                    request_deserializer=cloud__scheduler__service__pb2.record_execution_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.record_execution_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_service.record_execution_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class record_execution_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def record_execution(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.record_execution_service/record_execution',
+            cloud__scheduler__service__pb2.record_execution_request.SerializeToString,
+            cloud__scheduler__service__pb2.record_execution_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class get_vehicle_sync_state_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.get_vehicle_sync_state = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.get_vehicle_sync_state_service/get_vehicle_sync_state',
+                request_serializer=cloud__scheduler__service__pb2.get_vehicle_sync_state_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.get_vehicle_sync_state_response.FromString,
+                )
+
+
+class get_vehicle_sync_state_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def get_vehicle_sync_state(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_get_vehicle_sync_state_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'get_vehicle_sync_state': grpc.unary_unary_rpc_method_handler(
+                    servicer.get_vehicle_sync_state,
+                    request_deserializer=cloud__scheduler__service__pb2.get_vehicle_sync_state_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.get_vehicle_sync_state_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_service.get_vehicle_sync_state_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class get_vehicle_sync_state_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def get_vehicle_sync_state(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.get_vehicle_sync_state_service/get_vehicle_sync_state',
+            cloud__scheduler__service__pb2.get_vehicle_sync_state_request.SerializeToString,
+            cloud__scheduler__service__pb2.get_vehicle_sync_state_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class update_vehicle_sync_state_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.update_vehicle_sync_state = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.update_vehicle_sync_state_service/update_vehicle_sync_state',
+                request_serializer=cloud__scheduler__service__pb2.update_vehicle_sync_state_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.update_vehicle_sync_state_response.FromString,
+                )
+
+
+class update_vehicle_sync_state_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def update_vehicle_sync_state(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_update_vehicle_sync_state_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'update_vehicle_sync_state': grpc.unary_unary_rpc_method_handler(
+                    servicer.update_vehicle_sync_state,
+                    request_deserializer=cloud__scheduler__service__pb2.update_vehicle_sync_state_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.update_vehicle_sync_state_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_service.update_vehicle_sync_state_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class update_vehicle_sync_state_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def update_vehicle_sync_state(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.update_vehicle_sync_state_service/update_vehicle_sync_state',
+            cloud__scheduler__service__pb2.update_vehicle_sync_state_request.SerializeToString,
+            cloud__scheduler__service__pb2.update_vehicle_sync_state_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
