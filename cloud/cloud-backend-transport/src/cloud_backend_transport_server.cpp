@@ -73,14 +73,20 @@ bool CloudBackendTransportServer::Start() {
 }
 
 void CloudBackendTransportServer::Stop() {
+    LOG(INFO) << "CloudBackendTransportServer::Stop() called, running=" << running_.load();
     if (!running_.load()) {
+        LOG(INFO) << "CloudBackendTransportServer::Stop() - already stopped, returning";
         return;
     }
     running_.store(false);
 
     if (mosq_) {
+        LOG(INFO) << "CloudBackendTransportServer::Stop() - disconnecting mosquitto";
         mosquitto_disconnect(mosq_);
-        mosquitto_loop_stop(mosq_, true);
+        LOG(INFO) << "CloudBackendTransportServer::Stop() - stopping mosquitto loop (graceful)";
+        // Use force=false for graceful stop - force=true can crash if thread already exited
+        mosquitto_loop_stop(mosq_, false);
+        LOG(INFO) << "CloudBackendTransportServer::Stop() - mosquitto stopped";
     }
     connected_.store(false);
 

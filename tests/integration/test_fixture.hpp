@@ -8,9 +8,13 @@
 #include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <string>
 
 class IntegrationTestFixture : public ::testing::Test {
 protected:
+    // ==========================================================================
+    // gRPC Service Ports and Addresses
+    // ==========================================================================
     static constexpr int TEST_DISCOVERY_PORT = 50099;
     static constexpr int TEST_DISPATCHER_PORT = 50098;
     static constexpr int TEST_ECHO_PORT = 50097;
@@ -23,7 +27,21 @@ protected:
     static constexpr const char* TEST_TYPES_ADDRESS = "localhost:50095";
     static constexpr const char* TEST_SCHEDULER_ADDRESS = "localhost:50094";
 
+    // ==========================================================================
+    // MQTT Docker Container Configuration
+    // ==========================================================================
+    static constexpr const char* MQTT_IMAGE = "eclipse-mosquitto:2";
+    static constexpr const char* MQTT_CONTAINER_NAME = "ifex-integration-test-mqtt-broker";
+    static constexpr int MQTT_DEFAULT_PORT = 11883;
+
+    // MQTT connection info (set after container starts or from environment)
+    static std::string mqtt_host_;
+    static int mqtt_port_;
+    static bool mqtt_started_;
+
+    // ==========================================================================
     // Process IDs for services
+    // ==========================================================================
     static pid_t discovery_pid_;
     static pid_t dispatcher_pid_;
     static pid_t echo_pid_;
@@ -52,6 +70,13 @@ public:
     // Restart individual services (for persistence testing)
     static bool RestartScheduler();
 
+    // ==========================================================================
+    // MQTT Accessors
+    // ==========================================================================
+    static const std::string& GetMqttHost() { return mqtt_host_; }
+    static int GetMqttPort() { return mqtt_port_; }
+    static bool IsMqttAvailable() { return mqtt_started_; }
+
 private:
     static pid_t start_service(const std::string& executable, const std::string& name, int port);
     static void stop_service(pid_t& pid, const std::string& name);
@@ -59,4 +84,10 @@ private:
 
     static std::string get_build_dir();
     static std::string get_schema_dir();
+
+    // ==========================================================================
+    // MQTT Docker Container Management
+    // ==========================================================================
+    static bool StartMqttContainer();
+    static void StopMqttContainer();
 };

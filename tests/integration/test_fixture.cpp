@@ -8,13 +8,18 @@
 
 namespace fs = std::filesystem;
 
-// Static member definitions
+// Static member definitions - gRPC services
 pid_t IntegrationTestFixture::discovery_pid_ = 0;
 pid_t IntegrationTestFixture::dispatcher_pid_ = 0;
 pid_t IntegrationTestFixture::echo_pid_ = 0;
 pid_t IntegrationTestFixture::test_types_pid_ = 0;
 pid_t IntegrationTestFixture::scheduler_pid_ = 0;
 bool IntegrationTestFixture::services_started_ = false;
+
+// Static member definitions - MQTT
+std::string IntegrationTestFixture::mqtt_host_;
+int IntegrationTestFixture::mqtt_port_ = IntegrationTestFixture::MQTT_DEFAULT_PORT;
+bool IntegrationTestFixture::mqtt_started_ = false;
 
 // Cleanup function called on exit (ensures services are stopped even on crash/abort)
 static void cleanup_services_atexit() {
@@ -32,6 +37,26 @@ void IntegrationTestFixture::GlobalSetUp() {
     if (!registered) {
         std::atexit(cleanup_services_atexit);
         registered = true;
+    }
+
+    // Clean up scheduler persistence directory to avoid stale test data
+    // (tombstones from previous test runs would pollute job counts)
+    std::filesystem::remove_all("/tmp/ifex-scheduler-test-persist");
+    std::filesystem::create_directories("/tmp/ifex-scheduler-test-persist");
+
+    // Kill any stray processes from previous test runs on our test ports
+    // This handles cases where tests crashed or were interrupted
+    LOG(INFO) << "Cleaning up stray processes on test ports...";
+    for (int port : {TEST_DISCOVERY_PORT, TEST_DISPATCHER_PORT, TEST_SCHEDULER_PORT,
+                     TEST_ECHO_PORT, TEST_TYPES_PORT}) {
+        std::string cmd = "fuser -k " + std::to_string(port) + "/tcp 2>/dev/null";
+        [[maybe_unused]] int r = std::system(cmd.c_str());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Start MQTT container first (optional - tests can skip if not available)
+    if (!StartMqttContainer()) {
+        LOG(WARNING) << "MQTT container not available - some tests will be skipped";
     }
 
     // Start discovery service first (others depend on it)
@@ -111,7 +136,7 @@ void IntegrationTestFixture::GlobalTearDown() {
 
 void IntegrationTestFixture::cleanup_all_services() {
     // Only log if any services are running
-    if (test_types_pid_ || echo_pid_ || scheduler_pid_ || dispatcher_pid_ || discovery_pid_) {
+    if (test_types_pid_ || echo_pid_ || scheduler_pid_ || dispatcher_pid_ || discovery_pid_ || mqtt_started_) {
         LOG(INFO) << "Stopping test services...";
     }
 
@@ -120,9 +145,10 @@ void IntegrationTestFixture::cleanup_all_services() {
     stop_service(scheduler_pid_, "scheduler");
     stop_service(dispatcher_pid_, "dispatcher");
     stop_service(discovery_pid_, "discovery");
+    StopMqttContainer();
 
     if (test_types_pid_ == 0 && echo_pid_ == 0 && scheduler_pid_ == 0 &&
-        dispatcher_pid_ == 0 && discovery_pid_ == 0) {
+        dispatcher_pid_ == 0 && discovery_pid_ == 0 && !mqtt_started_) {
         LOG(INFO) << "All test services stopped";
     }
 }
@@ -345,4 +371,91 @@ bool IntegrationTestFixture::RestartScheduler() {
 
     LOG(INFO) << "Scheduler restarted successfully";
     return true;
+}
+
+// =============================================================================
+// MQTT Docker Container Management
+// =============================================================================
+
+bool IntegrationTestFixture::StartMqttContainer() {
+    LOG(INFO) << "=== Setting up MQTT test environment ===";
+
+    // Check if MQTT_HOST environment variable is set (external broker)
+    const char* env_host = std::getenv("MQTT_HOST");
+    if (env_host) {
+        mqtt_host_ = env_host;
+        const char* env_port = std::getenv("MQTT_PORT");
+        mqtt_port_ = env_port ? std::atoi(env_port) : 1883;
+        mqtt_started_ = true;
+        LOG(INFO) << "Using MQTT from environment: " << mqtt_host_ << ":" << mqtt_port_;
+        return true;
+    }
+
+    // Check Docker availability
+    if (std::system("docker --version > /dev/null 2>&1") != 0) {
+        LOG(WARNING) << "Docker is not available - MQTT tests will be skipped";
+        return false;
+    }
+
+    // Stop any existing container
+    StopMqttContainer();
+
+    // Start MQTT container
+    LOG(INFO) << "Starting MQTT broker container...";
+
+    std::string port_str = std::to_string(MQTT_DEFAULT_PORT);
+    std::string cmd = "docker run -d --rm "
+                      "--name " + std::string(MQTT_CONTAINER_NAME) + " "
+                      "-p " + port_str + ":1883 "
+                      + std::string(MQTT_IMAGE) + " "
+                      "sh -c 'echo -e \"listener 1883\\nallow_anonymous true\" > /tmp/m.conf && "
+                      "mosquitto -c /tmp/m.conf'";
+
+    LOG(INFO) << "Docker command: " << cmd;
+
+    if (std::system(cmd.c_str()) != 0) {
+        LOG(ERROR) << "Failed to start MQTT Docker container";
+        return false;
+    }
+
+    // Wait for container to be ready
+    LOG(INFO) << "Waiting for MQTT broker to be ready...";
+    for (int i = 0; i < 100; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // Check if port is open
+        std::string check_port = "nc -z localhost " + port_str + " 2>/dev/null";
+        if (std::system(check_port.c_str()) == 0) {
+            mqtt_host_ = "localhost";
+            mqtt_port_ = MQTT_DEFAULT_PORT;
+            mqtt_started_ = true;
+            LOG(INFO) << "MQTT broker is ready at " << mqtt_host_ << ":" << mqtt_port_;
+            return true;
+        }
+
+        // Every 10 iterations, verify container is still running
+        if (i % 10 == 9) {
+            std::string check_running = "docker ps -q -f name=" + std::string(MQTT_CONTAINER_NAME) + " | grep -q .";
+            if (std::system(check_running.c_str()) != 0) {
+                LOG(ERROR) << "MQTT container stopped unexpectedly";
+                [[maybe_unused]] int log_result = std::system(("docker logs " + std::string(MQTT_CONTAINER_NAME) + " 2>&1 | tail -20").c_str());
+                return false;
+            }
+        }
+    }
+
+    LOG(ERROR) << "Timeout waiting for MQTT broker to be ready";
+    StopMqttContainer();
+    return false;
+}
+
+void IntegrationTestFixture::StopMqttContainer() {
+    // Only stop container if we started it (not external broker from environment)
+    if (!std::getenv("MQTT_HOST")) {
+        LOG(INFO) << "Stopping MQTT container...";
+        [[maybe_unused]] int stop_result = std::system(("docker stop " + std::string(MQTT_CONTAINER_NAME) + " 2>/dev/null").c_str());
+        [[maybe_unused]] int rm_result = std::system(("docker rm -f " + std::string(MQTT_CONTAINER_NAME) + " 2>/dev/null").c_str());
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    mqtt_started_ = false;
 }

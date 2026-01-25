@@ -56,8 +56,8 @@ message sensor_data_t {
 // Structure containing all primitive types
 message test_all_primitives_t {
   bool bool_val = 1;
-  sint32 int32_val = 2;
-  sint64 int64_val = 3;
+  int32 int32_val = 2;
+  int64 int64_val = 3;
   uint32 uint32_val = 4;
   uint64 uint64_val = 5;
   float float_val = 6;
@@ -93,13 +93,13 @@ service test_primitives_service {
 // Method: test_arrays
 // Test array handling
 message test_arrays_request {
-  repeated sint32 int_array = 1;
+  repeated int32 int_array = 1;
   repeated string string_array = 2;
   repeated point_2d_t point_array = 3;
 }
 
 message test_arrays_response {
-  sint64 int_sum = 1;
+  int64 int_sum = 1;
   string concatenated_strings = 2;
   point_2d_t centroid = 3;
 }
@@ -145,7 +145,7 @@ service test_nested_structs_service {
 // Test optional field handling
 message test_optional_fields_request {
   string required_string = 1;
-  sint32 optional_int = 2;
+  int32 optional_int = 2;
   point_2d_t optional_struct = 3;
   repeated string optional_array = 4;
 }

@@ -65,7 +65,7 @@ message vehicle_service_t {
   string description = 5;
   service_endpoint_t endpoint = 6;
   service_status_t status = 7;
-  sint64 last_heartbeat_ms = 8;
+  int64 last_heartbeat_ms = 8;
   repeated namespace_info_t namespaces = 9;
   string schema_hash = 10;
 }
@@ -74,7 +74,7 @@ message vehicle_service_t {
 message vehicle_sync_info_t {
   string vehicle_id = 1;
   sync_status_t sync_status = 2;
-  sint64 last_sync_ms = 3;
+  int64 last_sync_ms = 3;
   uint32 service_count = 4;
   uint32 state_checksum = 5;
 }
@@ -85,7 +85,7 @@ message service_schema_t {
   string service_name = 2;
   string version = 3;
   string ifex_yaml = 4;
-  sint64 first_seen_ms = 5;
+  int64 first_seen_ms = 5;
   uint32 vehicle_count = 6;
 }
 

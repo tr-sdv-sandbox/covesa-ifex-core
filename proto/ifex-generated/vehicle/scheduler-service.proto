@@ -50,15 +50,17 @@ message job_t {
   uint32 wake_lead_time_s = 24;
 }
 
-// Filter criteria for retrieving jobs
+// Filter criteria for retrieving jobs. Design principle: empty filter returns ALL jobs (no filters = see everything). Use exclude_* flags to hide specific job states.
+
 message job_filter_t {
   uint64 start_time_ms = 1;
   uint64 end_time_ms = 2;
   string service = 3;
   scheduler_types.job_status_t status = 4;
   bool has_status_filter = 5;
-  bool include_completed = 6;
-  bool paused_only = 7;
+  bool exclude_completed = 6;
+  bool exclude_deleted = 7;
+  bool exclude_paused = 8;
 }
 
 // Information needed to create a new job
@@ -75,6 +77,11 @@ message job_create_t {
   scheduler_types.wake_policy_t wake_policy = 10;
   scheduler_types.sleep_policy_t sleep_policy = 11;
   uint32 wake_lead_time_s = 12;
+  scheduler_types.job_authority_t authority = 13;
+  uint64 cloud_seq = 14;
+  uint64 vehicle_seq = 15;
+  bool deleted = 16;
+  uint64 deleted_at_ms = 17;
 }
 
 // Fields that can be updated in an existing job
@@ -88,6 +95,11 @@ message job_update_t {
   scheduler_types.wake_policy_t wake_policy = 7;
   scheduler_types.sleep_policy_t sleep_policy = 8;
   uint32 wake_lead_time_s = 9;
+  scheduler_types.job_authority_t authority = 10;
+  uint64 cloud_seq = 11;
+  uint64 vehicle_seq = 12;
+  bool deleted = 13;
+  uint64 deleted_at_ms = 14;
 }
 
 // Method: create_job
@@ -107,7 +119,7 @@ service create_job_service {
 }
 
 // Method: get_jobs
-// Retrieve jobs based on filter criteria
+// Retrieve jobs based on filter criteria (empty filter = all jobs)
 message get_jobs_request {
   job_filter_t filter = 1;
 }

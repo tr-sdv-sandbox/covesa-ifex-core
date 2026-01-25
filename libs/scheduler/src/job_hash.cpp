@@ -77,6 +77,28 @@ uint64_t compute_job_content_hash(const Job& job) {
     return h;
 }
 
+// Compute per-job hash for state checksum (includes sync state per spec section 5.5)
+// This is different from content_hash which only includes business logic fields.
+// State checksum includes: job_id, authority, version, deleted, and content fields.
+static uint64_t compute_job_state_hash(const Job& job) {
+    std::hash<std::string> str_hash;
+    std::hash<uint64_t> uint64_hash;
+    std::hash<bool> bool_hash;
+    std::hash<int> int_hash;
+
+    // Start with content hash
+    uint64_t h = compute_job_content_hash(job);
+
+    // Add sync state fields per spec section 5.5:
+    // "Checksum includes: job_id, authority, version (cloud_seq, vehicle_seq), deleted"
+    h = hash_mix(h, static_cast<uint64_t>(job.authority));
+    h = hash_mix(h, job.version.cloud_seq);
+    h = hash_mix(h, job.version.vehicle_seq);
+    h = hash_mix(h, bool_hash(job.deleted));
+
+    return h;
+}
+
 uint64_t compute_state_checksum(const std::vector<Job>& jobs) {
     // xxHash64-style seed - return this for empty state to match original implementation
     constexpr uint64_t SEED = 0x9e3779b97f4a7c15ULL;
@@ -100,7 +122,8 @@ uint64_t compute_state_checksum(const std::vector<Job>& jobs) {
     uint64_t hash = 0x9e3779b97f4a7c15ULL;
 
     for (const auto& job : jobs) {
-        uint64_t job_hash = compute_job_content_hash(job);
+        // Use state hash (includes deleted, authority, version) not just content hash
+        uint64_t job_hash = compute_job_state_hash(job);
 
         // Mix using FNV-1a style (same as original implementations)
         hash ^= job_hash;

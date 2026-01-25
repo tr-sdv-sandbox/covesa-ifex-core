@@ -90,9 +90,20 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     proto->set_sleep_policy(sleep_policy);
     proto->set_wake_lead_time_s(wake_lead_time_s);
 
+    // Sync v2 fields
+    proto->set_authority(static_cast<swdv::scheduler_types::job_authority_t>(authority));
+    proto->set_cloud_seq(version.cloud_seq);
+    proto->set_vehicle_seq(version.vehicle_seq);
+    proto->set_deleted(deleted);
+    if (deleted_at.has_value()) {
+        proto->set_deleted_at_ms(TimePointToMs(deleted_at.value()));
+    }
+
     VLOG(1) << "Job::ToProto: job=" << id
             << " scheduled_time_ms=" << TimePointToMs(scheduled_time)
-            << " wake_policy=" << static_cast<int>(wake_policy);
+            << " wake_policy=" << static_cast<int>(wake_policy)
+            << " version={" << version.cloud_seq << "," << version.vehicle_seq << "}"
+            << " deleted=" << deleted;
 }
 
 std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& proto) {
@@ -130,6 +141,24 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
     job->sleep_policy = proto.sleep_policy();
     job->wake_lead_time_s = proto.wake_lead_time_s();
     job->paused = proto.paused();
+
+    // Optional sync protocol fields (used by sync bridge when creating from cloud)
+    if (proto.cloud_seq() > 0 || proto.vehicle_seq() > 0) {
+        job->version.cloud_seq = proto.cloud_seq();
+        job->version.vehicle_seq = proto.vehicle_seq();
+    }
+    // Set authority if explicitly provided (non-zero means AUTHORITY_VEHICLE since CLOUD=0)
+    // So we check if authority field was explicitly set to CLOUD by looking at cloud_seq
+    if (proto.cloud_seq() > 0) {
+        job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(proto.authority());
+    }
+    // Handle soft delete (tombstone) from sync bridge
+    if (proto.deleted()) {
+        job->deleted = true;
+        if (proto.deleted_at_ms() > 0) {
+            job->deleted_at = MsToTimePoint(proto.deleted_at_ms());
+        }
+    }
 
     auto now = std::chrono::system_clock::now();
     job->created_at = now;
@@ -581,6 +610,14 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
             throw std::runtime_error("Service validation failed: " + std::string(e.what()));
         }
 
+        // Initialize version for locally created jobs
+        // If version is {0,0} (default), this is a new local job - set vehicle_seq=1
+        // If version is already set (from sync bridge), keep it
+        if (job->version.cloud_seq == 0 && job->version.vehicle_seq == 0) {
+            job->version.vehicle_seq = 1;  // New local job
+            job->authority = swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
+        }
+
         // Calculate next run time if recurring
         if (!job->recurrence_rule.empty()) {
             job->next_run_time = CalculateNextRunTime(*job, std::chrono::system_clock::now());
@@ -620,13 +657,20 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
 grpc::Status SchedulerServer::get_jobs(grpc::ServerContext* context,
                                        const swdv::ifex_scheduler::get_jobs_request* request,
                                        swdv::ifex_scheduler::get_jobs_response* response) {
-    LOG(INFO) << "GET JOBS REQUEST";
+    VLOG(1) << "GET JOBS REQUEST";
 
     try {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
 
+        // Get filter (use default empty filter if not provided)
+        // Empty filter = return ALL jobs (including tombstones)
+        swdv::ifex_scheduler::job_filter_t filter;
+        if (request->has_filter()) {
+            filter = request->filter();
+        }
+
         for (const auto& [job_id, job] : jobs_) {
-            if (request->has_filter() && !MatchesFilter(*job, request->filter())) {
+            if (!MatchesFilter(*job, filter)) {
                 continue;
             }
 
@@ -634,7 +678,7 @@ grpc::Status SchedulerServer::get_jobs(grpc::ServerContext* context,
             job->ToProto(proto_job);
         }
 
-        LOG(INFO) << "  Returning " << response->jobs_size() << " jobs";
+        VLOG(1) << "  Returning " << response->jobs_size() << " jobs";
         response->set_success(true);
         return grpc::Status::OK;
 
@@ -654,11 +698,13 @@ grpc::Status SchedulerServer::get_job(grpc::ServerContext* context,
         std::lock_guard<std::mutex> lock(jobs_mutex_);
 
         auto it = jobs_.find(request->job_id());
-        if (it != jobs_.end()) {
+        if (it != jobs_.end() && !it->second->deleted) {
+            // Job exists and is not a tombstone
             auto* proto_job = response->mutable_job();
             it->second->ToProto(proto_job);
             response->set_success(true);
         } else {
+            // Job not found or is a tombstone (deleted)
             response->set_success(false);
             response->set_message("Job not found");
         }
@@ -684,7 +730,7 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
             std::lock_guard<std::mutex> lock(jobs_mutex_);
 
             auto it = jobs_.find(request->job_id());
-            if (it == jobs_.end()) {
+            if (it == jobs_.end() || it->second->deleted) {
                 response->set_success(false);
                 response->set_message("Job not found");
                 return grpc::Status::OK;
@@ -720,11 +766,31 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
             // (sync bridge always sends the current paused value)
             job->paused = updates.paused();
 
+            // Optional sync protocol fields (used by sync bridge when updating from cloud)
+            // Only apply if version is explicitly provided (non-zero cloud_seq or vehicle_seq)
+            if (updates.cloud_seq() > 0 || updates.vehicle_seq() > 0) {
+                job->version.cloud_seq = updates.cloud_seq();
+                job->version.vehicle_seq = updates.vehicle_seq();
+                job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(updates.authority());
+            }
+
+            // Handle soft delete from sync bridge (tombstone)
+            if (updates.deleted()) {
+                job->deleted = true;
+                if (updates.deleted_at_ms() > 0) {
+                    job->deleted_at = MsToTimePoint(updates.deleted_at_ms());
+                } else {
+                    job->deleted_at = std::chrono::system_clock::now();
+                }
+            }
+
             job->updated_at = std::chrono::system_clock::now();
             updated = true;
 
             LOG(INFO) << "Updated job " << request->job_id()
-                      << " paused=" << (job->paused ? "true" : "false");
+                      << " paused=" << (job->paused ? "true" : "false")
+                      << " version={" << job->version.cloud_seq << "," << job->version.vehicle_seq << "}"
+                      << " deleted=" << (job->deleted ? "true" : "false");
         }  // Release jobs_mutex_ here
 
         // Persist immediately for durability
@@ -757,11 +823,21 @@ grpc::Status SchedulerServer::delete_job(grpc::ServerContext* context,
 
             auto it = jobs_.find(request->job_id());
             if (it != jobs_.end()) {
-                jobs_.erase(it);
-                deleted = true;
-                LOG(INFO) << "Deleted job " << request->job_id();
-                response->set_success(true);
-                response->set_message("Job deleted successfully");
+                // Soft-delete: mark as deleted instead of erasing
+                // This keeps tombstone for sync protocol
+                if (!it->second->deleted) {
+                    it->second->deleted = true;
+                    it->second->deleted_at = std::chrono::system_clock::now();
+                    it->second->IncrementVersion();  // Increment version for sync
+                    deleted = true;
+                    LOG(INFO) << "Deleted job " << request->job_id();
+                    response->set_success(true);
+                    response->set_message("Job deleted successfully");
+                } else {
+                    // Already deleted
+                    response->set_success(true);
+                    response->set_message("Job already deleted");
+                }
             } else {
                 response->set_success(false);
                 response->set_message("Job not found");
@@ -794,7 +870,7 @@ grpc::Status SchedulerServer::pause_job(grpc::ServerContext* context,
             std::lock_guard<std::mutex> lock(jobs_mutex_);
 
             auto it = jobs_.find(request->job_id());
-            if (it == jobs_.end()) {
+            if (it == jobs_.end() || it->second->deleted) {
                 response->set_success(false);
                 response->set_message("Job not found");
                 return grpc::Status::OK;
@@ -851,7 +927,7 @@ grpc::Status SchedulerServer::resume_job(grpc::ServerContext* context,
             std::lock_guard<std::mutex> lock(jobs_mutex_);
 
             auto it = jobs_.find(request->job_id());
-            if (it == jobs_.end()) {
+            if (it == jobs_.end() || it->second->deleted) {
                 response->set_success(false);
                 response->set_message("Job not found");
                 return grpc::Status::OK;
@@ -901,7 +977,7 @@ grpc::Status SchedulerServer::trigger_job(grpc::ServerContext* context,
             std::lock_guard<std::mutex> lock(jobs_mutex_);
 
             auto it = jobs_.find(request->job_id());
-            if (it == jobs_.end()) {
+            if (it == jobs_.end() || it->second->deleted) {
                 response->set_success(false);
                 response->set_message("Job not found");
                 return grpc::Status::OK;
@@ -997,7 +1073,7 @@ grpc::Status SchedulerServer::get_calendar_view(grpc::ServerContext* context,
             }
         }
 
-        LOG(INFO) << "  Returning " << response->jobs_size() << " jobs for calendar view";
+        VLOG(1) << "  Returning " << response->jobs_size() << " jobs for calendar view";
         response->set_success(true);
 
         return grpc::Status::OK;
@@ -1249,7 +1325,7 @@ SchedulerServer::CalculateNextRunTime(const Job& job,
 
 bool SchedulerServer::MatchesFilter(const Job& job,
                                     const swdv::ifex_scheduler::job_filter_t& filter) {
-    // Check date range using _ms fields
+    // --- Range filters ---
     if (filter.start_time_ms() > 0) {
         auto start_time = MsToTimePoint(filter.start_time_ms());
         if (job.scheduled_time < start_time) {
@@ -1264,23 +1340,33 @@ bool SchedulerServer::MatchesFilter(const Job& job,
         }
     }
 
-    // Check service filter
+    // --- Match filters ---
     if (!filter.service().empty() && job.service_name != filter.service()) {
         return false;
     }
 
-    // Check status filter
     if (filter.has_status_filter() && job.status != filter.status()) {
         return false;
     }
 
-    // Check completed filter
-    if (!filter.include_completed() && job.status == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
+    // --- Exclude filters (all default false = show everything) ---
+
+    // exclude_deleted: hide soft-deleted jobs (tombstones)
+    if (filter.exclude_deleted() && job.deleted) {
         return false;
     }
 
-    // Check paused_only filter
-    if (filter.paused_only() && !job.paused) {
+    // exclude_completed: hide jobs in terminal state (completed/failed/cancelled)
+    if (filter.exclude_completed()) {
+        if (job.status == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
+            job.status == swdv::scheduler_types::JOB_STATUS_FAILED ||
+            job.status == swdv::scheduler_types::JOB_STATUS_CANCELLED) {
+            return false;
+        }
+    }
+
+    // exclude_paused: hide paused jobs
+    if (filter.exclude_paused() && job.paused) {
         return false;
     }
 

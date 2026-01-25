@@ -134,7 +134,7 @@ message list_jobs_filter_t {
   bool recurring_only = 7;
   bool paused_only = 8;
   bool include_deleted = 9;
-  sint32 page_size = 10;
+  int32 page_size = 10;
   string page_token = 11;
 }
 
@@ -142,14 +142,14 @@ message list_jobs_filter_t {
 message list_jobs_response_t {
   repeated job_info_t jobs = 1;
   string next_page_token = 2;
-  sint32 total_count = 3;
+  int32 total_count = 3;
 }
 
 // Request for job execution history
 message get_job_executions_request_t {
   string vehicle_id = 1;
   string job_id = 2;
-  sint32 limit = 3;
+  int32 limit = 3;
   uint64 since_ms = 4;
 }
 
@@ -158,7 +158,7 @@ message get_job_executions_response_t {
   string vehicle_id = 1;
   string job_id = 2;
   repeated execution_info_t executions = 3;
-  sint32 total_count = 4;
+  int32 total_count = 4;
 }
 
 // Create same job on multiple vehicles
@@ -191,9 +191,9 @@ message fleet_job_result_t {
 
 // Aggregate fleet job creation result
 message create_fleet_job_response_t {
-  sint32 total_vehicles = 1;
-  sint32 successful = 2;
-  sint32 failed = 3;
+  int32 total_vehicles = 1;
+  int32 successful = 2;
+  int32 failed = 3;
   repeated fleet_job_result_t results = 4;
   string fleet_job_id = 5;
 }
@@ -206,9 +206,9 @@ message delete_fleet_job_request_t {
 
 // Fleet job deletion result
 message delete_fleet_job_response_t {
-  sint32 total_deletions = 1;
-  sint32 successful = 2;
-  sint32 failed = 3;
+  int32 total_deletions = 1;
+  int32 successful = 2;
+  int32 failed = 3;
 }
 
 // Filters for fleet job statistics
@@ -221,31 +221,31 @@ message fleet_job_stats_filter_t {
 message job_stats_t {
   string service = 1;
   string method = 2;
-  sint32 total_jobs = 3;
-  sint32 pending = 4;
-  sint32 running = 5;
-  sint32 completed = 6;
-  sint32 failed = 7;
-  sint32 recurring = 8;
-  sint32 paused = 9;
+  int32 total_jobs = 3;
+  int32 pending = 4;
+  int32 running = 5;
+  int32 completed = 6;
+  int32 failed = 7;
+  int32 recurring = 8;
+  int32 paused = 9;
 }
 
 // Count for a specific status (for stats aggregation)
 message status_count_t {
   string status = 1;
-  sint32 count = 2;
+  int32 count = 2;
 }
 
 // Count for a specific region (for stats aggregation)
 message region_count_t {
   string region = 1;
-  sint32 count = 2;
+  int32 count = 2;
 }
 
 // Fleet-wide job statistics
 message fleet_job_stats_response_t {
-  sint32 total_jobs = 1;
-  sint32 total_vehicles_with_jobs = 2;
+  int32 total_jobs = 1;
+  int32 total_vehicles_with_jobs = 2;
   repeated job_stats_t by_service_method = 3;
   repeated status_count_t by_status = 4;
   repeated region_count_t by_region = 5;

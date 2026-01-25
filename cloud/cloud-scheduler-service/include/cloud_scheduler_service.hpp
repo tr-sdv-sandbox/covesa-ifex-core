@@ -41,6 +41,8 @@ struct CloudSchedulerServiceConfig {
 /// Each method is a separate gRPC service per IFEX conventions.
 /// Stores state in-memory instead of PostgreSQL.
 /// Uses CloudBackendTransportClient for vehicle communication.
+///
+/// Includes internal API for sync bridge (get_jobs_for_vehicle, upsert_job, etc.)
 class CloudSchedulerService final
     : public sched::create_job_service::Service
     , public sched::update_job_service::Service
@@ -54,7 +56,13 @@ class CloudSchedulerService final
     , public sched::create_fleet_job_service::Service
     , public sched::delete_fleet_job_service::Service
     , public sched::get_fleet_job_stats_service::Service
-    , public sched::healthy_service::Service {
+    , public sched::healthy_service::Service
+    // Internal API for sync bridge
+    , public sched::get_jobs_for_vehicle_service::Service
+    , public sched::upsert_job_service::Service
+    , public sched::record_execution_service::Service
+    , public sched::get_vehicle_sync_state_service::Service
+    , public sched::update_vehicle_sync_state_service::Service {
 public:
     explicit CloudSchedulerService(const CloudSchedulerServiceConfig& config);
     ~CloudSchedulerService();
@@ -143,6 +151,35 @@ public:
         grpc::ServerContext* context,
         const sched::healthy_request* request,
         sched::healthy_response* response) override;
+
+    // =========================================================================
+    // Internal API for Sync Bridge
+    // =========================================================================
+
+    grpc::Status get_jobs_for_vehicle(
+        grpc::ServerContext* context,
+        const sched::get_jobs_for_vehicle_request* request,
+        sched::get_jobs_for_vehicle_response* response) override;
+
+    grpc::Status upsert_job(
+        grpc::ServerContext* context,
+        const sched::upsert_job_request* request,
+        sched::upsert_job_response* response) override;
+
+    grpc::Status record_execution(
+        grpc::ServerContext* context,
+        const sched::record_execution_request* request,
+        sched::record_execution_response* response) override;
+
+    grpc::Status get_vehicle_sync_state(
+        grpc::ServerContext* context,
+        const sched::get_vehicle_sync_state_request* request,
+        sched::get_vehicle_sync_state_response* response) override;
+
+    grpc::Status update_vehicle_sync_state(
+        grpc::ServerContext* context,
+        const sched::update_vehicle_sync_state_request* request,
+        sched::update_vehicle_sync_state_response* response) override;
 
     // =========================================================================
     // Test Helpers
@@ -248,8 +285,19 @@ private:
     mutable std::mutex executions_mutex_;
     std::map<std::string, std::map<std::string, std::vector<sched::execution_info_t>>> executions_;
 
+    // Vehicle sync state: vehicle_id -> sync_state (checksums for quiescence)
+    mutable std::mutex sync_state_mutex_;
+    std::map<std::string, sched::vehicle_sync_state_t> vehicle_sync_states_;
+
     // Job ID counter
     std::atomic<uint64_t> job_counter_{0};
+
+    // =========================================================================
+    // Internal Helpers
+    // =========================================================================
+
+    /// Recompute and update cloud_checksum for a vehicle after job changes
+    void UpdateCloudChecksum(const std::string& vehicle_id);
 };
 
 }  // namespace ifex::cloud

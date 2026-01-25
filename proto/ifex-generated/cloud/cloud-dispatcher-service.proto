@@ -50,9 +50,9 @@ message pending_call_info_t {
   string vehicle_id = 2;
   string service_name = 3;
   string method_name = 4;
-  sint64 created_at_ms = 5;
+  int64 created_at_ms = 5;
   uint32 timeout_ms = 6;
-  sint64 expires_at_ms = 7;
+  int64 expires_at_ms = 7;
 }
 
 // Method: call_method

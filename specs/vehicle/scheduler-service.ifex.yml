@@ -133,36 +133,48 @@ namespaces:
             mandatory: false
 
       - name: job_filter_t
-        description: Filter criteria for retrieving jobs
+        description: >
+          Filter criteria for retrieving jobs.
+          Design principle: empty filter returns ALL jobs (no filters = see everything).
+          Use exclude_* flags to hide specific job states.
         members:
+          # --- Range filters ---
           - name: start_time_ms
             datatype: uint64
-            description: Range start (epoch milliseconds UTC)
+            description: If set, only jobs with scheduled_time >= this value
             mandatory: false
           - name: end_time_ms
             datatype: uint64
-            description: Range end (epoch milliseconds UTC)
+            description: If set, only jobs with scheduled_time <= this value
             mandatory: false
+          # --- Match filters ---
           - name: service
             datatype: string
-            description: Filter by service name
+            description: If set, only jobs targeting this service
             mandatory: false
           - name: status
             datatype: scheduler_types.job_status_t
-            description: Filter by status
+            description: If set (with has_status_filter=true), only jobs with this status
             mandatory: false
           - name: has_status_filter
             datatype: boolean
-            description: Whether to apply status filter
+            description: Whether to apply status filter (needed because status enum has no "unset" value)
             mandatory: false
             default: false
-          - name: include_completed
+          # --- Exclude filters (all default false = show everything) ---
+          - name: exclude_completed
             datatype: boolean
-            description: Include completed jobs
+            description: If true, hide jobs with completed/failed/cancelled status
+            mandatory: false
             default: false
-          - name: paused_only
+          - name: exclude_deleted
             datatype: boolean
-            description: Only return paused jobs
+            description: If true, hide soft-deleted jobs (tombstones)
+            mandatory: false
+            default: false
+          - name: exclude_paused
+            datatype: boolean
+            description: If true, hide paused jobs
             mandatory: false
             default: false
 
@@ -213,6 +225,27 @@ namespaces:
             datatype: uint32
             description: Seconds before scheduled_time to wake vehicle
             mandatory: false
+          # Optional sync protocol fields (used by sync bridge when creating from cloud)
+          - name: authority
+            datatype: scheduler_types.job_authority_t
+            description: Job authority (CLOUD or VEHICLE) - used by sync bridge
+            mandatory: false
+          - name: cloud_seq
+            datatype: uint64
+            description: Cloud version sequence - used by sync bridge
+            mandatory: false
+          - name: vehicle_seq
+            datatype: uint64
+            description: Vehicle version sequence - used by sync bridge
+            mandatory: false
+          - name: deleted
+            datatype: boolean
+            description: Soft delete flag - used by sync bridge for tombstones
+            mandatory: false
+          - name: deleted_at_ms
+            datatype: uint64
+            description: Deletion timestamp - used by sync bridge
+            mandatory: false
 
       - name: job_update_t
         description: Fields that can be updated in an existing job
@@ -253,6 +286,27 @@ namespaces:
             datatype: uint32
             description: New wake lead time in seconds
             mandatory: false
+          # Optional sync protocol fields (used by sync bridge when updating from cloud)
+          - name: authority
+            datatype: scheduler_types.job_authority_t
+            description: Job authority - used by sync bridge
+            mandatory: false
+          - name: cloud_seq
+            datatype: uint64
+            description: Cloud version sequence - used by sync bridge
+            mandatory: false
+          - name: vehicle_seq
+            datatype: uint64
+            description: Vehicle version sequence - used by sync bridge
+            mandatory: false
+          - name: deleted
+            datatype: boolean
+            description: Soft delete flag - used by sync bridge for tombstones
+            mandatory: false
+          - name: deleted_at_ms
+            datatype: uint64
+            description: Deletion timestamp - used by sync bridge
+            mandatory: false
 
     methods:
       - name: create_job
@@ -274,11 +328,11 @@ namespaces:
             description: Success or error message
 
       - name: get_jobs
-        description: Retrieve jobs based on filter criteria
+        description: Retrieve jobs based on filter criteria (empty filter = all jobs)
         input:
           - name: filter
             datatype: job_filter_t
-            description: Filter criteria (empty for all jobs)
+            description: Filter criteria (empty for all jobs including tombstones)
             mandatory: false
         output:
           - name: success

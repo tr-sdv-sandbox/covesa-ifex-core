@@ -51,7 +51,7 @@ message preparation_status_t {
   preparation_state_t state = 1;
   uint32 progress_percent = 2;
   uint32 remaining_seconds = 3;
-  sint64 ready_at_timestamp = 4;
+  int64 ready_at_timestamp = 4;
 }
 
 // Method: prepare_beverage

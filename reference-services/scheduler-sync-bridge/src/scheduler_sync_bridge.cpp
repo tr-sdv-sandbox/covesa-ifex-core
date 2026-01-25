@@ -364,9 +364,8 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
     context.set_deadline(std::chrono::system_clock::now() + 5s);
 
     scheduler_pb::get_jobs_request request;
-    // Empty filter = return all jobs
-    // Include completed jobs to detect terminal state transitions
-    request.mutable_filter()->set_include_completed(true);
+    // Empty filter = return all jobs (including tombstones and completed)
+    // No exclude_* flags set = show everything
 
     scheduler_pb::get_jobs_response response;
     auto status = get_jobs_stub_->get_jobs(&context, request, &response);
@@ -394,10 +393,18 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
         state.wake_lead_time_s = job.wake_lead_time_s();
         state.paused = job.paused();
 
-        VLOG(1) << "FetchJobsFromScheduler: job=" << job.id()
+        // Sync v2 fields (now provided by scheduler)
+        state.version = sched_lib::VersionVector(job.cloud_seq(), job.vehicle_seq());
+        state.authority = static_cast<sync_v2::JobAuthority>(job.authority());
+        state.deleted = job.deleted();
+        state.deleted_at_ms = job.deleted_at_ms();
+
+        VLOG(1) << "QuerySchedulerJobs: job=" << job.id()
                 << " scheduled_time_ms=" << job.scheduled_time_ms()
                 << " wake_policy=" << static_cast<int>(job.wake_policy())
-                << " paused=" << (job.paused() ? "true" : "false");
+                << " paused=" << (job.paused() ? "true" : "false")
+                << " version={" << job.cloud_seq() << "," << job.vehicle_seq() << "}"
+                << " deleted=" << job.deleted();
 
         // Use actual timestamps from job
         state.created_at_ms = job.created_at_ms();
@@ -412,24 +419,14 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
 void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& current) {
     std::lock_guard<std::mutex> lock(state_mutex_);
 
-    // Build map of current jobs
+    // The scheduler is the single source of truth.
+    // Compare current state from scheduler with our cached synced state.
+    // Mark jobs as needs_sync when their state differs (using content hash + version).
+
+    // Build map of current jobs from scheduler
     std::unordered_map<std::string, const SyncedJobState*> current_map;
     for (const auto& job : current) {
         current_map[job.job_id] = &job;
-    }
-
-    // Check for deleted jobs (in synced_state_ but not in current)
-    // Mark as tombstone (deleted=true) and keep in synced_state_ for sync
-    for (auto& [job_id, synced] : synced_state_) {
-        if (current_map.find(job_id) == current_map.end() && !synced.deleted) {
-            // Job was deleted locally - create tombstone
-            synced.deleted = true;
-            synced.deleted_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            synced.version.increment_vehicle();  // Increment version for deletion
-            synced.needs_sync = true;
-            LOG(INFO) << "Job deleted (tombstone created): " << synced.title << " (id=" << job_id << ")";
-        }
     }
 
     // Check for new or changed jobs
@@ -438,10 +435,9 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
 
         if (it == synced_state_.end()) {
             // New job - add to synced state and mark for sync
+            // Trust scheduler's version/authority/deleted (it's the source of truth)
             SyncedJobState new_state = job;
             new_state.needs_sync = true;
-            new_state.version.increment_vehicle();  // New local job
-            new_state.authority = sync_v2::AUTHORITY_VEHICLE;
             synced_state_[job.job_id] = new_state;
 
             // If already in terminal state, also record execution
@@ -454,10 +450,13 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                     "",  // result_json
                     ""   // error_message
                 );
-                LOG(INFO) << "Job executed: " << job.title << " (id=" << job.job_id
-                          << ", status=" << static_cast<int>(job.status) << ")";
+                LOG(INFO) << "Job " << (job.deleted ? "deleted" : "executed") << ": "
+                          << job.title << " (id=" << job.job_id
+                          << ", version={" << job.version.cloud_seq << "," << job.version.vehicle_seq << "})";
             } else {
-                LOG(INFO) << "Job created: " << job.title << " (id=" << job.job_id << ")";
+                LOG(INFO) << "Job " << (job.deleted ? "deleted" : "created") << ": "
+                          << job.title << " (id=" << job.job_id
+                          << ", version={" << job.version.cloud_seq << "," << job.version.vehicle_seq << "})";
             }
         } else {
             // Existing job - check for changes
@@ -479,26 +478,37 @@ void SchedulerSyncBridge::DetectChanges(const std::vector<SyncedJobState>& curre
                 );
                 LOG(INFO) << "Job completed: " << job.title << " (id=" << job.job_id
                           << ", status=" << static_cast<int>(job.status) << ")";
-
-                // Update the synced state's status to prevent re-detecting this transition
-                // on subsequent polls. Status is excluded from ComputeHash(), so we must
-                // update it explicitly here.
-                synced.status = job.status;
-                synced.updated_at_ms = job.updated_at_ms;
-                synced.needs_sync = true;
             }
 
-            // Update synced state if job content changed (status is excluded from hash)
-            if (job.ComputeHash() != synced.ComputeHash()) {
+            // Update synced state if job state changed
+            // Compare content hash + version + deleted to detect any change
+            bool content_changed = job.ComputeHash() != synced.ComputeHash();
+            bool version_changed = job.version != synced.version;
+            bool deleted_changed = job.deleted != synced.deleted;
+
+            if (content_changed || version_changed || deleted_changed) {
+                // Take the scheduler's state as authoritative
                 SyncedJobState updated_state = job;
-                updated_state.version = synced.version;
-                updated_state.version.increment_vehicle();  // Local change
-                updated_state.authority = synced.authority;
                 updated_state.needs_sync = true;
                 it->second = updated_state;
 
-                VLOG(1) << "Job updated: " << job.title;
+                VLOG(1) << "Job updated: " << job.title
+                        << " (content=" << content_changed
+                        << ", version=" << version_changed
+                        << ", deleted=" << deleted_changed << ")";
             }
+        }
+    }
+
+    // Remove jobs from synced_state_ that are no longer in scheduler
+    // This shouldn't happen often since scheduler keeps tombstones,
+    // but handles edge cases like tombstone GC
+    for (auto it = synced_state_.begin(); it != synced_state_.end(); ) {
+        if (current_map.find(it->first) == current_map.end()) {
+            LOG(INFO) << "Job removed from cache (no longer in scheduler): " << it->first;
+            it = synced_state_.erase(it);
+        } else {
+            ++it;
         }
     }
 }
@@ -694,6 +704,17 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::CreateJobFromCloud(
     // Set paused state from the paused boolean field
     new_job->set_paused(job.paused());
 
+    // Pass version and authority from cloud (so scheduler knows this is a synced job)
+    new_job->set_authority(static_cast<scheduler_types_pb::job_authority_t>(job.authority()));
+    new_job->set_cloud_seq(job.version().cloud_seq());
+    new_job->set_vehicle_seq(job.version().vehicle_seq());
+
+    // Handle soft delete (tombstone) from cloud
+    if (job.deleted()) {
+        new_job->set_deleted(true);
+        new_job->set_deleted_at_ms(job.deleted_at_ms());
+    }
+
     scheduler_pb::create_job_response response;
     auto status = create_job_stub_->create_job(&context, request, &response);
 
@@ -750,6 +771,17 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::UpdateJobFromCloud(
 
     // Set paused state in the update
     updates->set_paused(job.paused());
+
+    // Pass version and authority from cloud (so scheduler updates its state)
+    updates->set_authority(static_cast<scheduler_types_pb::job_authority_t>(job.authority()));
+    updates->set_cloud_seq(job.version().cloud_seq());
+    updates->set_vehicle_seq(job.version().vehicle_seq());
+
+    // Handle soft delete (tombstone) from cloud
+    if (job.deleted()) {
+        updates->set_deleted(true);
+        updates->set_deleted_at_ms(job.deleted_at_ms());
+    }
 
     scheduler_pb::update_job_response response;
     auto status = update_job_stub_->update_job(&context, request, &response);
@@ -1249,32 +1281,15 @@ void SchedulerSyncBridge::ApplyCloudJob(const sync_v2::JobRecord& remote_job) {
         exists_locally = (synced_state_.find(job_id) != synced_state_.end());
     }
 
-    // Handle deleted jobs - keep tombstone until both sides confirm
-    if (remote_job.deleted()) {
-        auto result = DeleteJobFromScheduler(job_id);
-        if (result.success || !exists_locally) {
-            // Keep tombstone in synced_state_ for sync back to cloud
-            // Cloud will delete from DB when it receives our V2C tombstone
-            std::lock_guard<std::mutex> lock(state_mutex_);
-            SyncedJobState tombstone;
-            tombstone.job_id = job_id;
-            tombstone.deleted = true;
-            tombstone.deleted_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            tombstone.version.cloud_seq = remote_job.version().cloud_seq();
-            tombstone.version.vehicle_seq = remote_job.version().vehicle_seq();
-            tombstone.needs_sync = true;  // Will be sent in next V2C sync
-            synced_state_[job_id] = tombstone;
-        }
-        LOG(INFO) << "Applied cloud deletion for job " << job_id << ", tombstone queued for sync";
-        return;
-    }
-
-    // Create or update job in Scheduler
+    // Create or update job in Scheduler (including deletions as tombstones)
+    // Per spec section 4.3.5: "Tombstones retain all content fields for conflict resolution"
+    // We use update/create with deleted=true for tombstones to preserve cloud's version
     OperationResult result;
     if (exists_locally) {
+        // Update existing job (may set deleted=true for tombstone)
         result = UpdateJobFromCloud(remote_job);
     } else {
+        // Create new job (may be a tombstone if remote_job.deleted())
         result = CreateJobFromCloud(remote_job);
     }
 

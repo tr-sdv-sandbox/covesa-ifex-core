@@ -145,6 +145,7 @@ void CloudSchedulerService::Stop() {
 }
 
 void CloudSchedulerService::RegisterServices(grpc::ServerBuilder& builder) {
+    // Dashboard API
     builder.RegisterService(static_cast<sched::create_job_service::Service*>(this));
     builder.RegisterService(static_cast<sched::update_job_service::Service*>(this));
     builder.RegisterService(static_cast<sched::delete_job_service::Service*>(this));
@@ -158,6 +159,12 @@ void CloudSchedulerService::RegisterServices(grpc::ServerBuilder& builder) {
     builder.RegisterService(static_cast<sched::delete_fleet_job_service::Service*>(this));
     builder.RegisterService(static_cast<sched::get_fleet_job_stats_service::Service*>(this));
     builder.RegisterService(static_cast<sched::healthy_service::Service*>(this));
+    // Internal API for sync bridge
+    builder.RegisterService(static_cast<sched::get_jobs_for_vehicle_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::upsert_job_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::record_execution_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::get_vehicle_sync_state_service::Service*>(this));
+    builder.RegisterService(static_cast<sched::update_vehicle_sync_state_service::Service*>(this));
 }
 
 std::string CloudSchedulerService::GenerateJobId() {
@@ -330,6 +337,9 @@ grpc::Status CloudSchedulerService::create_job(
         job_sync_states_[req.vehicle_id()][job_id] = scheduler_types_pb::SYNC_PENDING;
     }
 
+    // Update cloud checksum after job change
+    UpdateCloudChecksum(req.vehicle_id());
+
     // Send C2V_SyncMessage with the new job to the vehicle
     SendPendingJobsToVehicle(req.vehicle_id());
 
@@ -386,6 +396,9 @@ grpc::Status CloudSchedulerService::update_job(
         job_sync_states_[req.vehicle_id()][req.job_id()] = scheduler_types_pb::SYNC_PENDING;
     }
 
+    // Update cloud checksum after job change
+    UpdateCloudChecksum(req.vehicle_id());
+
     // Send updated job state to vehicle
     SendPendingJobsToVehicle(req.vehicle_id());
 
@@ -425,6 +438,9 @@ grpc::Status CloudSchedulerService::delete_job(
             job_sync_states_[request->vehicle_id()][request->job_id()] = scheduler_types_pb::SYNC_PENDING;
         }
     }
+
+    // Update cloud checksum after job change
+    UpdateCloudChecksum(request->vehicle_id());
 
     // Send sync message with tombstone
     SendPendingJobsToVehicle(request->vehicle_id());
@@ -1177,6 +1193,224 @@ void CloudSchedulerService::RecordToJobInfo(
 
     // Authority
     job->set_authority(SyncV2ToAuthority(record.authority()));
+}
+
+// =============================================================================
+// Internal API for Sync Bridge
+// =============================================================================
+
+grpc::Status CloudSchedulerService::get_jobs_for_vehicle(
+    grpc::ServerContext* context,
+    const sched::get_jobs_for_vehicle_request* request,
+    sched::get_jobs_for_vehicle_response* response) {
+
+    const auto& vehicle_id = request->vehicle_id();
+    bool include_deleted = request->include_deleted();
+
+    std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+    auto it = jobs_.find(vehicle_id);
+    if (it == jobs_.end()) {
+        // No jobs for this vehicle - return empty list
+        return grpc::Status::OK;
+    }
+
+    for (const auto& [job_id, job] : it->second) {
+        // Skip deleted jobs unless explicitly requested
+        if (job.deleted() && !include_deleted) {
+            continue;
+        }
+
+        auto* job_info = response->add_jobs();
+        *job_info = job;
+
+        // Add version vector info
+        auto version_it = job_versions_.find(vehicle_id);
+        if (version_it != job_versions_.end()) {
+            auto job_version_it = version_it->second.find(job_id);
+            if (job_version_it != version_it->second.end()) {
+                job_info->set_cloud_seq(job_version_it->second.cloud_seq);
+                job_info->set_vehicle_seq(job_version_it->second.vehicle_seq);
+            }
+        }
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status CloudSchedulerService::upsert_job(
+    grpc::ServerContext* context,
+    const sched::upsert_job_request* request,
+    sched::upsert_job_response* response) {
+
+    const auto& job = request->job();
+    const auto& vehicle_id = job.vehicle_id();
+    const auto& job_id = job.job_id();
+
+    if (vehicle_id.empty() || job_id.empty()) {
+        response->set_success(false);
+        return grpc::Status::OK;
+    }
+
+    uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+        // Store/update the job
+        auto& stored_job = jobs_[vehicle_id][job_id];
+        stored_job = job;
+
+        // Ensure updated_at is set
+        if (stored_job.updated_at_ms() == 0) {
+            stored_job.set_updated_at_ms(now_ms);
+        }
+
+        // Store version vector
+        job_versions_[vehicle_id][job_id] = sched_lib::VersionVector{
+            job.cloud_seq(),
+            job.vehicle_seq()
+        };
+
+        // Update sync state based on version comparison
+        // If cloud_seq > 0 and vehicle_seq > 0, consider synced
+        if (job.cloud_seq() > 0 && job.vehicle_seq() > 0) {
+            job_sync_states_[vehicle_id][job_id] = scheduler_types_pb::SYNC_SYNCED;
+        } else {
+            job_sync_states_[vehicle_id][job_id] = scheduler_types_pb::SYNC_PENDING;
+        }
+
+        // Copy to response
+        auto* updated = response->mutable_updated_job();
+        *updated = stored_job;
+        updated->set_cloud_seq(job.cloud_seq());
+        updated->set_vehicle_seq(job.vehicle_seq());
+    }
+
+    // Recompute cloud checksum after job change
+    UpdateCloudChecksum(vehicle_id);
+
+    response->set_success(true);
+    LOG(INFO) << "Upserted job " << job_id << " for vehicle " << vehicle_id;
+    return grpc::Status::OK;
+}
+
+grpc::Status CloudSchedulerService::record_execution(
+    grpc::ServerContext* context,
+    const sched::record_execution_request* request,
+    sched::record_execution_response* response) {
+
+    const auto& vehicle_id = request->vehicle_id();
+    const auto& job_id = request->job_id();
+    const auto& execution = request->execution();
+
+    if (vehicle_id.empty() || job_id.empty() || execution.execution_id().empty()) {
+        response->set_success(false);
+        return grpc::Status::OK;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(executions_mutex_);
+
+        auto& job_executions = executions_[vehicle_id][job_id];
+
+        // Check for duplicate execution_id (idempotent)
+        for (const auto& existing : job_executions) {
+            if (existing.execution_id() == execution.execution_id()) {
+                response->set_success(true);
+                response->set_is_duplicate(true);
+                return grpc::Status::OK;
+            }
+        }
+
+        // Add the execution record
+        job_executions.push_back(execution);
+    }
+
+    // Update job's last_executed_ms
+    {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+        auto vehicle_it = jobs_.find(vehicle_id);
+        if (vehicle_it != jobs_.end()) {
+            auto job_it = vehicle_it->second.find(job_id);
+            if (job_it != vehicle_it->second.end()) {
+                job_it->second.set_last_executed_ms(execution.executed_at_ms());
+            }
+        }
+    }
+
+    response->set_success(true);
+    response->set_is_duplicate(false);
+    LOG(INFO) << "Recorded execution " << execution.execution_id()
+              << " for job " << job_id << " on vehicle " << vehicle_id;
+    return grpc::Status::OK;
+}
+
+grpc::Status CloudSchedulerService::get_vehicle_sync_state(
+    grpc::ServerContext* context,
+    const sched::get_vehicle_sync_state_request* request,
+    sched::get_vehicle_sync_state_response* response) {
+
+    const auto& vehicle_id = request->vehicle_id();
+
+    std::lock_guard<std::mutex> lock(sync_state_mutex_);
+
+    auto it = vehicle_sync_states_.find(vehicle_id);
+    if (it == vehicle_sync_states_.end()) {
+        // Initialize sync state for new vehicle
+        sched::vehicle_sync_state_t state;
+        state.set_vehicle_id(vehicle_id);
+        state.set_cloud_checksum(ComputeStateChecksum(vehicle_id));
+        state.set_last_seen_v2c_checksum(0);
+        state.set_last_sync_timestamp_ms(0);
+
+        vehicle_sync_states_[vehicle_id] = state;
+        *response->mutable_state() = state;
+        response->set_found(false);
+    } else {
+        *response->mutable_state() = it->second;
+        response->set_found(true);
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status CloudSchedulerService::update_vehicle_sync_state(
+    grpc::ServerContext* context,
+    const sched::update_vehicle_sync_state_request* request,
+    sched::update_vehicle_sync_state_response* response) {
+
+    const auto& vehicle_id = request->vehicle_id();
+    uint64_t last_seen_v2c_checksum = request->last_seen_v2c_checksum();
+
+    uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    {
+        std::lock_guard<std::mutex> lock(sync_state_mutex_);
+
+        auto& state = vehicle_sync_states_[vehicle_id];
+        state.set_vehicle_id(vehicle_id);
+        state.set_last_seen_v2c_checksum(last_seen_v2c_checksum);
+        state.set_last_sync_timestamp_ms(now_ms);
+        // cloud_checksum is maintained internally, don't overwrite
+        if (state.cloud_checksum() == 0) {
+            state.set_cloud_checksum(ComputeStateChecksum(vehicle_id));
+        }
+    }
+
+    response->set_success(true);
+    return grpc::Status::OK;
+}
+
+void CloudSchedulerService::UpdateCloudChecksum(const std::string& vehicle_id) {
+    uint64_t checksum = ComputeStateChecksum(vehicle_id);
+
+    std::lock_guard<std::mutex> lock(sync_state_mutex_);
+    auto& state = vehicle_sync_states_[vehicle_id];
+    state.set_vehicle_id(vehicle_id);
+    state.set_cloud_checksum(checksum);
 }
 
 }  // namespace ifex::cloud

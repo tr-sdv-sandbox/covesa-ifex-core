@@ -125,6 +125,6 @@ if(BUILD_INTEGRATION_TESTS)
     set_tests_properties(cloud_backend_transport_integration_test PROPERTIES
         TIMEOUT 120
         LABELS "integration;docker;mqtt;cloud"
-        RESOURCE_LOCK cloud_mqtt_broker
+        RESOURCE_LOCK mqtt_broker
     )
 endif()

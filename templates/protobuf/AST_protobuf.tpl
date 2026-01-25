@@ -23,11 +23,11 @@ import "{{ proto_path }}";
 {# Type mappings: IFEX → Protobuf #}
 {# Protobuf only has: int32, int64, uint32, uint64, sint32, sint64, bool, float, double, string, bytes #}
 {% set typedefs = dict() %}
-{# Signed integers: use sint32/sint64 for efficient encoding of negative values #}
-{% set x=typedefs.__setitem__("int8", "sint32") %}
-{% set x=typedefs.__setitem__("int16", "sint32") %}
-{% set x=typedefs.__setitem__("int32", "sint32") %}
-{% set x=typedefs.__setitem__("int64", "sint64") %}
+{# Signed integers: use int32/int64 (standard gRPC encoding, compatible with dispatcher) #}
+{% set x=typedefs.__setitem__("int8", "int32") %}
+{% set x=typedefs.__setitem__("int16", "int32") %}
+{% set x=typedefs.__setitem__("int32", "int32") %}
+{% set x=typedefs.__setitem__("int64", "int64") %}
 {# Unsigned integers: uint8/uint16 widen to uint32 #}
 {% set x=typedefs.__setitem__("uint8", "uint32") %}
 {% set x=typedefs.__setitem__("uint16", "uint32") %}

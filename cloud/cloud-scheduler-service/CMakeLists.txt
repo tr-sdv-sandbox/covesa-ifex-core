@@ -77,8 +77,8 @@ if(BUILD_INTEGRATION_TESTS)
     )
 
     set_tests_properties(cloud_scheduler_integration_test PROPERTIES
-        TIMEOUT 120
+        TIMEOUT 180
         LABELS "integration;docker;mqtt;cloud;scheduler"
-        RESOURCE_LOCK cloud_mqtt_broker
+        RESOURCE_LOCK mqtt_broker
     )
 endif()

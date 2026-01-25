@@ -1,0 +1,127 @@
+// Generated from cloud_scheduler_sync_bridge.ifex by covesa-ifex-core
+// DO NOT EDIT - regenerate with: ./generate_proto.sh
+syntax = "proto3";
+
+
+
+
+
+
+package swdv.cloud_scheduler_sync_bridge;
+
+// Namespace: bridge
+// Sync bridge control and monitoring
+
+// Current bridge status
+enum bridge_status_t {
+  STATUS_STARTING = 0;
+  STATUS_RUNNING = 1;
+  STATUS_STOPPING = 2;
+  STATUS_STOPPED = 3;
+  STATUS_ERROR = 4;
+}
+
+// Bridge statistics
+message bridge_stats_t {
+  uint64 v2c_messages_received = 1;
+  uint64 v2c_messages_processed = 2;
+  uint64 c2v_messages_sent = 3;
+  uint64 jobs_upserted = 4;
+  uint64 executions_recorded = 5;
+  uint64 quiescent_skipped = 6;
+  uint64 conflicts_resolved = 7;
+  uint64 errors = 8;
+  uint32 vehicles_seen = 9;
+  uint64 uptime_ms = 10;
+}
+
+// Sync info for a specific vehicle
+message vehicle_sync_info_t {
+  string vehicle_id = 1;
+  uint64 last_v2c_timestamp_ms = 2;
+  uint64 last_c2v_timestamp_ms = 3;
+  uint64 cloud_checksum = 4;
+  uint64 last_seen_v2c_checksum = 5;
+  bool is_quiescent = 6;
+  uint32 job_count = 7;
+}
+
+// Bridge health status
+message bridge_health_t {
+  bridge_status_t status = 1;
+  bool scheduler_connected = 2;
+  bool transport_connected = 3;
+  string last_error = 4;
+  uint64 last_error_timestamp_ms = 5;
+}
+
+// Method: get_stats
+// Get bridge statistics
+message get_stats_request {
+}
+
+message get_stats_response {
+  bridge_stats_t stats = 1;
+}
+
+service get_stats_service {
+  rpc get_stats(get_stats_request) returns (get_stats_response);
+}
+
+// Method: get_health
+// Get bridge health status
+message get_health_request {
+}
+
+message get_health_response {
+  bridge_health_t health = 1;
+}
+
+service get_health_service {
+  rpc get_health(get_health_request) returns (get_health_response);
+}
+
+// Method: get_vehicle_sync_info
+// Get sync info for a specific vehicle
+message get_vehicle_sync_info_request {
+  string vehicle_id = 1;
+}
+
+message get_vehicle_sync_info_response {
+  vehicle_sync_info_t info = 1;
+  bool found = 2;
+}
+
+service get_vehicle_sync_info_service {
+  rpc get_vehicle_sync_info(get_vehicle_sync_info_request) returns (get_vehicle_sync_info_response);
+}
+
+// Method: force_sync
+// Force sync for a specific vehicle (bypasses quiescence)
+message force_sync_request {
+  string vehicle_id = 1;
+}
+
+message force_sync_response {
+  bool success = 1;
+  string error_message = 2;
+}
+
+service force_sync_service {
+  rpc force_sync(force_sync_request) returns (force_sync_response);
+}
+
+// Method: healthy
+// Simple health check
+message healthy_request {
+}
+
+message healthy_response {
+  bool is_healthy = 1;
+}
+
+service healthy_service {
+  rpc healthy(healthy_request) returns (healthy_response);
+}
+
+

@@ -65,6 +65,14 @@ target_include_directories(ifex-tests-integration
 add_test(NAME unit_tests COMMAND ifex-unit-tests)
 add_test(NAME integration_tests COMMAND ifex-tests-integration)
 
+# Integration tests use ports 50094-50099 and optionally MQTT on 11883
+# Serialize with other tests using same resources
+set_tests_properties(integration_tests PROPERTIES
+    LABELS "integration"
+    RESOURCE_LOCK "mqtt_broker;ifex_test_services"
+    TIMEOUT 180
+)
+
 # Enable test discovery for CLion (unit tests only)
 # Note: Integration tests must run as a suite (integration_tests) because they
 # share a global test fixture that manages service lifecycle. Individual test
@@ -92,3 +100,56 @@ add_custom_target(run-all-tests
     DEPENDS ifex-unit-tests ifex-tests-integration
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# =============================================================================
+# Scheduler Sync Bridge E2E Tests (vehicle + cloud)
+# Requires: Docker for MQTT broker
+# =============================================================================
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(ifex-scheduler-sync-bridge-e2e-test
+        integration/test_scheduler_sync_bridge_e2e.cpp
+        integration/test_fixture.cpp
+    )
+
+    target_link_libraries(ifex-scheduler-sync-bridge-e2e-test
+        PRIVATE
+            # Vehicle side
+            ifex-scheduler-service-lib
+            ifex-backend-transport-server
+            ifex-scheduler-sync-bridge-lib
+            # Cloud side
+            ifex-cloud-scheduler-service
+            ifex-cloud-backend-transport-server
+            ifex-cloud-scheduler-sync-bridge-lib
+            # Common
+            ifex-core
+            ifex-scheduler  # For job.hpp, job_hash.hpp (state checksum comparison)
+            ifex-proto-generated
+            GTest::gtest
+            glog::glog
+            gRPC::grpc++
+            mosquitto
+    )
+
+    target_include_directories(ifex-scheduler-sync-bridge-e2e-test
+        PRIVATE
+            ${CMAKE_BINARY_DIR}/proto
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration
+            ${CMAKE_SOURCE_DIR}/libs/scheduler/include  # For job.hpp, job_hash.hpp
+            ${CMAKE_SOURCE_DIR}/reference-services/scheduler/include
+            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/include
+            ${CMAKE_SOURCE_DIR}/reference-services/scheduler-sync-bridge/include
+            ${CMAKE_SOURCE_DIR}/cloud/cloud-scheduler-service/include
+            ${CMAKE_SOURCE_DIR}/cloud/cloud-backend-transport/include
+            ${CMAKE_SOURCE_DIR}/cloud/cloud-scheduler-sync-bridge/include
+    )
+
+    add_test(NAME scheduler_sync_bridge_e2e_test
+             COMMAND ifex-scheduler-sync-bridge-e2e-test)
+
+    set_tests_properties(scheduler_sync_bridge_e2e_test PROPERTIES
+        LABELS "integration;mqtt;e2e"
+        RESOURCE_LOCK "mqtt_broker;ifex_test_services"
+        TIMEOUT 300
+    )
+endif()

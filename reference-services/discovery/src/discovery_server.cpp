@@ -76,10 +76,24 @@ grpc::Status DiscoveryServer::get_service(
     const swdv::service_discovery::get_service_request* request,
     swdv::service_discovery::get_service_response* response) {
     
-    LOG(INFO) << "get_service called for: " << request->service_name();
-    
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
+    LOG(INFO) << "GET SERVICE: name=" << request->service_name()
+              << " (registered_services=" << registered_services_.size()
+              << ", services_by_name=" << services_by_name_.size() << ")";
+
+    // Debug: list all registered service names
+    if (services_by_name_.empty()) {
+        LOG(INFO) << "  No services registered";
+    } else {
+        std::string names;
+        for (const auto& [name, _] : services_by_name_) {
+            if (!names.empty()) names += ", ";
+            names += name;
+        }
+        LOG(INFO) << "  Available services: " << names;
+    }
+
     // Look up service by name
     auto range = services_by_name_.equal_range(request->service_name());
     
@@ -139,9 +153,10 @@ grpc::Status DiscoveryServer::register_service(
     const swdv::service_discovery::register_service_request* request,
     swdv::service_discovery::register_service_response* response) {
     
-    LOG(INFO) << "register_service called";
-    
     const auto& service_info = request->service_info();
+    LOG(INFO) << "REGISTER SERVICE: name=" << service_info.name()
+              << " version=" << service_info.version()
+              << " address=" << service_info.endpoint().address();
     
     // Create registration entry
     ServiceRegistration registration;

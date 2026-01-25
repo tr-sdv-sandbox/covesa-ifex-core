@@ -136,7 +136,7 @@ TEST_F(TestTypesIntegrationTest, TestEnums) {
     
     json params;
     params["color"] = 2;  // BLUE
-    params["status"] = 1;  // STATUS_ERROR
+    params["status"] = -1;  // STATUS_ERROR (value=-1 per IFEX spec)
     
     call->set_parameters(params.dump());
     call->set_timeout_ms(5000);
@@ -308,10 +308,10 @@ TEST_F(TestTypesIntegrationTest, TestSensorDataStream) {
         {"pressure", 101.2f},
         {"humidity", 65.0f},
         {"location", {{"x", 15.0}, {"y", 25.0}, {"z", 5.0}}},
-        {"status", 1},  // STATUS_ERROR
+        {"status", -1},  // STATUS_ERROR (value=-1 per IFEX spec)
         {"error_message", "Sensor calibration needed"}
     });
-    
+
     sensor_readings.push_back({
         {"sensor_id", 1003},
         {"timestamp", 1640000002000LL},
@@ -319,11 +319,11 @@ TEST_F(TestTypesIntegrationTest, TestSensorDataStream) {
         {"pressure", 101.4f},
         {"humidity", 55.0f},
         {"location", {{"x", 20.0}, {"y", 30.0}, {"z", 5.0}}},
-        {"status", 2}  // STATUS_PENDING
+        {"status", 1}  // STATUS_PENDING (value=1 per IFEX spec)
     });
-    
+
     params["sensor_readings"] = sensor_readings;
-    params["filter_by_status"] = 1;  // Filter for STATUS_ERROR (non-zero to enable filtering)
+    params["filter_by_status"] = -1;  // Filter for STATUS_ERROR (value=-1 per IFEX spec)
     
     call->set_parameters(params.dump());
     call->set_timeout_ms(5000);

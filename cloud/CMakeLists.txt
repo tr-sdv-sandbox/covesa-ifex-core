@@ -29,3 +29,6 @@ add_subdirectory(cloud-backend-transport)
 
 # Cloud Scheduler Reference Service (in-memory, for testing)
 add_subdirectory(cloud-scheduler-service)
+
+# Cloud Scheduler Sync Bridge (protocol logic for vehicle sync)
+add_subdirectory(cloud-scheduler-sync-bridge)

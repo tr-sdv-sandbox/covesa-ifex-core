@@ -186,13 +186,19 @@ protected:
     }
 
     static void TearDownTestSuite() {
+        LOG(INFO) << "Tearing down paired transport test suite...";
         // Stop vehicle first (so cloud sees disconnect)
+        LOG(INFO) << "Stopping vehicle service...";
         StopVehicleService();
         std::this_thread::sleep_for(500ms);
 
+        LOG(INFO) << "Stopping cloud service...";
         StopCloudService();
+        std::this_thread::sleep_for(500ms);
 
+        LOG(INFO) << "Stopping MQTT container...";
         MqttTestFixture::TearDownTestSuite();
+        LOG(INFO) << "Paired transport test suite teardown complete";
     }
 
     void SetUp() override {
@@ -289,25 +295,31 @@ private:
     }
 
     static void StopCloudService() {
-        if (cloud_grpc_server_) {
-            cloud_grpc_server_->Shutdown();
-            cloud_grpc_server_.reset();
-        }
+        // Stop service first to clean up MQTT threads
         if (cloud_service_) {
             cloud_service_->Stop();
-            cloud_service_.reset();
         }
+        // Then shutdown gRPC server
+        if (cloud_grpc_server_) {
+            auto deadline = std::chrono::system_clock::now() + 5s;
+            cloud_grpc_server_->Shutdown(deadline);
+            cloud_grpc_server_.reset();
+        }
+        cloud_service_.reset();
     }
 
     static void StopVehicleService() {
-        if (vehicle_grpc_server_) {
-            vehicle_grpc_server_->Shutdown();
-            vehicle_grpc_server_.reset();
-        }
+        // Stop service first to clean up MQTT threads
         if (vehicle_service_) {
             vehicle_service_->Stop();
-            vehicle_service_.reset();
         }
+        // Then shutdown gRPC server
+        if (vehicle_grpc_server_) {
+            auto deadline = std::chrono::system_clock::now() + 5s;
+            vehicle_grpc_server_->Shutdown(deadline);
+            vehicle_grpc_server_.reset();
+        }
+        vehicle_service_.reset();
     }
 };
 
