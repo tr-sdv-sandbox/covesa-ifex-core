@@ -11,13 +11,25 @@ namespace ifex {
 
 class ParserImpl : public Parser {
 public:
-    explicit ParserImpl(const std::string& ifex_yaml) 
+    explicit ParserImpl(const std::string& ifex_yaml)
         : ifex_yaml_(ifex_yaml) {
         try {
             root_ = YAML::Load(ifex_yaml);
             parse_service();
         } catch (const YAML::Exception& e) {
             LOG(ERROR) << "Failed to parse IFEX YAML: " << e.what();
+            // Log first few lines to help identify which file caused the error
+            std::string preview;
+            size_t line_count = 0;
+            for (size_t i = 0; i < ifex_yaml.size() && line_count < 10; ++i) {
+                preview += ifex_yaml[i];
+                if (ifex_yaml[i] == '\n') ++line_count;
+            }
+            LOG(ERROR) << "YAML content preview (first 10 lines):\n" << preview;
+            // Check for common issues
+            if (ifex_yaml.find("includes:") != std::string::npos) {
+                LOG(ERROR) << "YAML contains 'includes:' directive - use flattened IFEX files from build/ifex/ instead of source files";
+            }
             throw std::runtime_error("Invalid IFEX YAML: " + std::string(e.what()));
         }
     }

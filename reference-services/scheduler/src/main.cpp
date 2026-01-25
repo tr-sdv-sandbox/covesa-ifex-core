@@ -44,14 +44,28 @@ std::string LoadIFEXDefinition(const std::string& explicit_path = "") {
             LOG(WARNING) << "Could not open IFEX definition at specified path: " << explicit_path;
         }
 
+        // Check IFEX_SCHEMA_DIR environment variable (like dispatcher does)
+        const char* schema_dir_env = std::getenv("IFEX_SCHEMA_DIR");
+        if (schema_dir_env) {
+            std::string schema_path = std::string(schema_dir_env) + "/scheduler-service.ifex.yml";
+            std::ifstream file(schema_path);
+            if (file.is_open()) {
+                LOG(INFO) << "Found IFEX definition via IFEX_SCHEMA_DIR: " << schema_path;
+                std::stringstream buffer;
+                buffer << file.rdbuf();
+                return buffer.str();
+            }
+            LOG(WARNING) << "IFEX_SCHEMA_DIR set but schema not found at: " << schema_path;
+        }
+
         // Try multiple paths relative to common execution locations
+        // IMPORTANT: Use flattened paths first (specs/generated/) to avoid includes
         std::vector<std::string> paths = {
-            "/app/ifex/scheduler-service.ifex.yml",       // Docker container
-            "specs/vehicle/scheduler-service.ifex.yml",   // From project root
-            "specs/generated/vehicle/scheduler-service.ifex.yml",  // Flattened
-            "../specs/vehicle/scheduler-service.ifex.yml",  // From build dir
-            "../../specs/vehicle/scheduler-service.ifex.yml",  // From build subdirectory
-            "./scheduler-service.ifex.yml"                  // Current directory
+            "/app/ifex/scheduler-service.ifex.yml",       // Docker container (flattened)
+            "ifex/scheduler-service.ifex.yml",            // From build dir (flattened)
+            "../ifex/scheduler-service.ifex.yml",         // From build subdirectory (flattened)
+            "specs/generated/vehicle/scheduler-service.ifex.yml",  // Flattened from project root
+            "./scheduler-service.ifex.yml"                // Current directory
         };
 
         for (const auto& path : paths) {
@@ -65,6 +79,7 @@ std::string LoadIFEXDefinition(const std::string& explicit_path = "") {
         }
 
         LOG(WARNING) << "Could not load IFEX definition from any of the standard paths";
+        LOG(WARNING) << "Set IFEX_SCHEMA_DIR environment variable or use --ifex-schema=PATH";
         return "";
     } catch (const std::exception& e) {
         LOG(WARNING) << "Failed to load IFEX definition: " << e.what();

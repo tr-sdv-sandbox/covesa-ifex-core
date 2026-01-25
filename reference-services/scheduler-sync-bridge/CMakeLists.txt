@@ -93,44 +93,5 @@ if(BUILD_INTEGRATION_TESTS)
         LABELS "unit"
     )
 
-    # =========================================================================
-    # Integration Tests (require Docker for MQTT broker)
-    # =========================================================================
-
-    add_executable(ifex-scheduler-sync-bridge-integration-test
-        tests/scheduler_sync_bridge_integration_test.cpp
-    )
-
-    target_include_directories(ifex-scheduler-sync-bridge-integration-test
-        PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/../common/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/../backend-transport/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/../backend-transport/client/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/../backend-transport/tests
-            ${MOSQUITTO_INCLUDE}
-    )
-
-    target_link_libraries(ifex-scheduler-sync-bridge-integration-test
-        PRIVATE
-            ifex-scheduler-sync-bridge-lib
-            ifex-core
-            ifex-backend-transport-server
-            ifex-backend-transport-client
-            GTest::gtest
-            glog::glog
-            gRPC::grpc++
-            ${MOSQUITTO_LIB}
-            Threads::Threads
-    )
-
-    add_test(NAME scheduler_sync_bridge_integration_test
-        COMMAND ifex-scheduler-sync-bridge-integration-test
-    )
-
-    set_tests_properties(scheduler_sync_bridge_integration_test PROPERTIES
-        TIMEOUT 180
-        LABELS "integration;docker;mqtt"
-        RESOURCE_LOCK mqtt_broker
-    )
+    # Integration tests removed - covered by scheduler_sync_bridge_e2e_test
 endif()

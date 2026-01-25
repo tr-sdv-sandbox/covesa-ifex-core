@@ -95,7 +95,7 @@ class MqttTestFixture : public ::testing::Test {
 protected:
     static constexpr const char* MQTT_IMAGE = "eclipse-mosquitto:2";
     static constexpr const char* CONTAINER_NAME = "ifex-cloud-scheduler-test-broker";
-    static constexpr const char* MQTT_PORT = "11886";
+    static constexpr const char* MQTT_PORT = "11888";
     static std::string mqtt_host;
     static int mqtt_port;
     static bool container_started;
@@ -191,7 +191,7 @@ private:
 };
 
 std::string MqttTestFixture::mqtt_host;
-int MqttTestFixture::mqtt_port = 11886;
+int MqttTestFixture::mqtt_port = 11888;
 bool MqttTestFixture::container_started = false;
 
 // =============================================================================
@@ -357,11 +357,18 @@ protected:
     }
 
     static void TearDownTestSuite() {
-        // Stop in reverse order
+        // Stop in reverse order with delays to allow clean shutdown
         StopCloudSchedulerService();
+        std::this_thread::sleep_for(100ms);
+
         StopVehicleSyncBridge();
+        std::this_thread::sleep_for(100ms);
+
         StopVehicleTransportService();
+        std::this_thread::sleep_for(100ms);
+
         StopCloudTransportService();
+        std::this_thread::sleep_for(100ms);
 
         stop_service(scheduler_pid_, "scheduler");
         stop_service(dispatcher_pid_, "dispatcher");
@@ -600,7 +607,8 @@ private:
         }
 
         // Set IFEX schema directory for the child process
-        std::string ifex_schema_dir = build_dir + "/../specs/vehicle";
+        // Use flattened IFEX files from build/ifex which have includes resolved
+        std::string ifex_schema_dir = build_dir + "/ifex";
         if (!fs::exists(ifex_schema_dir + "/scheduler-service.ifex.yml")) {
             LOG(ERROR) << "IFEX schema not found: " << ifex_schema_dir << "/scheduler-service.ifex.yml";
             return 0;
@@ -621,8 +629,10 @@ private:
 
             std::string listen_param = "--listen=" + listen_addr;
             std::string discovery_param = std::string("--discovery=") + discovery_addr;
+            std::string schema_path = ifex_schema_dir + "/scheduler-service.ifex.yml";
+            std::string schema_param = "--ifex-schema=" + schema_path;
             execl(executable.c_str(), executable.c_str(),
-                  listen_param.c_str(), discovery_param.c_str(), nullptr);
+                  listen_param.c_str(), discovery_param.c_str(), schema_param.c_str(), nullptr);
 
             LOG(ERROR) << "Failed to exec " << executable << ": " << strerror(errno);
             _exit(1);
@@ -658,7 +668,7 @@ private:
         }
     }
 
-    static bool wait_for_service(const std::string& address, int timeout_seconds = 10) {
+    static bool wait_for_service(const std::string& address, int timeout_seconds = 20) {
         auto channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
         auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(timeout_seconds);
 
@@ -818,38 +828,47 @@ private:
     }
 
     static void StopVehicleTransportService() {
-        // Stop service first to signal streaming handlers to exit (check stopped_ flag)
-        if (vehicle_transport_service_) {
-            vehicle_transport_service_->Stop();
-            // Allow streaming handlers to see stopped_ flag and exit their loops
-            // (handlers check every 100ms, so 150ms gives them time to exit)
-            std::this_thread::sleep_for(150ms);
-        }
-        // Then shutdown gRPC which waits for handlers to complete
+        LOG(INFO) << "StopVehicleTransportService: starting";
+        // Shutdown gRPC first - this cancels all streaming contexts, causing handlers to exit
         if (vehicle_transport_grpc_server_) {
-            vehicle_transport_grpc_server_->Shutdown();
+            LOG(INFO) << "StopVehicleTransportService: shutting down gRPC server";
+            auto deadline = std::chrono::system_clock::now() + 2s;
+            vehicle_transport_grpc_server_->Shutdown(deadline);
+            LOG(INFO) << "StopVehicleTransportService: gRPC server shutdown complete";
             vehicle_transport_grpc_server_.reset();
+            LOG(INFO) << "StopVehicleTransportService: gRPC server reset complete";
         }
+        // Then stop the service (cleanup MQTT, queues, etc.)
         if (vehicle_transport_service_) {
+            LOG(INFO) << "StopVehicleTransportService: stopping service";
+            vehicle_transport_service_->Stop();
+            LOG(INFO) << "StopVehicleTransportService: service stopped, about to reset";
             vehicle_transport_service_.reset();
+            LOG(INFO) << "StopVehicleTransportService: service reset complete";
         }
+        LOG(INFO) << "StopVehicleTransportService: done";
     }
 
     static void StopCloudTransportService() {
-        // Stop service first to signal streaming handlers to exit
-        if (cloud_transport_service_) {
-            cloud_transport_service_->Stop();
-            // Allow streaming handlers to see stopped_ flag and exit their loops
-            std::this_thread::sleep_for(150ms);
-        }
-        // Then shutdown gRPC which waits for handlers to complete
+        LOG(INFO) << "StopCloudTransportService: starting";
+        // Shutdown gRPC first
         if (cloud_transport_grpc_server_) {
-            cloud_transport_grpc_server_->Shutdown();
+            LOG(INFO) << "StopCloudTransportService: shutting down gRPC server";
+            auto deadline = std::chrono::system_clock::now() + 2s;
+            cloud_transport_grpc_server_->Shutdown(deadline);
+            LOG(INFO) << "StopCloudTransportService: gRPC server shutdown complete";
             cloud_transport_grpc_server_.reset();
+            LOG(INFO) << "StopCloudTransportService: gRPC server reset complete";
         }
+        // Then stop the service
         if (cloud_transport_service_) {
+            LOG(INFO) << "StopCloudTransportService: stopping service";
+            cloud_transport_service_->Stop();
+            LOG(INFO) << "StopCloudTransportService: service stopped, about to reset";
             cloud_transport_service_.reset();
+            LOG(INFO) << "StopCloudTransportService: service reset complete";
         }
+        LOG(INFO) << "StopCloudTransportService: done";
     }
 };
 
