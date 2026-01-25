@@ -25,9 +25,34 @@ target_link_libraries(ifex-cloud-scheduler-service
         Threads::Threads
 )
 
+# =============================================================================
+# Service Executable
+# =============================================================================
+
+add_executable(ifex-cloud-scheduler-service-bin
+    src/main.cpp
+)
+
+set_target_properties(ifex-cloud-scheduler-service-bin PROPERTIES
+    OUTPUT_NAME ifex-cloud-scheduler-service
+)
+
+target_include_directories(ifex-cloud-scheduler-service-bin
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(ifex-cloud-scheduler-service-bin
+    PRIVATE
+        ifex-cloud-scheduler-service
+        gflags
+        Threads::Threads
+)
+
 # Install
-install(TARGETS ifex-cloud-scheduler-service
+install(TARGETS ifex-cloud-scheduler-service ifex-cloud-scheduler-service-bin
     ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
 )
 
 install(DIRECTORY include/
