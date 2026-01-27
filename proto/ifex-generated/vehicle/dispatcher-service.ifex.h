@@ -1,5 +1,14 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: reference-specs/vehicle/dispatcher-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* dispatcher_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/specs/vehicle/dispatcher-service.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/vehicle/dispatcher-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: ifex_dispatcher
@@ -82,3 +91,6 @@ namespaces:
       datatype: call_result_t
       description: Call execution result
       mandatory: true
+)IFEX";
+
+}  // namespace ifex::schema

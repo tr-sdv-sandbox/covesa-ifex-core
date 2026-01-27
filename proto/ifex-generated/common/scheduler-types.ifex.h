@@ -1,5 +1,14 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: reference-specs/common/scheduler-types.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* scheduler_types = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/specs/common/scheduler-types.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/common/scheduler-types.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: scheduler_types
@@ -224,3 +233,6 @@ namespaces:
       datatype: string
       description: Error message (for failed jobs)
       mandatory: false
+)IFEX";
+
+}  // namespace ifex::schema

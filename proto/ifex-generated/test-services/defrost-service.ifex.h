@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: test-services/defrost/defrost-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* defrost_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/test-services/defrost/defrost-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -137,3 +146,6 @@ namespaces:
     - name: estimated_clear_seconds
       datatype: uint32
       description: Seconds until clear
+)IFEX";
+
+}  // namespace ifex::schema

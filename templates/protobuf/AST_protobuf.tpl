@@ -13,10 +13,10 @@
 syntax = "proto3";
 
 {# Generate proto imports from IFEX includes #}
-{# Convert specs/common/foo.ifex.yml → common/foo.proto #}
+{# Convert reference-specs/common/foo.ifex.yml → common/foo.proto #}
 {% for inc in item.includes|default([]) %}
 {%- set inc_path = inc.file -%}
-{%- set proto_path = inc_path|replace('specs/', '')|replace('.ifex.yml', '.proto')|replace('.yml', '.proto') -%}
+{%- set proto_path = inc_path|replace('reference-specs/', '')|replace('specs/', '')|replace('.ifex.yml', '.proto')|replace('.yml', '.proto') -%}
 import "{{ proto_path }}";
 {% endfor %}
 

@@ -81,23 +81,37 @@ IFEX services consume VSS internally but expose semantic interfaces externally.
 ### IFEX Schema → Proto Generation
 
 Services are defined in YAML (`*.ifex.yml`):
-- `reference-services/ifex/` - Core infrastructure service schemas
-- `test-services/<service>/` - Domain service schemas
+- `reference-specs/vehicle/` - Vehicle service schemas
+- `reference-specs/cloud/` - Cloud service schemas
+- `reference-specs/common/` - Shared types (scheduler-types, etc.)
+- `test-services/<service>/` - Test service schemas
 
-Run `./generate_proto.sh` to regenerate proto files from IFEX YAML. Requires `ifex-tools` Docker image (installed via `install_deps.sh`). The script generates `.proto` files in `proto/ifex-generated/`; CMake then compiles these to C++ during build.
+Run `./generate_proto.sh` to regenerate from IFEX YAML. The script generates:
+1. **C++ headers** (`*.ifex.h`) - Flattened IFEX as embedded strings for service registration
+2. **Proto files** (`*.proto`) - For gRPC code generation
+
+Services use embedded schemas - no runtime file loading:
+```cpp
+#include "scheduler-service.ifex.h"
+discovery_client.register_service(ifex::schema::scheduler_service, port);
+```
 
 ### Proto Directory Structure
 
 ```
 proto/
 ├── ifex-generated/   # Generated from IFEX YAML (DO NOT EDIT)
+│   ├── vehicle/      # Vehicle service protos + *.ifex.h headers
+│   ├── cloud/        # Cloud service protos + *.ifex.h headers
+│   ├── common/       # Shared types (scheduler-types.proto)
+│   └── test-services/# Test service protos + *.ifex.h headers
 ├── internal/         # Hand-written internal protocols (scheduler-sync-v2.proto)
-└── api/              # Hand-written external APIs (cloud-scheduler-service.proto)
+└── api/              # Hand-written external APIs
 ```
 
-- **ifex-generated/**: Auto-generated from IFEX YAML schemas
+- **ifex-generated/**: Auto-generated - both `.proto` and `.ifex.h` files
 - **internal/**: Wire protocols between internal components (not gRPC services)
-- **api/**: External gRPC APIs not expressible in IFEX (cloud-only services, complex types)
+- **api/**: External gRPC APIs not expressible in IFEX
 
 ### Core Library (`core/`)
 

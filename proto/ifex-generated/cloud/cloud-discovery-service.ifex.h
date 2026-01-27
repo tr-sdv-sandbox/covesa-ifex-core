@@ -1,5 +1,14 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: reference-specs/cloud/cloud-discovery-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* cloud_discovery_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/specs/cloud/cloud-discovery-service.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/cloud/cloud-discovery-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: cloud_discovery_service
@@ -255,3 +264,6 @@ namespaces:
     output:
     - name: is_healthy
       datatype: boolean
+)IFEX";
+
+}  // namespace ifex::schema

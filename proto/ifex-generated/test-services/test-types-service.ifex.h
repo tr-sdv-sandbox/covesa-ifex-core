@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: tests/test-types/test-types-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* test_types_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/tests/test-types/test-types-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -260,3 +269,6 @@ namespaces:
     - name: summary_report
       datatype: string
       description: JSON summary report
+)IFEX";
+
+}  // namespace ifex::schema

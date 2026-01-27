@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: test-services/beverage/beverage-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* beverage_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/test-services/beverage/beverage-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -159,3 +168,6 @@ namespaces:
     - name: requires_maintenance
       datatype: boolean
       description: Whether maintenance is needed
+)IFEX";
+
+}  // namespace ifex::schema

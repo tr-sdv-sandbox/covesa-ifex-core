@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: test-services/echo/echo_service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* echo_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/test-services/echo/echo_service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -59,3 +68,6 @@ namespaces:
     - name: result
       datatype: string
       description: Concatenated string
+)IFEX";
+
+}  // namespace ifex::schema

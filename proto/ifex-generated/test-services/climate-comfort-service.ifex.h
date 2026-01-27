@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: test-services/climate-comfort/climate-comfort-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* climate_comfort_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/test-services/climate-comfort/climate-comfort-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -176,3 +185,6 @@ namespaces:
     - name: ready_by_time
       datatype: boolean
       description: Whether target will be achieved in time
+)IFEX";
+
+}  // namespace ifex::schema

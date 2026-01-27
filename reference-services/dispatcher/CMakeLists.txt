@@ -7,6 +7,7 @@ add_executable(ifex-dispatcher-service
 target_include_directories(ifex-dispatcher-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/vehicle
 )
 
 target_link_libraries(ifex-dispatcher-service

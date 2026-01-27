@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: test-services/settings/settings-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* settings_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/test-services/settings/settings-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -296,3 +305,6 @@ namespaces:
       datatype: string[]
       description: Validation errors if any
       mandatory: false
+)IFEX";
+
+}  // namespace ifex::schema

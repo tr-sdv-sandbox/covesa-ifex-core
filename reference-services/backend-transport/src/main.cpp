@@ -1,4 +1,5 @@
 #include "backend_transport_server.hpp"
+#include "backend-transport-service.ifex.h"  // Generated IFEX schema as embedded string
 
 #include <glog/logging.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
@@ -8,9 +9,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdlib>
-#include <fstream>
 #include <iostream>
-#include <sstream>
 
 std::unique_ptr<grpc::Server> server;
 std::unique_ptr<ifex::reference::BackendTransportServer> backend_service;
@@ -28,35 +27,6 @@ void SignalHandler(int signal) {
 
     if (server) {
         server->Shutdown();
-    }
-}
-
-std::string LoadIFEXDefinition() {
-    try {
-        std::vector<std::string> paths = {
-            "reference-services/ifex/backend-transport-service.yml",
-            "../reference-services/ifex/backend-transport-service.yml",
-            "../../reference-services/ifex/backend-transport-service.yml",
-            "../ifex/backend-transport-service.yml",
-            "ifex/backend-transport-service.yml",
-            "./backend-transport-service.yml"
-        };
-
-        for (const auto& path : paths) {
-            std::ifstream file(path);
-            if (file.is_open()) {
-                LOG(INFO) << "Found IFEX definition at: " << path;
-                std::stringstream buffer;
-                buffer << file.rdbuf();
-                return buffer.str();
-            }
-        }
-
-        LOG(WARNING) << "Could not load IFEX definition from any of the standard paths";
-        return "";
-    } catch (const std::exception& e) {
-        LOG(WARNING) << "Failed to load IFEX definition: " << e.what();
-        return "";
     }
 }
 
@@ -113,9 +83,6 @@ void RunServer(ifex::reference::BackendTransportServer::Config& config, const st
     LOG(INFO) << "  - Press Ctrl+C to stop";
     LOG(INFO) << "";
 
-    // Load IFEX definition
-    std::string ifex_schema = LoadIFEXDefinition();
-
     // Create service
     backend_service = std::make_unique<ifex::reference::BackendTransportServer>(config);
 
@@ -160,9 +127,9 @@ void RunServer(ifex::reference::BackendTransportServer::Config& config, const st
 
     LOG(INFO) << "IFEX Backend Transport Service listening on port " << actual_port;
 
-    // Register with service discovery (optional)
+    // Register with service discovery using embedded IFEX schema (optional)
     if (!config.discovery_endpoint.empty()) {
-        if (backend_service->RegisterWithDiscovery(actual_port, ifex_schema)) {
+        if (backend_service->RegisterWithDiscovery(actual_port, ifex::schema::backend_transport_service)) {
             LOG(INFO) << "Registered with service discovery at " << config.discovery_endpoint;
         } else {
             LOG(WARNING) << "Failed to register with service discovery";

@@ -1,3 +1,12 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: test-services/departure-orchestration/departure-orchestration-service.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* departure_orchestration_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
 # Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/test-services/departure-orchestration/departure-orchestration-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
@@ -224,3 +233,6 @@ namespaces:
     - name: schedules
       datatype: schedule_status_info_t[]
       description: List of active schedules
+)IFEX";
+
+}  // namespace ifex::schema

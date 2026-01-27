@@ -63,6 +63,7 @@ add_executable(ifex-backend-transport-service
 target_include_directories(ifex-backend-transport-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/vehicle
 )
 
 target_link_libraries(ifex-backend-transport-service

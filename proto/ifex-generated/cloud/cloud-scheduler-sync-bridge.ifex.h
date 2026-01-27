@@ -1,5 +1,14 @@
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: reference-specs/cloud/cloud-scheduler-sync-bridge.ifex.yml
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* cloud_scheduler_sync_bridge = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/specs/cloud/cloud-scheduler-sync-bridge.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/cloud/cloud-scheduler-sync-bridge.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: cloud_scheduler_sync_bridge
@@ -143,3 +152,6 @@ namespaces:
     output:
     - name: is_healthy
       datatype: boolean
+)IFEX";
+
+}  // namespace ifex::schema

@@ -1,41 +1,36 @@
 #!/bin/bash
 
-# Script to generate proto files from IFEX YAML definitions
+# Script to generate proto files and IFEX schema headers from IFEX YAML definitions
 # Uses the official IFEX Docker-based tool
 #
-# This script performs two separate steps:
-# 1. Flatten IFEX files (resolve includes) -> reference-specs/generated/ (for runtime)
-# 2. Generate proto files from ORIGINAL IFEX -> proto/ifex-generated/ (for wire compatibility)
+# This script performs two steps:
+# 1. Generate C++ headers with flattened IFEX as raw strings (for service registration)
+# 2. Generate proto files from ORIGINAL IFEX (for wire compatibility)
 #
-# Why separate?
-# - Flattened IFEX: Self-contained for runtime (dynamic gRPC, service registration)
-# - Original IFEX for proto: Uses imports for shared types (wire compatible across services)
-#
-# Type references like "scheduler_types.job_record_t" map to:
-# - Flattened IFEX: inlined types in scheduler_types namespace
-# - Proto: import "common/scheduler-types.proto" with swdv.scheduler_types.job_record_t
+# The generated headers allow services to embed their IFEX schema:
+#   #include "scheduler-service.ifex.h"
+#   discovery_client.register_service(ifex::schema::scheduler_service, port);
 
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROTO_BASE_DIR="${SCRIPT_DIR}/proto/ifex-generated"
-FLATTENED_BASE_DIR="${SCRIPT_DIR}/reference-specs/generated"
 
 echo "=============================================="
-echo "IFEX Processing: Flatten + Proto Generation"
+echo "IFEX Processing: Schema Headers + Proto Generation"
 echo "=============================================="
 echo ""
 
 # =============================================================================
-# Step 1: Flatten IFEX files (resolve includes) - for RUNTIME use
+# Step 1: Generate C++ headers with flattened IFEX schemas
 # =============================================================================
-echo "Step 1: Flattening IFEX files (resolving includes)..."
-echo "       (Self-contained IFEX for runtime - keeps type prefixes)"
+echo "Step 1: Generating C++ headers with embedded IFEX schemas..."
+echo "       (Services can #include these to get their schema as a string)"
 echo ""
-echo "Output structure:"
-echo "  reference-specs/generated/vehicle/      <- reference-specs/vehicle/ (flattened)"
-echo "  reference-specs/generated/cloud/        <- reference-specs/cloud/ (flattened)"
-echo "  reference-specs/generated/test-services/ <- test-services/ (flattened)"
+echo "Output:"
+echo "  proto/ifex-generated/vehicle/*.ifex.h"
+echo "  proto/ifex-generated/cloud/*.ifex.h"
+echo "  proto/ifex-generated/test-services/*.ifex.h"
 echo ""
 
 # Check if Python3 and PyYAML are available
@@ -51,74 +46,109 @@ fi
 
 FLATTEN_SCRIPT="${SCRIPT_DIR}/scripts/flatten_ifex.py"
 
-# Create output directories
-mkdir -p "${FLATTENED_BASE_DIR}/vehicle"
-mkdir -p "${FLATTENED_BASE_DIR}/cloud"
-mkdir -p "${FLATTENED_BASE_DIR}/test-services"
-mkdir -p "${FLATTENED_BASE_DIR}/common"
-
-# Function to flatten IFEX files in a directory
-flatten_directory() {
-    local source_dir="$1"
-    local output_subdir="$2"
-    local full_source="${SCRIPT_DIR}/${source_dir}"
-    local full_output="${FLATTENED_BASE_DIR}/${output_subdir}"
-
-    if [ -d "$full_source" ]; then
-        echo "Flattening ${source_dir}/ -> reference-specs/generated/${output_subdir}/"
-        find "$full_source" -maxdepth 1 -name "*.ifex.yml" | sort | while read yaml_file; do
-            if [ -f "$yaml_file" ]; then
-                base_name=$(basename "$yaml_file")
-                python3 "$FLATTEN_SCRIPT" \
-                    "$yaml_file" \
-                    "${full_output}/${base_name}" \
-                    --base-dir "$SCRIPT_DIR" \
-                    --quiet
-                echo "  ${base_name}"
-            fi
-        done
-        echo ""
-    fi
+# Function to convert IFEX filename to C++ identifier
+to_cpp_identifier() {
+    local name="$1"
+    # Remove .ifex.yml extension, replace - with _
+    echo "$name" | sed 's/\.ifex\.yml$//' | sed 's/-/_/g'
 }
 
-# Flatten all IFEX directories
-flatten_directory "reference-specs/common" "common"
-flatten_directory "reference-specs/vehicle" "vehicle"
-flatten_directory "reference-specs/cloud" "cloud"
+# Function to generate C++ header with flattened IFEX as raw string
+generate_ifex_header() {
+    local yaml_file="$1"
+    local output_dir="$2"
+    local base_name=$(basename "$yaml_file")
+    local cpp_name=$(to_cpp_identifier "$base_name")
+    local header_file="${output_dir}/${base_name%.yml}.h"
 
-# Flatten test services (they're in subdirectories)
-echo "Flattening test-services/ -> reference-specs/generated/test-services/"
-for service_dir in "${SCRIPT_DIR}/test-services"/*; do
-    if [ -d "$service_dir" ]; then
-        for yaml_file in "$service_dir"/*.ifex.yml; do
-            if [ -f "$yaml_file" ]; then
-                base_name=$(basename "$yaml_file")
-                python3 "$FLATTEN_SCRIPT" \
-                    "$yaml_file" \
-                    "${FLATTENED_BASE_DIR}/test-services/${base_name}" \
-                    --base-dir "$SCRIPT_DIR" \
-                    --quiet
-                echo "  ${base_name}"
-            fi
-        done
-    fi
-done
+    mkdir -p "$output_dir"
 
-# Also flatten test-types
-for yaml_file in "${SCRIPT_DIR}/tests/test-types"/*.ifex.yml; do
+    # Create temp file for flattened YAML
+    local temp_yaml=$(mktemp)
+
+    # Flatten the IFEX file
+    python3 "$FLATTEN_SCRIPT" \
+        "$yaml_file" \
+        "$temp_yaml" \
+        --base-dir "$SCRIPT_DIR" \
+        --quiet
+
+    # Generate C++ header
+    cat > "$header_file" << HEADER_START
+// AUTO-GENERATED - DO NOT EDIT
+// Generated from: ${yaml_file#$SCRIPT_DIR/}
+// Regenerate with: ./generate_proto.sh
+
+#pragma once
+
+namespace ifex::schema {
+
+inline constexpr const char* ${cpp_name} = R"IFEX(
+HEADER_START
+
+    # Append the flattened YAML content
+    cat "$temp_yaml" >> "$header_file"
+
+    # Close the raw string and namespace
+    cat >> "$header_file" << HEADER_END
+)IFEX";
+
+}  // namespace ifex::schema
+HEADER_END
+
+    rm -f "$temp_yaml"
+    echo "  ${base_name} -> ${header_file#$SCRIPT_DIR/}"
+}
+
+# Generate headers for vehicle specs
+echo "Generating vehicle schema headers..."
+for yaml_file in "${SCRIPT_DIR}/reference-specs/vehicle"/*.ifex.yml; do
     if [ -f "$yaml_file" ]; then
-        base_name=$(basename "$yaml_file")
-        python3 "$FLATTEN_SCRIPT" \
-            "$yaml_file" \
-            "${FLATTENED_BASE_DIR}/test-services/${base_name}" \
-            --base-dir "$SCRIPT_DIR" \
-            --quiet
-        echo "  ${base_name}"
+        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/vehicle"
     fi
 done
 echo ""
 
-echo "Flattening complete!"
+# Generate headers for cloud specs
+echo "Generating cloud schema headers..."
+for yaml_file in "${SCRIPT_DIR}/reference-specs/cloud"/*.ifex.yml; do
+    if [ -f "$yaml_file" ]; then
+        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/cloud"
+    fi
+done
+echo ""
+
+# Generate headers for common specs
+echo "Generating common schema headers..."
+for yaml_file in "${SCRIPT_DIR}/reference-specs/common"/*.ifex.yml; do
+    if [ -f "$yaml_file" ]; then
+        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/common"
+    fi
+done
+echo ""
+
+# Generate headers for test services
+echo "Generating test-services schema headers..."
+mkdir -p "${PROTO_BASE_DIR}/test-services"
+for service_dir in "${SCRIPT_DIR}/test-services"/*; do
+    if [ -d "$service_dir" ]; then
+        for yaml_file in "$service_dir"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/test-services"
+            fi
+        done
+    fi
+done
+
+# Also process test-types
+for yaml_file in "${SCRIPT_DIR}/tests/test-types"/*.ifex.yml; do
+    if [ -f "$yaml_file" ]; then
+        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/test-services"
+    fi
+done
+echo ""
+
+echo "Schema header generation complete!"
 echo ""
 
 # =============================================================================
@@ -271,10 +301,17 @@ else
     echo ""
 fi
 
-echo "Generated proto structure:"
+echo "Generated files:"
+echo ""
+echo "Schema headers (for service registration):"
+find "${PROTO_BASE_DIR}" -name "*.ifex.h" | sed "s|${SCRIPT_DIR}/||" | sort
+echo ""
+echo "Proto files (for wire format):"
 find "${PROTO_BASE_DIR}" -name "*.proto" | sed "s|${SCRIPT_DIR}/||" | sort
 
 echo ""
 echo "Next steps:"
 echo "1. Run ./build.sh to build the project"
-echo "2. CMake will automatically generate C++ code from these proto files"
+echo "2. Services can now #include their schema header:"
+echo "   #include \"scheduler-service.ifex.h\""
+echo "   discovery_client.register_service(ifex::schema::scheduler_service, port);"
