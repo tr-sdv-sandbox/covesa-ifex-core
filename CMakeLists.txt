@@ -54,6 +54,13 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     set(PROTO_INTERNAL_DIR ${PROTO_DIR}/internal)
     set(PROTO_API_DIR ${PROTO_DIR}/api)
 
+    # Reference services common include directory (for ifex_content_ids.hpp, etc.)
+    set(IFEX_REFERENCE_SERVICES_COMMON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/reference-services/common/include)
+
+    # Backend transport paths (for integration tests)
+    set(IFEX_BACKEND_TRANSPORT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/reference-services/backend-transport)
+    set(IFEX_BACKEND_TRANSPORT_CLIENT_INCLUDE ${IFEX_BACKEND_TRANSPORT_DIR}/common/client/include)
+
     # Check if proto files exist (sample check for IFEX-generated files)
     if(NOT EXISTS ${PROTO_IFEX_VEHICLE_DIR}/discovery-service.proto)
         message(FATAL_ERROR "Proto files not found in ${PROTO_IFEX_VEHICLE_DIR}. Please run ./generate_proto.sh first.")

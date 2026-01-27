@@ -15,7 +15,7 @@ add_executable(ifex-echo-service
 target_include_directories(ifex-echo-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/echo/include
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
+        ${PROTO_IFEX_TEST_DIR}
 )
 
 target_link_libraries(ifex-echo-service

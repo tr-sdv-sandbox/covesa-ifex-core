@@ -12,7 +12,7 @@ add_executable(defrost-service
 target_include_directories(defrost-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
+        ${PROTO_IFEX_TEST_DIR}
 )
 
 target_link_libraries(defrost-service

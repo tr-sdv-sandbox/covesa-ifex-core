@@ -6,7 +6,7 @@ add_executable(ifex-settings-service
 
 target_include_directories(ifex-settings-service
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
+        ${PROTO_IFEX_TEST_DIR}
 )
 
 target_link_libraries(ifex-settings-service

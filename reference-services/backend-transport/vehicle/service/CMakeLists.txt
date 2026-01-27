@@ -52,7 +52,7 @@ add_executable(ifex-backend-transport-service
 target_include_directories(ifex-backend-transport-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/vehicle
+        ${PROTO_IFEX_VEHICLE_DIR}
 )
 
 target_link_libraries(ifex-backend-transport-service
@@ -94,7 +94,7 @@ if(BUILD_INTEGRATION_TESTS)
     target_include_directories(ifex-backend-transport-client-test
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/common/client/include
+            ${IFEX_BACKEND_TRANSPORT_CLIENT_INCLUDE}
     )
 
     target_link_libraries(ifex-backend-transport-client-test
@@ -125,7 +125,7 @@ if(BUILD_INTEGRATION_TESTS)
     target_include_directories(ifex-backend-transport-conformance-test
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/common/client/include
+            ${IFEX_BACKEND_TRANSPORT_CLIENT_INCLUDE}
     )
 
     target_link_libraries(ifex-backend-transport-conformance-test
@@ -158,7 +158,7 @@ if(BUILD_INTEGRATION_TESTS)
     target_include_directories(ifex-backend-transport-integration-test
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/common/client/include
+            ${IFEX_BACKEND_TRANSPORT_CLIENT_INCLUDE}
             ${MOSQUITTO_INCLUDE}
     )
 
@@ -194,7 +194,7 @@ if(BUILD_INTEGRATION_TESTS)
     target_include_directories(ifex-backend-transport-resilience-test
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/common/client/include
+            ${IFEX_BACKEND_TRANSPORT_CLIENT_INCLUDE}
             ${MOSQUITTO_INCLUDE}
     )
 

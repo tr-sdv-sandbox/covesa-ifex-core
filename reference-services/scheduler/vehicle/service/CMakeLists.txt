@@ -41,7 +41,7 @@ add_executable(ifex-scheduler-service
 target_include_directories(ifex-scheduler-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/vehicle
+        ${PROTO_IFEX_VEHICLE_DIR}
 )
 
 target_link_libraries(ifex-scheduler-service

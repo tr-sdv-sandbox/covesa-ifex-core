@@ -9,7 +9,7 @@ add_library(ifex-discovery-sync-bridge-lib STATIC
 target_include_directories(ifex-discovery-sync-bridge-lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/reference-services/common/include
+        ${IFEX_REFERENCE_SERVICES_COMMON_INCLUDE}
 )
 
 target_link_libraries(ifex-discovery-sync-bridge-lib
@@ -33,7 +33,7 @@ add_executable(ifex-discovery-sync-bridge
 target_include_directories(ifex-discovery-sync-bridge
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/reference-services/common/include
+        ${IFEX_REFERENCE_SERVICES_COMMON_INCLUDE}
 )
 
 target_link_libraries(ifex-discovery-sync-bridge
@@ -73,7 +73,7 @@ if(BUILD_INTEGRATION_TESTS)
     target_include_directories(ifex-discovery-sync-bridge-test
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/reference-services/common/include
+            ${IFEX_REFERENCE_SERVICES_COMMON_INCLUDE}
     )
 
     target_link_libraries(ifex-discovery-sync-bridge-test
@@ -107,10 +107,10 @@ if(BUILD_INTEGRATION_TESTS)
     target_include_directories(ifex-discovery-sync-bridge-integration-test
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/reference-services/common/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/client/include
-            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/tests
+            ${IFEX_REFERENCE_SERVICES_COMMON_INCLUDE}
+            ${IFEX_BACKEND_TRANSPORT_DIR}/include
+            ${IFEX_BACKEND_TRANSPORT_DIR}/client/include
+            ${IFEX_BACKEND_TRANSPORT_DIR}/tests
             ${MOSQUITTO_INCLUDE}
     )
 

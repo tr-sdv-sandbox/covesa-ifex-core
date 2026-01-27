@@ -10,7 +10,7 @@ target_include_directories(ifex-scheduler-sync-bridge-lib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include
-        ${CMAKE_SOURCE_DIR}/reference-services/common/include
+        ${IFEX_REFERENCE_SERVICES_COMMON_INCLUDE}
 )
 
 target_link_libraries(ifex-scheduler-sync-bridge-lib

@@ -11,7 +11,7 @@ find_package(yaml-cpp REQUIRED)
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
+    ${PROTO_IFEX_TEST_DIR}
     ${CMAKE_BINARY_DIR}/proto
 )
 
