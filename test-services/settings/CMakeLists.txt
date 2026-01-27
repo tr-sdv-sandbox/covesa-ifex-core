@@ -4,9 +4,16 @@ add_executable(ifex-settings-service
     settings_server.hpp
 )
 
+target_include_directories(ifex-settings-service
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
+)
+
 target_link_libraries(ifex-settings-service
     PRIVATE
-        ifex-core
+        ifex-parser
+        ifex-common
+        ifex-discovery-client
         ifex-proto-generated
         gRPC::grpc++
         protobuf::libprotobuf

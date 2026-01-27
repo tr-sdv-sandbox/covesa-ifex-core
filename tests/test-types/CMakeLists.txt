@@ -6,14 +6,16 @@ add_executable(ifex-test-types-service
 
 target_include_directories(ifex-test-types-service
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/core/include
+        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
         ${CMAKE_BINARY_DIR}/proto
         ${CMAKE_BINARY_DIR}/proto/test-services
 )
 
 target_link_libraries(ifex-test-types-service
     PRIVATE
-        ifex-core
+        ifex-parser
+        ifex-common
+        ifex-discovery-client
         gRPC::grpc++
         protobuf::libprotobuf
         glog::glog

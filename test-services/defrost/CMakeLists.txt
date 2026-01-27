@@ -12,11 +12,14 @@ add_executable(defrost-service
 target_include_directories(defrost-service
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
 )
 
 target_link_libraries(defrost-service
     PRIVATE
-        ifex-core
+        ifex-parser
+        ifex-common
+        ifex-discovery-client
         ifex-proto-generated
         gRPC::grpc++
         protobuf::libprotobuf

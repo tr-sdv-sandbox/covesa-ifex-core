@@ -10,11 +10,11 @@
 #include <grpcpp/grpcpp.h>
 
 #include "defrost_server.hpp"
+#include "defrost-service.ifex.h"
 
 // Configuration
 static std::string address = "0.0.0.0:50063";
 static std::string discovery_address = "localhost:50051";
-static std::string ifex_schema = "defrost-service.ifex.yml";
 
 std::unique_ptr<grpc::Server> server;
 std::unique_ptr<swdv::defrost_service::DefrostServiceImpl> service_impl;
@@ -47,10 +47,6 @@ int main(int argc, char** argv) {
             discovery_address = arg.substr(20);
         } else if (arg.find("--discovery=") == 0) {
             discovery_address = arg.substr(12);
-        } else if (arg.find("--ifex_schema=") == 0) {
-            ifex_schema = arg.substr(14);
-        } else if (arg.find("--ifex-schema=") == 0) {
-            ifex_schema = arg.substr(14);
         }
     }
     
@@ -82,13 +78,9 @@ int main(int argc, char** argv) {
         }
         
         LOG(INFO) << "Defrost service listening on " << address;
-        
-        // Load IFEX schema if provided
-        std::string schema_path = ifex_schema;
-        if (schema_path.empty()) {
-            schema_path = "./defrost-service.ifex.yml";
-        }
-        LOG(INFO) << "Successfully loaded IFEX schema from: " << schema_path;
+
+        // Use embedded IFEX schema
+        std::string ifex_schema_content = ifex::schema::defrost_service;
         
         // Get actual bound port
         int bound_port = 50063;
@@ -101,7 +93,7 @@ int main(int argc, char** argv) {
         
         // Register with discovery service
         LOG(INFO) << "Registering Defrost Service with discovery on port " << bound_port;
-        if (service_impl->RegisterWithDiscovery(discovery_address, bound_port, schema_path)) {
+        if (service_impl->RegisterWithDiscovery(discovery_address, bound_port, ifex_schema_content)) {
             LOG(INFO) << "Successfully registered with discovery service";
         } else {
             LOG(WARNING) << "Failed to register with discovery service, continuing anyway";

@@ -51,7 +51,7 @@ check_service() {
 echo ""
 echo -e "${BLUE}1️⃣  Starting Discovery Service...${NC}"
 GLOG_v=2 GLOG_logtostderr=1 \
-"$BUILD_DIR/reference-services/discovery/ifex-discovery-service" \
+"$BUILD_DIR/reference-services/discovery/vehicle/service/ifex-discovery-service" \
     > "$LOG_DIR/discovery.log" 2>&1 &
 DISCOVERY_PID=$!
 
@@ -66,7 +66,7 @@ fi
 echo ""
 echo -e "${BLUE}2️⃣  Starting Dispatcher Service...${NC}"
 GLOG_v=2 GLOG_logtostderr=1 \
-"$BUILD_DIR/reference-services/dispatcher/ifex-dispatcher-service" \
+"$BUILD_DIR/reference-services/dispatcher/vehicle/service/ifex-dispatcher-service" \
     --discovery=localhost:50051 \
     --ifex-schema="$SCRIPT_DIR/reference-services/ifex/ifex-dispatcher-service.yml" \
     > "$LOG_DIR/dispatcher.log" 2>&1 &
@@ -82,7 +82,7 @@ fi
 # Start Backend Transport Service (optional - only if MQTT available)
 echo ""
 echo -e "${BLUE}2.5️⃣  Starting Backend Transport Service...${NC}"
-if [ -f "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-service" ]; then
+if [ -f "$BUILD_DIR/reference-services/backend-transport/vehicle/service/ifex-backend-transport-service" ]; then
     MQTT_HOST="${MQTT_HOST:-localhost}"
     MQTT_PORT="${MQTT_PORT:-1883}"
     VEHICLE_ID="${VEHICLE_ID:-vehicle-001}"
@@ -91,7 +91,7 @@ if [ -f "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-
     if nc -z "$MQTT_HOST" "$MQTT_PORT" 2>/dev/null; then
         GLOG_v=2 GLOG_logtostderr=1 \
         MQTT_HOST="$MQTT_HOST" MQTT_PORT="$MQTT_PORT" VEHICLE_ID="$VEHICLE_ID" \
-        "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-service" \
+        "$BUILD_DIR/reference-services/backend-transport/vehicle/service/ifex-backend-transport-service" \
             --listen=0.0.0.0:50060 \
             > "$LOG_DIR/backend-transport.log" 2>&1 &
         BACKEND_TRANSPORT_PID=$!
@@ -102,9 +102,9 @@ if [ -f "$BUILD_DIR/reference-services/backend-transport/ifex-backend-transport-
             # Start Dispatcher Bridge (only if Backend Transport is running)
             echo ""
             echo -e "${BLUE}2.6️⃣  Starting Dispatcher Bridge...${NC}"
-            if [ -f "$BUILD_DIR/reference-services/dispatcher-bridge/ifex-dispatcher-bridge" ]; then
+            if [ -f "$BUILD_DIR/reference-services/dispatcher/vehicle/rpc-bridge/ifex-dispatcher-bridge" ]; then
                 GLOG_v=2 GLOG_logtostderr=1 \
-                "$BUILD_DIR/reference-services/dispatcher-bridge/ifex-dispatcher-bridge" \
+                "$BUILD_DIR/reference-services/dispatcher/vehicle/rpc-bridge/ifex-dispatcher-bridge" \
                     --dispatcher=localhost:50052 \
                     --backend-transport=localhost:50060 \
                     > "$LOG_DIR/dispatcher-bridge.log" 2>&1 &

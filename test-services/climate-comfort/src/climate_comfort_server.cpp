@@ -439,17 +439,10 @@ bool ClimateComfortServiceImpl::RegisterWithDiscovery(
         
         LOG(INFO) << "Registering with endpoint: " << endpoint_address;
         
-        // Load and set IFEX schema if provided
+        // Set IFEX schema content if provided
         if (!ifex_schema.empty()) {
-            std::ifstream schema_file(ifex_schema);
-            if (schema_file.is_open()) {
-                std::string schema_content((std::istreambuf_iterator<char>(schema_file)),
-                                         std::istreambuf_iterator<char>());
-                service_info->set_ifex_schema(schema_content);
-                LOG(INFO) << "Loaded IFEX schema from: " << ifex_schema;
-            } else {
-                LOG(WARNING) << "Could not open IFEX schema file: " << ifex_schema;
-            }
+            service_info->set_ifex_schema(ifex_schema);
+            LOG(INFO) << "Set IFEX schema content (" << ifex_schema.size() << " bytes)";
         }
         
         // Create request

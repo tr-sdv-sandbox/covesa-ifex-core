@@ -1,8 +1,8 @@
 #include "departure_orchestration_server.hpp"
+#include "departure-orchestration-service.ifex.h"
 #include "ifex/network.hpp"
 #include <iomanip>
 #include <sstream>
-#include <fstream>
 #include <filesystem>
 
 namespace swdv {
@@ -76,17 +76,10 @@ bool DepartureOrchestrationServiceImpl::RegisterWithDiscovery(
             }
         }
         
-        // Fall back to static schema file if no composite schema
+        // Fall back to provided schema content if no composite schema
         if (schema_content.empty() && !ifex_schema.empty()) {
-            std::ifstream schema_file(ifex_schema);
-            if (schema_file.is_open()) {
-                schema_content = std::string((std::istreambuf_iterator<char>(schema_file)),
-                                           std::istreambuf_iterator<char>());
-                LOG(INFO) << "Loaded IFEX schema from: " << ifex_schema << " (" << schema_content.size() << " bytes)";
-            } else {
-                LOG(ERROR) << "Failed to open IFEX schema file: " << ifex_schema;
-                return false;
-            }
+            schema_content = ifex_schema;
+            LOG(INFO) << "Using provided IFEX schema content (" << schema_content.size() << " bytes)";
         }
         
         if (schema_content.empty()) {
@@ -229,38 +222,11 @@ void DepartureOrchestrationServiceImpl::DiscoverDependentSchemas() {
 
 std::string DepartureOrchestrationServiceImpl::BuildCompositeSchema() {
     LOG(INFO) << "Building composite schema from discovered services...";
-    
+
     try {
-        // Load our base schema - try multiple paths based on common patterns
-        std::vector<std::string> schema_paths = {
-            "./ifex/departure-orchestration-service.ifex.yml",  // CMake build dir pattern
-            "./departure-orchestration-service.ifex.yml",       // Local dir
-            "../departure-orchestration-service.ifex.yml",      // Parent dir
-        };
-        
-        // Also check environment variable
-        const char* schema_dir = std::getenv("IFEX_SCHEMA_DIR");
-        if (schema_dir) {
-            schema_paths.insert(schema_paths.begin(), 
-                std::string(schema_dir) + "/departure-orchestration-service.ifex.yml");
-        }
-        
-        std::ifstream schema_file;
-        for (const auto& path : schema_paths) {
-            schema_file.open(path);
-            if (schema_file.is_open()) {
-                LOG(INFO) << "Found base schema at: " << path;
-                break;
-            }
-        }
-        
-        if (!schema_file.is_open()) {
-            LOG(ERROR) << "Failed to open base schema file from any of the tried paths";
-            LOG(ERROR) << "Current working directory: " << std::filesystem::current_path();
-            return "";
-        }
-        
-        YAML::Node base_schema = YAML::Load(schema_file);
+        // Use embedded base schema
+        YAML::Node base_schema = YAML::Load(ifex::schema::departure_orchestration_service);
+        LOG(INFO) << "Loaded embedded base schema";
         
         // Extract relevant types from dependent services
         YAML::Node imported_enums;

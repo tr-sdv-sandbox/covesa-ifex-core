@@ -1,0 +1,68 @@
+# IFEX Vehicle Simulation Container
+# Runs onboard IFEX services (Discovery, Dispatcher, Scheduler, Backend Transport)
+#
+# Build:
+#   docker build -f example-deployments/vss-demo-dashboard/vehicle-docker/Dockerfile.vehicle -t ifex-vehicle:latest .
+#
+# Run:
+#   docker run -e VEHICLE_ID=VIN001 -e MQTT_HOST=host.docker.internal ifex-vehicle:latest
+
+FROM ubuntu:24.04
+
+# Avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libprotobuf32t64 \
+    libgrpc++1.51t64 \
+    libgoogle-glog0v6t64 \
+    libgflags2.2 \
+    libyaml-cpp0.8 \
+    liblua5.4-0 \
+    libpaho-mqtt1.3 \
+    libpaho-mqttpp3-1 \
+    libmosquitto1 \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy core service binaries
+COPY build/reference-services/discovery/vehicle/service/ifex-discovery-service /app/bin/
+COPY build/reference-services/dispatcher/vehicle/service/ifex-dispatcher-service /app/bin/
+COPY build/reference-services/scheduler/vehicle/service/ifex-scheduler-service /app/bin/
+COPY build/reference-services/backend-transport/vehicle/service/ifex-backend-transport-service /app/bin/
+
+# Copy sync bridges (these publish to MQTT)
+COPY build/reference-services/discovery/vehicle/sync-bridge/ifex-discovery-sync-bridge /app/bin/
+COPY build/reference-services/scheduler/vehicle/sync-bridge/ifex-scheduler-sync-bridge /app/bin/
+COPY build/reference-services/dispatcher/vehicle/rpc-bridge/ifex-dispatcher-bridge /app/bin/
+
+# Copy test services (optional, for richer simulation)
+COPY build/test-services/ifex-echo-service /app/bin/
+COPY build/test-services/beverage/beverage-service /app/bin/
+COPY build/test-services/climate-comfort/climate-comfort-service /app/bin/
+COPY build/test-services/defrost/defrost-service /app/bin/
+COPY build/test-services/settings/ifex-settings-service /app/bin/
+
+# Copy IFEX schemas
+COPY build/ifex/ /app/ifex/
+
+# Copy entrypoint script
+COPY example-deployments/vss-demo-dashboard/vehicle-docker/vehicle-entrypoint.sh /app/
+
+# Environment defaults
+ENV VEHICLE_ID=vehicle-001
+ENV MQTT_HOST=localhost
+ENV MQTT_PORT=1883
+ENV DISCOVERY_PORT=50051
+ENV DISPATCHER_PORT=50052
+ENV SCHEDULER_PORT=50053
+ENV BACKEND_TRANSPORT_PORT=50060
+
+# Expose service ports
+EXPOSE 50051 50052 50053 50060
+
+ENTRYPOINT ["/app/vehicle-entrypoint.sh"]

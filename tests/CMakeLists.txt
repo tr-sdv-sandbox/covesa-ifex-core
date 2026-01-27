@@ -15,7 +15,9 @@ add_executable(ifex-unit-tests
 
 target_link_libraries(ifex-unit-tests
     PRIVATE
-        ifex-core
+        ifex-parser
+        ifex-common
+        ifex-discovery-client
         ifex-proto-generated
         GTest::gtest
         GTest::gtest_main
@@ -28,7 +30,6 @@ target_link_libraries(ifex-unit-tests
 
 target_include_directories(ifex-unit-tests
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/core/include
         ${CMAKE_BINARY_DIR}/proto
 )
 
@@ -122,7 +123,9 @@ if(NOT CMAKE_CROSSCOMPILING)
             ifex-cloud-backend-transport-server
             ifex-cloud-scheduler-sync-bridge-lib
             # Common
-            ifex-core
+            ifex-parser
+        ifex-common
+        ifex-discovery-client
             ifex-scheduler  # For job.hpp, job_hash.hpp (state checksum comparison)
             ifex-proto-generated
             GTest::gtest

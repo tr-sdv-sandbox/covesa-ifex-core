@@ -1,8 +1,6 @@
 #include <csignal>
-#include <fstream>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <condition_variable>
 #include <mutex>
@@ -11,11 +9,11 @@
 #include <grpcpp/grpcpp.h>
 
 #include "beverage_server.hpp"
+#include "beverage-service.ifex.h"
 
 // Configuration
 static std::string address = "0.0.0.0:50061";
 static std::string discovery_address = "localhost:50051";
-static std::string ifex_schema = "beverage-service.ifex.yml";
 
 std::unique_ptr<grpc::Server> server;
 std::unique_ptr<swdv::beverage_service::BeverageServiceImpl> service_impl;
@@ -48,10 +46,6 @@ int main(int argc, char** argv) {
             discovery_address = arg.substr(20);
         } else if (arg.find("--discovery=") == 0) {
             discovery_address = arg.substr(12);
-        } else if (arg.find("--ifex_schema=") == 0) {
-            ifex_schema = arg.substr(14);
-        } else if (arg.find("--ifex-schema=") == 0) {
-            ifex_schema = arg.substr(14);
         }
     }
     
@@ -84,19 +78,8 @@ int main(int argc, char** argv) {
         
         LOG(INFO) << "Beverage service listening on " << address;
         
-        // Load IFEX schema for discovery registration
-        std::string ifex_schema_content;
-        std::ifstream schema_file(ifex_schema);
-        if (schema_file.is_open()) {
-            std::stringstream buffer;
-            buffer << schema_file.rdbuf();
-            ifex_schema_content = buffer.str();
-            schema_file.close();
-            LOG(INFO) << "Successfully loaded IFEX schema from: " << ifex_schema;
-        } else {
-            LOG(ERROR) << "Failed to open IFEX schema file: " << ifex_schema;
-            // Continue without schema - service will still work
-        }
+        // Use embedded IFEX schema for discovery registration
+        std::string ifex_schema_content = ifex::schema::beverage_service;
         
         // Extract port from address
         size_t colon_pos = address.find_last_of(':');

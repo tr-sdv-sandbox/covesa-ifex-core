@@ -1,5 +1,5 @@
 // AUTO-GENERATED - DO NOT EDIT
-// Generated from: reference-specs/vehicle/scheduler-service.ifex.yml
+// Generated from: reference-specs/scheduler/vehicle/scheduler-service.ifex.yml
 // Regenerate with: ./generate_proto.sh
 
 #pragma once
@@ -8,7 +8,7 @@ namespace ifex::schema {
 
 inline constexpr const char* scheduler_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/vehicle/scheduler-service.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/scheduler/vehicle/scheduler-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: ifex_scheduler
@@ -199,6 +199,14 @@ namespaces:
     - name: created_by
       datatype: string
       description: User/system that created job
+      mandatory: false
+    - name: sync_state
+      datatype: sync_state_t
+      description: 'Synchronization state derived from comparing local version with
+        last confirmed remote version. Populated by scheduler service for UI display.
+        NOT included in sync messages.
+
+        '
       mandatory: false
   - name: execution_record_t
     description: 'Immutable record of a job execution. Executions are append-only

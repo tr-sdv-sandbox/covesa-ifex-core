@@ -81,5 +81,5 @@ fi
 echo -e "${GREEN}Build complete!${NC}"
 echo ""
 echo "To run the services:"
-echo "  1. Start discovery:  $BUILD_DIR/reference-services/discovery/ifex-discovery-service"
-echo "  2. Start dispatcher: $BUILD_DIR/reference-services/dispatcher/ifex-dispatcher-service"
+echo "  1. Start discovery:  $BUILD_DIR/reference-services/discovery/vehicle/service/ifex-discovery-service"
+echo "  2. Start dispatcher: $BUILD_DIR/reference-services/dispatcher/vehicle/service/ifex-dispatcher-service"

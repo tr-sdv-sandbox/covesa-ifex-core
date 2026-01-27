@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "departure_orchestration_server.hpp"
+#include "departure-orchestration-service.ifex.h"
 #include "discovery-service.grpc.pb.h"
 
 namespace {
@@ -33,7 +34,6 @@ void PrintUsage(const char* program_name) {
 struct Config {
     std::string address = "0.0.0.0:50063";
     std::string discovery_address = "localhost:50051";
-    std::string ifex_schema = "";  // Will be set based on env or args
 };
 
 Config ParseArgs(int argc, char* argv[]) {
@@ -56,8 +56,6 @@ Config ParseArgs(int argc, char* argv[]) {
                 config.address = value;
             } else if (key == "--discovery_address" || key == "--discovery") {
                 config.discovery_address = value;
-            } else if (key == "--ifex_schema" || key == "--ifex-schema") {
-                config.ifex_schema = value;
             }
         }
     }
@@ -112,17 +110,6 @@ int main(int argc, char* argv[]) {
     
     // Parse command line arguments
     Config config = ParseArgs(argc, argv);
-    
-    // If no schema specified, check environment variable
-    if (config.ifex_schema.empty()) {
-        const char* schema_dir = std::getenv("IFEX_SCHEMA_DIR");
-        if (schema_dir) {
-            config.ifex_schema = std::string(schema_dir) + "/departure-orchestration-service.ifex.yml";
-        } else {
-            // Default to build directory structure
-            config.ifex_schema = "./ifex/departure-orchestration-service.ifex.yml";
-        }
-    }
     
     // Install signal handlers
     signal(SIGINT, SignalHandler);
@@ -179,8 +166,9 @@ int main(int argc, char* argv[]) {
             port = std::stoi(config.address.substr(colon_pos + 1));
         }
         
-        // Register with discovery service
-        if (!service->RegisterWithDiscovery(config.discovery_address, port, "departure_orchestration_service", config.ifex_schema)) {
+        // Register with discovery service using embedded schema
+        std::string ifex_schema_content = ifex::schema::departure_orchestration_service;
+        if (!service->RegisterWithDiscovery(config.discovery_address, port, "departure_orchestration_service", ifex_schema_content)) {
             LOG(WARNING) << "Failed to register with discovery service";
             // Continue anyway - service can still work without discovery
         }

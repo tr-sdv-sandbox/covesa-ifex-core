@@ -39,9 +39,9 @@ endif()
 # Build protobuf generation first if we're building core or services
 if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     # Proto directories:
-    #   ifex-generated/common/        - Common type protos (from reference-specs/common/)
-    #   ifex-generated/vehicle/       - Vehicle service protos (from reference-specs/vehicle/)
-    #   ifex-generated/cloud/         - Cloud service protos (from reference-specs/cloud/)
+    #   ifex-generated/common/        - Common type protos (from reference-specs/*/common/)
+    #   ifex-generated/vehicle/       - Vehicle service protos (from reference-specs/*/vehicle/)
+    #   ifex-generated/cloud/         - Cloud service protos (from reference-specs/*/cloud/)
     #   ifex-generated/test-services/ - Test service protos
     #   internal/                     - Hand-written internal protocols (sync, etc.)
     #   api/                          - Hand-written external API definitions
@@ -150,7 +150,7 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     # Install the proto library (needed for export set)
     include(GNUInstallDirs)
     install(TARGETS ifex-proto-generated
-        EXPORT ifex-core-targets
+        EXPORT ifex-targets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
@@ -162,27 +162,24 @@ if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     )
 endif()
 
-# Scheduler state library (standalone, no proto dependency)
-add_subdirectory(libs/scheduler)
+# Common types library (standalone, no proto dependency)
+add_subdirectory(libs/common)
 
-# Core library - depends on generated protobuf
-if(BUILD_CORE)
-    add_subdirectory(core)
-endif()
+# Parser library (depends on common)
+add_subdirectory(libs/parser)
 
-# Reference services - depend on core
+# Note: Scheduler library (ifex-scheduler) is now under reference-services/scheduler/common/
+
+# Discovery client library
+add_subdirectory(reference-services/discovery/common/client)
+
+# Reference services
 if(BUILD_REFERENCE_SERVICES)
-    if(NOT BUILD_CORE)
-        message(FATAL_ERROR "Reference services require core library")
-    endif()
     add_subdirectory(reference-services)
 endif()
 
-# Test services - depend on core
+# Test services
 if(BUILD_TEST_SERVICES)
-    if(NOT BUILD_CORE)
-        message(FATAL_ERROR "Test services require core library")
-    endif()
     add_subdirectory(test-services)
 endif()
 
@@ -196,9 +193,4 @@ if(BUILD_TESTS OR BUILD_INTEGRATION_TESTS)
     enable_testing()
     find_package(GTest REQUIRED)
     add_subdirectory(tests)
-
-    # Cloud reference services (test-only, not for cross-compilation)
-    if(NOT CMAKE_CROSSCOMPILING)
-        add_subdirectory(cloud)
-    endif()
 endif()

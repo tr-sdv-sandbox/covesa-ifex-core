@@ -249,6 +249,67 @@ class force_sync_service(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
+class trigger_job_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.trigger_job = channel.unary_unary(
+                '/swdv.cloud_scheduler_sync_bridge.trigger_job_service/trigger_job',
+                request_serializer=cloud__scheduler__sync__bridge__pb2.trigger_job_request.SerializeToString,
+                response_deserializer=cloud__scheduler__sync__bridge__pb2.trigger_job_response.FromString,
+                )
+
+
+class trigger_job_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def trigger_job(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_trigger_job_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'trigger_job': grpc.unary_unary_rpc_method_handler(
+                    servicer.trigger_job,
+                    request_deserializer=cloud__scheduler__sync__bridge__pb2.trigger_job_request.FromString,
+                    response_serializer=cloud__scheduler__sync__bridge__pb2.trigger_job_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_sync_bridge.trigger_job_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class trigger_job_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def trigger_job(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_sync_bridge.trigger_job_service/trigger_job',
+            cloud__scheduler__sync__bridge__pb2.trigger_job_request.SerializeToString,
+            cloud__scheduler__sync__bridge__pb2.trigger_job_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
 class healthy_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 

@@ -6,19 +6,34 @@ This directory contains the authoritative specifications for IFEX services and p
 
 ```
 reference-specs/
-├── vehicle/              # Vehicle-side service APIs (IFEX)
-│   ├── scheduler-service.ifex.yml
-│   ├── discovery-service.ifex.yml
-│   ├── dispatcher-service.ifex.yml
-│   └── backend-transport-service.ifex.yml
+├── scheduler/                    # Scheduler service specs
+│   ├── vehicle/
+│   │   └── scheduler-service.ifex.yml
+│   ├── cloud/
+│   │   ├── cloud-scheduler-service.ifex.yml
+│   │   └── cloud-scheduler-sync-bridge.ifex.yml
+│   └── common/
+│       └── scheduler-types.ifex.yml   # Shared types
 │
-├── cloud/                # Cloud-side service APIs (IFEX)
-│   ├── cloud-scheduler-service.ifex.yml
-│   ├── cloud-discovery-service.ifex.yml
-│   ├── cloud-dispatcher-service.ifex.yml
-│   └── cloud-backend-transport-service.ifex.yml
+├── discovery/                    # Discovery service specs
+│   ├── vehicle/
+│   │   └── discovery-service.ifex.yml
+│   └── cloud/
+│       └── cloud-discovery-service.ifex.yml
 │
-└── protocols/            # Internal transfer protocols (source of truth)
+├── dispatcher/                   # Dispatcher service specs
+│   ├── vehicle/
+│   │   └── dispatcher-service.ifex.yml
+│   └── cloud/
+│       └── cloud-dispatcher-service.ifex.yml
+│
+├── backend-transport/            # Backend transport specs
+│   ├── vehicle/
+│   │   └── backend-transport-service.ifex.yml
+│   └── cloud/
+│       └── cloud-backend-transport-service.ifex.yml
+│
+└── protocols/                    # Internal transfer protocols (source of truth)
     ├── scheduler-sync-protocol-v2.md
     ├── scheduler-sync-protocol-v3.md
     ├── discovery-sync-protocol.md
@@ -70,17 +85,10 @@ Define wire formats and state machines for internal communication. These are the
 
 ## Relationship to Reference Implementations
 
-The specs define **what** services do. Reference implementations in `reference-services/` and `cloud/` show **how** to implement them.
+The specs define **what** services do. Reference implementations in `reference-services/` show **how** to implement them.
 
 ```
-reference-specs/vehicle/scheduler-service.ifex.yml  →  reference-services/scheduler/
-reference-specs/cloud/cloud-scheduler-service.ifex.yml  →  cloud/cloud-scheduler-service/
+reference-specs/scheduler/vehicle/scheduler-service.ifex.yml  →  reference-services/scheduler/vehicle/service/
+reference-specs/scheduler/cloud/cloud-scheduler-service.ifex.yml  →  reference-services/scheduler/cloud/service/
 reference-specs/protocols/scheduler-sync-v2.md  →  Used by both sides
 ```
-
-## Legacy Locations (Deprecated)
-
-The following locations are deprecated. Use `reference-specs/` instead:
-- `reference-services/ifex/*.yml` → `reference-specs/vehicle/`
-- `cloud/ifex/*.yml` → `reference-specs/cloud/`
-- `docs/*-protocol.md` → `reference-specs/protocols/`

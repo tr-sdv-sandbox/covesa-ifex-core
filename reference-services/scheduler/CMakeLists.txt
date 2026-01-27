@@ -1,60 +1,25 @@
+# Scheduler Service - Service-Centric Organization
+#
+# Structure:
+#   common/       - Shared scheduler library (Job, Store, Hash, VersionVector, SyncEngine)
+#   vehicle/      - Vehicle-side components
+#     service/    - Scheduler service (gRPC server)
+#     sync-bridge/ - Vehicle-side sync bridge
+#   cloud/        - Cloud-side components (test-only)
+#     service/    - Cloud scheduler service
+#     sync-bridge/ - Cloud-side sync bridge
+
 cmake_minimum_required(VERSION 3.16)
-project(ifex-scheduler-service VERSION 2.0.0 LANGUAGES CXX)
 
-# =============================================================================
-# Library (used by service and tests)
-# =============================================================================
+# Common scheduler library (shared between vehicle and cloud)
+add_subdirectory(common)
 
-add_library(ifex-scheduler-service-lib STATIC
-    src/scheduler_server.cpp
-)
+# Vehicle-side components (always built)
+add_subdirectory(vehicle)
 
-target_include_directories(ifex-scheduler-service-lib
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(ifex-scheduler-service-lib
-    PUBLIC
-        ifex-proto-generated
-        ifex-core
-        ifex-sync
-        ifex-scheduler
-        gRPC::grpc++
-        ${PROTOBUF_LIBRARIES}
-        yaml-cpp
-        nlohmann_json::nlohmann_json
-        glog::glog
-    PRIVATE
-        Threads::Threads
-)
-
-# =============================================================================
-# Service Executable
-# =============================================================================
-
-add_executable(ifex-scheduler-service
-    src/main.cpp
-)
-
-target_include_directories(ifex-scheduler-service
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/vehicle
-)
-
-target_link_libraries(ifex-scheduler-service
-    PRIVATE
-        ifex-scheduler-service-lib
-        gRPC::grpc++_reflection
-        Threads::Threads
-)
-
-# Install
-install(TARGETS ifex-scheduler-service
-    RUNTIME DESTINATION bin
-)
-
-install(TARGETS ifex-scheduler-service-lib
-    ARCHIVE DESTINATION lib
-)
+# Cloud-side components (only when tests enabled and not cross-compiling)
+if(BUILD_TESTS OR BUILD_INTEGRATION_TESTS)
+    if(NOT CMAKE_CROSSCOMPILING)
+        add_subdirectory(cloud)
+    endif()
+endif()

@@ -1,23 +1,24 @@
-add_executable(ifex-discovery-service
-    src/discovery_server.cpp
-    src/main.cpp
-)
+# Discovery Service - Service-Centric Organization
+#
+# Structure:
+#   common/client/ - Discovery client library (gRPC client)
+#   vehicle/       - Vehicle-side components
+#     service/     - Discovery service (gRPC server, service registry)
+#     sync-bridge/ - Hash-based schema synchronization
+#   cloud/         - Cloud-side components (test-only)
+#     service/     - Cloud discovery service (fleet aggregator)
 
-target_include_directories(ifex-discovery-service
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+cmake_minimum_required(VERSION 3.16)
 
-target_link_libraries(ifex-discovery-service
-    PRIVATE
-        ifex-core
-        ifex-proto-generated
-        gRPC::grpc++
-        protobuf::libprotobuf
-        glog::glog
-)
+# Note: Discovery client library (common/client) is built early from root CMakeLists.txt
+# to satisfy ifex-core dependency
 
-# Install
-install(TARGETS ifex-discovery-service
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+# Vehicle-side components (always built)
+add_subdirectory(vehicle)
+
+# Cloud-side components (only when tests enabled and not cross-compiling)
+if(BUILD_TESTS OR BUILD_INTEGRATION_TESTS)
+    if(NOT CMAKE_CROSSCOMPILING)
+        add_subdirectory(cloud)
+    endif()
+endif()

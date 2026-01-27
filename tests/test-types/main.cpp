@@ -1,11 +1,11 @@
 #include "test_types_server.hpp"
+#include "test-types-service.ifex.h"
 #include <ifex/discovery.hpp>
 #include <ifex/network.hpp>
 #include <glog/logging.h>
 #include <csignal>
 #include <thread>
 #include <chrono>
-#include <fstream>
 
 std::unique_ptr<test_types::TestTypesServer> g_server;
 std::atomic<bool> g_shutdown(false);
@@ -78,17 +78,8 @@ int main(int argc, char** argv) {
         try {
             discovery_client = ifex::DiscoveryClient::create(discovery_endpoint);
             
-            // Load IFEX schema
-            std::string ifex_schema;
-            std::ifstream schema_file("test-types-service.ifex.yml");
-            if (schema_file.is_open()) {
-                std::stringstream buffer;
-                buffer << schema_file.rdbuf();
-                ifex_schema = buffer.str();
-            } else {
-                LOG(ERROR) << "Failed to load IFEX schema file";
-                return 1;
-            }
+            // Use embedded IFEX schema
+            std::string ifex_schema = ifex::schema::test_types_service;
             
             // Get primary IP
             std::string primary_ip = ifex::network::get_primary_ip_address();

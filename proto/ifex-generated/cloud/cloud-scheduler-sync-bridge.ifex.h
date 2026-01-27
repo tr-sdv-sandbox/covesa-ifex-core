@@ -1,5 +1,5 @@
 // AUTO-GENERATED - DO NOT EDIT
-// Generated from: reference-specs/cloud/cloud-scheduler-sync-bridge.ifex.yml
+// Generated from: reference-specs/scheduler/cloud/cloud-scheduler-sync-bridge.ifex.yml
 // Regenerate with: ./generate_proto.sh
 
 #pragma once
@@ -8,7 +8,7 @@ namespace ifex::schema {
 
 inline constexpr const char* cloud_scheduler_sync_bridge = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/cloud/cloud-scheduler-sync-bridge.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/scheduler/cloud/cloud-scheduler-sync-bridge.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: cloud_scheduler_sync_bridge
@@ -144,6 +144,25 @@ namespaces:
     output:
     - name: success
       datatype: boolean
+    - name: error_message
+      datatype: string
+      mandatory: false
+  - name: trigger_job
+    description: 'Send a trigger request to a vehicle to execute a job immediately.
+      The request is sent via the sync protocol''s TriggerJobRequest message.
+
+      '
+    input:
+    - name: vehicle_id
+      datatype: string
+      mandatory: true
+    - name: job_id
+      datatype: string
+      mandatory: true
+    output:
+    - name: sent
+      datatype: boolean
+      description: True if request was sent (not necessarily executed)
     - name: error_message
       datatype: string
       mandatory: false

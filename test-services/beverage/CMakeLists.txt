@@ -11,7 +11,7 @@ find_package(yaml-cpp REQUIRED)
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/core/include
+    ${CMAKE_SOURCE_DIR}/proto/ifex-generated/test-services
     ${CMAKE_BINARY_DIR}/proto
 )
 
@@ -27,7 +27,9 @@ add_executable(beverage-service ${SOURCES})
 # Link libraries
 target_link_libraries(beverage-service
     PRIVATE
-        ifex-core
+        ifex-parser
+        ifex-common
+        ifex-discovery-client
         ifex-proto-generated
         gRPC::grpc++
         protobuf::libprotobuf

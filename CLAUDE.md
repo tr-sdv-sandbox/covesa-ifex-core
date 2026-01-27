@@ -80,11 +80,13 @@ IFEX services consume VSS internally but expose semantic interfaces externally.
 
 ### IFEX Schema → Proto Generation
 
-Services are defined in YAML (`*.ifex.yml`):
-- `reference-specs/vehicle/` - Vehicle service schemas
-- `reference-specs/cloud/` - Cloud service schemas
-- `reference-specs/common/` - Shared types (scheduler-types, etc.)
+Services are defined in YAML (`*.ifex.yml`) using a service-centric structure:
+- `reference-specs/<service>/vehicle/` - Vehicle service schemas
+- `reference-specs/<service>/cloud/` - Cloud service schemas
+- `reference-specs/<service>/common/` - Shared types per service
 - `test-services/<service>/` - Test service schemas
+
+Example: `reference-specs/scheduler/vehicle/scheduler-service.ifex.yml`
 
 Run `./generate_proto.sh` to regenerate from IFEX YAML. The script generates:
 1. **C++ headers** (`*.ifex.h`) - Flattened IFEX as embedded strings for service registration

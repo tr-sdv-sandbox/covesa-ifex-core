@@ -1,5 +1,5 @@
 // AUTO-GENERATED - DO NOT EDIT
-// Generated from: reference-specs/cloud/cloud-backend-transport-service.ifex.yml
+// Generated from: reference-specs/backend-transport/cloud/cloud-backend-transport-service.ifex.yml
 // Regenerate with: ./generate_proto.sh
 
 #pragma once
@@ -8,7 +8,7 @@ namespace ifex::schema {
 
 inline constexpr const char* cloud_backend_transport_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/cloud/cloud-backend-transport-service.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/backend-transport/cloud/cloud-backend-transport-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: cloud_backend_transport_service

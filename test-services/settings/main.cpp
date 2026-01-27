@@ -6,11 +6,11 @@
 #include <chrono>
 #include <csignal>
 #include <atomic>
-#include <fstream>
 
 #include "ifex/discovery.hpp"
 #include "ifex/network.hpp"
 #include "settings_server.hpp"
+#include "settings-service.ifex.h"
 #include "discovery-service.grpc.pb.h"
 
 using json = nlohmann::json;
@@ -84,15 +84,8 @@ int main(int argc, char* argv[]) {
         settings_server->Start(listen_address);
         LOG(INFO) << "gRPC server started successfully";
         
-        // Read IFEX schema
-        std::ifstream schema_file("settings-service.ifex.yml");
-        if (!schema_file.is_open()) {
-            LOG(ERROR) << "Failed to open settings-service.ifex.yml";
-            return 1;
-        }
-        std::string ifex_schema((std::istreambuf_iterator<char>(schema_file)),
-                               std::istreambuf_iterator<char>());
-        schema_file.close();
+        // Use embedded IFEX schema
+        std::string ifex_schema = ifex::schema::settings_service;
         
         // Register with discovery service using gRPC directly (like echo service)
         try {

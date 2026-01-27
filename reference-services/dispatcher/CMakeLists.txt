@@ -1,26 +1,21 @@
-add_executable(ifex-dispatcher-service
-    src/dispatcher_server.cpp
-    src/dynamic_caller_impl.cpp
-    src/main.cpp
-)
+# Dispatcher Service - Service-Centric Organization
+#
+# Structure:
+#   common/       - Shared dispatcher utilities (if any)
+#   vehicle/      - Vehicle-side components
+#     service/    - Dispatcher service (gRPC server, JSON<->Protobuf routing)
+#     rpc-bridge/ - RPC bridge for cloud-initiated calls
+#   cloud/        - Cloud-side components (test-only)
+#     service/    - Cloud dispatcher service
 
-target_include_directories(ifex-dispatcher-service
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/proto/ifex-generated/vehicle
-)
+cmake_minimum_required(VERSION 3.16)
 
-target_link_libraries(ifex-dispatcher-service
-    PRIVATE
-        ifex-core
-        ifex-proto-generated
-        gRPC::grpc++
-        protobuf::libprotobuf
-        glog::glog
-        nlohmann_json::nlohmann_json
-)
+# Vehicle-side components (always built)
+add_subdirectory(vehicle)
 
-# Install
-install(TARGETS ifex-dispatcher-service
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+# Cloud-side components (only when tests enabled and not cross-compiling)
+if(BUILD_TESTS OR BUILD_INTEGRATION_TESTS)
+    if(NOT CMAKE_CROSSCOMPILING)
+        add_subdirectory(cloud)
+    endif()
+endif()

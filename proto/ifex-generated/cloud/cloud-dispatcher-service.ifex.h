@@ -1,5 +1,5 @@
 // AUTO-GENERATED - DO NOT EDIT
-// Generated from: reference-specs/cloud/cloud-dispatcher-service.ifex.yml
+// Generated from: reference-specs/dispatcher/cloud/cloud-dispatcher-service.ifex.yml
 // Regenerate with: ./generate_proto.sh
 
 #pragma once
@@ -8,7 +8,7 @@ namespace ifex::schema {
 
 inline constexpr const char* cloud_dispatcher_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/cloud/cloud-dispatcher-service.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/dispatcher/cloud/cloud-dispatcher-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: cloud_dispatcher_service

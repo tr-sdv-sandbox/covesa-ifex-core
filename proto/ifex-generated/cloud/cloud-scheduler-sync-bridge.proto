@@ -111,6 +111,23 @@ service force_sync_service {
   rpc force_sync(force_sync_request) returns (force_sync_response);
 }
 
+// Method: trigger_job
+// Send a trigger request to a vehicle to execute a job immediately. The request is sent via the sync protocol's TriggerJobRequest message.
+
+message trigger_job_request {
+  string vehicle_id = 1;
+  string job_id = 2;
+}
+
+message trigger_job_response {
+  bool sent = 1;
+  string error_message = 2;
+}
+
+service trigger_job_service {
+  rpc trigger_job(trigger_job_request) returns (trigger_job_response);
+}
+
 // Method: healthy
 // Simple health check
 message healthy_request {

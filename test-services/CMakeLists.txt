@@ -20,7 +20,9 @@ target_include_directories(ifex-echo-service
 
 target_link_libraries(ifex-echo-service
     PRIVATE
-        ifex-core
+        ifex-parser
+        ifex-common
+        ifex-discovery-client
         ifex-proto-generated
         gRPC::grpc++
         protobuf::libprotobuf

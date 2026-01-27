@@ -58,11 +58,13 @@ The `ifex::schema::*` constants contain the complete flattened IFEX YAML as comp
 
 ## Source Files
 
-The IFEX YAML source files are located in:
-- `reference-specs/vehicle/` - Vehicle service definitions
-- `reference-specs/cloud/` - Cloud service definitions
-- `reference-specs/common/` - Shared type definitions
+The IFEX YAML source files use a service-centric structure:
+- `reference-specs/<service>/vehicle/` - Vehicle service definitions
+- `reference-specs/<service>/cloud/` - Cloud service definitions
+- `reference-specs/<service>/common/` - Shared type definitions per service
 - `test-services/*/` - Test service definitions
+
+Example: `reference-specs/scheduler/vehicle/scheduler-service.ifex.yml`
 
 ## If You Need to Change a Proto
 

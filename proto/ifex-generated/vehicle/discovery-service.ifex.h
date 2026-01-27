@@ -1,5 +1,5 @@
 // AUTO-GENERATED - DO NOT EDIT
-// Generated from: reference-specs/vehicle/discovery-service.ifex.yml
+// Generated from: reference-specs/discovery/vehicle/discovery-service.ifex.yml
 // Regenerate with: ./generate_proto.sh
 
 #pragma once
@@ -8,7 +8,7 @@ namespace ifex::schema {
 
 inline constexpr const char* discovery_service = R"IFEX(
 # AUTO-GENERATED - DO NOT EDIT
-# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/vehicle/discovery-service.ifex.yml
+# Flattened from: /home/saka/BALI/tvep-workspace/components/covesa-ifex-core/reference-specs/discovery/vehicle/discovery-service.ifex.yml
 # Regenerate with: ./generate_proto.sh
 ---
 name: service_discovery

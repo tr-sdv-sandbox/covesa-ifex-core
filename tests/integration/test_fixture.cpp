@@ -61,7 +61,7 @@ void IntegrationTestFixture::GlobalSetUp() {
 
     // Start discovery service first (others depend on it)
     discovery_pid_ = start_service(
-        get_build_dir() + "/reference-services/discovery/ifex-discovery-service",
+        get_build_dir() + "/reference-services/discovery/vehicle/service/ifex-discovery-service",
         "discovery",
         TEST_DISCOVERY_PORT
     );
@@ -73,13 +73,13 @@ void IntegrationTestFixture::GlobalSetUp() {
 
     // Start all other services in parallel (they all depend only on discovery)
     dispatcher_pid_ = start_service(
-        get_build_dir() + "/reference-services/dispatcher/ifex-dispatcher-service",
+        get_build_dir() + "/reference-services/dispatcher/vehicle/service/ifex-dispatcher-service",
         "dispatcher",
         TEST_DISPATCHER_PORT
     );
 
     scheduler_pid_ = start_service(
-        get_build_dir() + "/reference-services/scheduler/ifex-scheduler-service",
+        get_build_dir() + "/reference-services/scheduler/vehicle/service/ifex-scheduler-service",
         "scheduler",
         TEST_SCHEDULER_PORT
     );
@@ -178,7 +178,6 @@ pid_t IntegrationTestFixture::start_service(const std::string& executable, const
         std::string listen_addr = "0.0.0.0:" + port_str;
 
         // Set environment variables
-        setenv("IFEX_SCHEMA_DIR", get_schema_dir().c_str(), 1);
         setenv("GLOG_logtostderr", "1", 1);
 
         // Redirect output to log files
@@ -353,7 +352,7 @@ bool IntegrationTestFixture::RestartScheduler() {
 
     // Start scheduler again
     scheduler_pid_ = start_service(
-        get_build_dir() + "/reference-services/scheduler/ifex-scheduler-service",
+        get_build_dir() + "/reference-services/scheduler/vehicle/service/ifex-scheduler-service",
         "scheduler",
         TEST_SCHEDULER_PORT
     );

@@ -13,15 +13,15 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n!cloud-scheduler-sync-bridge.proto\x12 swdv.cloud_scheduler_sync_bridge\"\x8f\x02\n\x0e\x62ridge_stats_t\x12\x1d\n\x15v2c_messages_received\x18\x01 \x01(\x04\x12\x1e\n\x16v2c_messages_processed\x18\x02 \x01(\x04\x12\x19\n\x11\x63\x32v_messages_sent\x18\x03 \x01(\x04\x12\x15\n\rjobs_upserted\x18\x04 \x01(\x04\x12\x1b\n\x13\x65xecutions_recorded\x18\x05 \x01(\x04\x12\x19\n\x11quiescent_skipped\x18\x06 \x01(\x04\x12\x1a\n\x12\x63onflicts_resolved\x18\x07 \x01(\x04\x12\x0e\n\x06\x65rrors\x18\x08 \x01(\x04\x12\x15\n\rvehicles_seen\x18\t \x01(\r\x12\x11\n\tuptime_ms\x18\n \x01(\x04\"\xc8\x01\n\x13vehicle_sync_info_t\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\x12\x1d\n\x15last_v2c_timestamp_ms\x18\x02 \x01(\x04\x12\x1d\n\x15last_c2v_timestamp_ms\x18\x03 \x01(\x04\x12\x16\n\x0e\x63loud_checksum\x18\x04 \x01(\x04\x12\x1e\n\x16last_seen_v2c_checksum\x18\x05 \x01(\x04\x12\x14\n\x0cis_quiescent\x18\x06 \x01(\x08\x12\x11\n\tjob_count\x18\x07 \x01(\r\"\xc3\x01\n\x0f\x62ridge_health_t\x12\x41\n\x06status\x18\x01 \x01(\x0e\x32\x31.swdv.cloud_scheduler_sync_bridge.bridge_status_t\x12\x1b\n\x13scheduler_connected\x18\x02 \x01(\x08\x12\x1b\n\x13transport_connected\x18\x03 \x01(\x08\x12\x12\n\nlast_error\x18\x04 \x01(\t\x12\x1f\n\x17last_error_timestamp_ms\x18\x05 \x01(\x04\"\x13\n\x11get_stats_request\"U\n\x12get_stats_response\x12?\n\x05stats\x18\x01 \x01(\x0b\x32\x30.swdv.cloud_scheduler_sync_bridge.bridge_stats_t\"\x14\n\x12get_health_request\"X\n\x13get_health_response\x12\x41\n\x06health\x18\x01 \x01(\x0b\x32\x31.swdv.cloud_scheduler_sync_bridge.bridge_health_t\"3\n\x1dget_vehicle_sync_info_request\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\"t\n\x1eget_vehicle_sync_info_response\x12\x43\n\x04info\x18\x01 \x01(\x0b\x32\x35.swdv.cloud_scheduler_sync_bridge.vehicle_sync_info_t\x12\r\n\x05\x66ound\x18\x02 \x01(\x08\"(\n\x12\x66orce_sync_request\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\"=\n\x13\x66orce_sync_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\"\x11\n\x0fhealthy_request\"&\n\x10healthy_response\x12\x12\n\nis_healthy\x18\x01 \x01(\x08*u\n\x0f\x62ridge_status_t\x12\x13\n\x0fSTATUS_STARTING\x10\x00\x12\x12\n\x0eSTATUS_RUNNING\x10\x01\x12\x13\n\x0fSTATUS_STOPPING\x10\x02\x12\x12\n\x0eSTATUS_STOPPED\x10\x03\x12\x10\n\x0cSTATUS_ERROR\x10\x04\x32\x8b\x01\n\x11get_stats_service\x12v\n\tget_stats\x12\x33.swdv.cloud_scheduler_sync_bridge.get_stats_request\x1a\x34.swdv.cloud_scheduler_sync_bridge.get_stats_response2\x8f\x01\n\x12get_health_service\x12y\n\nget_health\x12\x34.swdv.cloud_scheduler_sync_bridge.get_health_request\x1a\x35.swdv.cloud_scheduler_sync_bridge.get_health_response2\xbc\x01\n\x1dget_vehicle_sync_info_service\x12\x9a\x01\n\x15get_vehicle_sync_info\x12?.swdv.cloud_scheduler_sync_bridge.get_vehicle_sync_info_request\x1a@.swdv.cloud_scheduler_sync_bridge.get_vehicle_sync_info_response2\x8f\x01\n\x12\x66orce_sync_service\x12y\n\nforce_sync\x12\x34.swdv.cloud_scheduler_sync_bridge.force_sync_request\x1a\x35.swdv.cloud_scheduler_sync_bridge.force_sync_response2\x83\x01\n\x0fhealthy_service\x12p\n\x07healthy\x12\x31.swdv.cloud_scheduler_sync_bridge.healthy_request\x1a\x32.swdv.cloud_scheduler_sync_bridge.healthy_responseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n!cloud-scheduler-sync-bridge.proto\x12 swdv.cloud_scheduler_sync_bridge\"\x8f\x02\n\x0e\x62ridge_stats_t\x12\x1d\n\x15v2c_messages_received\x18\x01 \x01(\x04\x12\x1e\n\x16v2c_messages_processed\x18\x02 \x01(\x04\x12\x19\n\x11\x63\x32v_messages_sent\x18\x03 \x01(\x04\x12\x15\n\rjobs_upserted\x18\x04 \x01(\x04\x12\x1b\n\x13\x65xecutions_recorded\x18\x05 \x01(\x04\x12\x19\n\x11quiescent_skipped\x18\x06 \x01(\x04\x12\x1a\n\x12\x63onflicts_resolved\x18\x07 \x01(\x04\x12\x0e\n\x06\x65rrors\x18\x08 \x01(\x04\x12\x15\n\rvehicles_seen\x18\t \x01(\r\x12\x11\n\tuptime_ms\x18\n \x01(\x04\"\xc8\x01\n\x13vehicle_sync_info_t\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\x12\x1d\n\x15last_v2c_timestamp_ms\x18\x02 \x01(\x04\x12\x1d\n\x15last_c2v_timestamp_ms\x18\x03 \x01(\x04\x12\x16\n\x0e\x63loud_checksum\x18\x04 \x01(\x04\x12\x1e\n\x16last_seen_v2c_checksum\x18\x05 \x01(\x04\x12\x14\n\x0cis_quiescent\x18\x06 \x01(\x08\x12\x11\n\tjob_count\x18\x07 \x01(\r\"\xc3\x01\n\x0f\x62ridge_health_t\x12\x41\n\x06status\x18\x01 \x01(\x0e\x32\x31.swdv.cloud_scheduler_sync_bridge.bridge_status_t\x12\x1b\n\x13scheduler_connected\x18\x02 \x01(\x08\x12\x1b\n\x13transport_connected\x18\x03 \x01(\x08\x12\x12\n\nlast_error\x18\x04 \x01(\t\x12\x1f\n\x17last_error_timestamp_ms\x18\x05 \x01(\x04\"\x13\n\x11get_stats_request\"U\n\x12get_stats_response\x12?\n\x05stats\x18\x01 \x01(\x0b\x32\x30.swdv.cloud_scheduler_sync_bridge.bridge_stats_t\"\x14\n\x12get_health_request\"X\n\x13get_health_response\x12\x41\n\x06health\x18\x01 \x01(\x0b\x32\x31.swdv.cloud_scheduler_sync_bridge.bridge_health_t\"3\n\x1dget_vehicle_sync_info_request\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\"t\n\x1eget_vehicle_sync_info_response\x12\x43\n\x04info\x18\x01 \x01(\x0b\x32\x35.swdv.cloud_scheduler_sync_bridge.vehicle_sync_info_t\x12\r\n\x05\x66ound\x18\x02 \x01(\x08\"(\n\x12\x66orce_sync_request\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\"=\n\x13\x66orce_sync_response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\"9\n\x13trigger_job_request\x12\x12\n\nvehicle_id\x18\x01 \x01(\t\x12\x0e\n\x06job_id\x18\x02 \x01(\t\";\n\x14trigger_job_response\x12\x0c\n\x04sent\x18\x01 \x01(\x08\x12\x15\n\rerror_message\x18\x02 \x01(\t\"\x11\n\x0fhealthy_request\"&\n\x10healthy_response\x12\x12\n\nis_healthy\x18\x01 \x01(\x08*u\n\x0f\x62ridge_status_t\x12\x13\n\x0fSTATUS_STARTING\x10\x00\x12\x12\n\x0eSTATUS_RUNNING\x10\x01\x12\x13\n\x0fSTATUS_STOPPING\x10\x02\x12\x12\n\x0eSTATUS_STOPPED\x10\x03\x12\x10\n\x0cSTATUS_ERROR\x10\x04\x32\x8b\x01\n\x11get_stats_service\x12v\n\tget_stats\x12\x33.swdv.cloud_scheduler_sync_bridge.get_stats_request\x1a\x34.swdv.cloud_scheduler_sync_bridge.get_stats_response2\x8f\x01\n\x12get_health_service\x12y\n\nget_health\x12\x34.swdv.cloud_scheduler_sync_bridge.get_health_request\x1a\x35.swdv.cloud_scheduler_sync_bridge.get_health_response2\xbc\x01\n\x1dget_vehicle_sync_info_service\x12\x9a\x01\n\x15get_vehicle_sync_info\x12?.swdv.cloud_scheduler_sync_bridge.get_vehicle_sync_info_request\x1a@.swdv.cloud_scheduler_sync_bridge.get_vehicle_sync_info_response2\x8f\x01\n\x12\x66orce_sync_service\x12y\n\nforce_sync\x12\x34.swdv.cloud_scheduler_sync_bridge.force_sync_request\x1a\x35.swdv.cloud_scheduler_sync_bridge.force_sync_response2\x93\x01\n\x13trigger_job_service\x12|\n\x0btrigger_job\x12\x35.swdv.cloud_scheduler_sync_bridge.trigger_job_request\x1a\x36.swdv.cloud_scheduler_sync_bridge.trigger_job_response2\x83\x01\n\x0fhealthy_service\x12p\n\x07healthy\x12\x31.swdv.cloud_scheduler_sync_bridge.healthy_request\x1a\x32.swdv.cloud_scheduler_sync_bridge.healthy_responseb\x06proto3')
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'cloud_scheduler_sync_bridge_pb2', globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
-  _BRIDGE_STATUS_T._serialized_start=1301
-  _BRIDGE_STATUS_T._serialized_end=1418
+  _BRIDGE_STATUS_T._serialized_start=1421
+  _BRIDGE_STATUS_T._serialized_end=1538
   _BRIDGE_STATS_T._serialized_start=72
   _BRIDGE_STATS_T._serialized_end=343
   _VEHICLE_SYNC_INFO_T._serialized_start=346
@@ -44,18 +44,24 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _FORCE_SYNC_REQUEST._serialized_end=1177
   _FORCE_SYNC_RESPONSE._serialized_start=1179
   _FORCE_SYNC_RESPONSE._serialized_end=1240
-  _HEALTHY_REQUEST._serialized_start=1242
-  _HEALTHY_REQUEST._serialized_end=1259
-  _HEALTHY_RESPONSE._serialized_start=1261
-  _HEALTHY_RESPONSE._serialized_end=1299
-  _GET_STATS_SERVICE._serialized_start=1421
-  _GET_STATS_SERVICE._serialized_end=1560
-  _GET_HEALTH_SERVICE._serialized_start=1563
-  _GET_HEALTH_SERVICE._serialized_end=1706
-  _GET_VEHICLE_SYNC_INFO_SERVICE._serialized_start=1709
-  _GET_VEHICLE_SYNC_INFO_SERVICE._serialized_end=1897
-  _FORCE_SYNC_SERVICE._serialized_start=1900
-  _FORCE_SYNC_SERVICE._serialized_end=2043
-  _HEALTHY_SERVICE._serialized_start=2046
-  _HEALTHY_SERVICE._serialized_end=2177
+  _TRIGGER_JOB_REQUEST._serialized_start=1242
+  _TRIGGER_JOB_REQUEST._serialized_end=1299
+  _TRIGGER_JOB_RESPONSE._serialized_start=1301
+  _TRIGGER_JOB_RESPONSE._serialized_end=1360
+  _HEALTHY_REQUEST._serialized_start=1362
+  _HEALTHY_REQUEST._serialized_end=1379
+  _HEALTHY_RESPONSE._serialized_start=1381
+  _HEALTHY_RESPONSE._serialized_end=1419
+  _GET_STATS_SERVICE._serialized_start=1541
+  _GET_STATS_SERVICE._serialized_end=1680
+  _GET_HEALTH_SERVICE._serialized_start=1683
+  _GET_HEALTH_SERVICE._serialized_end=1826
+  _GET_VEHICLE_SYNC_INFO_SERVICE._serialized_start=1829
+  _GET_VEHICLE_SYNC_INFO_SERVICE._serialized_end=2017
+  _FORCE_SYNC_SERVICE._serialized_start=2020
+  _FORCE_SYNC_SERVICE._serialized_end=2163
+  _TRIGGER_JOB_SERVICE._serialized_start=2166
+  _TRIGGER_JOB_SERVICE._serialized_end=2313
+  _HEALTHY_SERVICE._serialized_start=2316
+  _HEALTHY_SERVICE._serialized_end=2447
 # @@protoc_insertion_point(module_scope)

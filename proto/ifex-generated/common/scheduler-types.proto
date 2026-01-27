@@ -83,6 +83,7 @@ message job_t {
   uint64 created_at_ms = 21;
   uint64 updated_at_ms = 22;
   string created_by = 23;
+  sync_state_t sync_state = 24;
 }
 
 // Immutable record of a job execution. Executions are append-only facts - they never conflict. Used by sync protocol for execution history.

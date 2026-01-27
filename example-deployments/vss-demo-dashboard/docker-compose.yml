@@ -1,0 +1,20 @@
+version: '3.8'
+
+# Minimal infrastructure for in-memory simulation
+# No Kafka, no PostgreSQL - just MQTT
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: ifex-mosquitto-v2
+    ports:
+      - "1884:1883"  # Use different port to avoid conflict with deploy/
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - ifex-v2
+
+networks:
+  ifex-v2:
+    name: ifex-simulation-v2
+    driver: bridge

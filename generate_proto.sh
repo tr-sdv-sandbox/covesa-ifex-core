@@ -44,7 +44,7 @@ if ! python3 -c "import yaml" 2>/dev/null; then
     exit 1
 fi
 
-FLATTEN_SCRIPT="${SCRIPT_DIR}/scripts/flatten_ifex.py"
+FLATTEN_SCRIPT="${SCRIPT_DIR}/tools/ifex/scripts/flatten_ifex.py"
 
 # Function to convert IFEX filename to C++ identifier
 to_cpp_identifier() {
@@ -100,29 +100,41 @@ HEADER_END
     echo "  ${base_name} -> ${header_file#$SCRIPT_DIR/}"
 }
 
-# Generate headers for vehicle specs
+# Generate headers for vehicle specs (from each service's vehicle/ subdirectory)
 echo "Generating vehicle schema headers..."
-for yaml_file in "${SCRIPT_DIR}/reference-specs/vehicle"/*.ifex.yml; do
-    if [ -f "$yaml_file" ]; then
-        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/vehicle"
+for service_dir in "${SCRIPT_DIR}/reference-specs"/*; do
+    if [ -d "$service_dir/vehicle" ]; then
+        for yaml_file in "$service_dir/vehicle"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/vehicle"
+            fi
+        done
     fi
 done
 echo ""
 
-# Generate headers for cloud specs
+# Generate headers for cloud specs (from each service's cloud/ subdirectory)
 echo "Generating cloud schema headers..."
-for yaml_file in "${SCRIPT_DIR}/reference-specs/cloud"/*.ifex.yml; do
-    if [ -f "$yaml_file" ]; then
-        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/cloud"
+for service_dir in "${SCRIPT_DIR}/reference-specs"/*; do
+    if [ -d "$service_dir/cloud" ]; then
+        for yaml_file in "$service_dir/cloud"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/cloud"
+            fi
+        done
     fi
 done
 echo ""
 
-# Generate headers for common specs
+# Generate headers for common specs (from each service's common/ subdirectory)
 echo "Generating common schema headers..."
-for yaml_file in "${SCRIPT_DIR}/reference-specs/common"/*.ifex.yml; do
-    if [ -f "$yaml_file" ]; then
-        generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/common"
+for service_dir in "${SCRIPT_DIR}/reference-specs"/*; do
+    if [ -d "$service_dir/common" ]; then
+        for yaml_file in "$service_dir/common"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                generate_ifex_header "$yaml_file" "${PROTO_BASE_DIR}/common"
+            fi
+        done
     fi
 done
 echo ""
@@ -158,9 +170,9 @@ echo "Step 2: Generating proto files from ORIGINAL IFEX..."
 echo "       (Uses imports for shared types - wire compatible)"
 echo ""
 echo "Output structure:"
-echo "  proto/ifex-generated/common/      <- reference-specs/common/"
-echo "  proto/ifex-generated/vehicle/     <- reference-specs/vehicle/"
-echo "  proto/ifex-generated/cloud/       <- reference-specs/cloud/"
+echo "  proto/ifex-generated/common/      <- reference-specs/*/common/"
+echo "  proto/ifex-generated/vehicle/     <- reference-specs/*/vehicle/"
+echo "  proto/ifex-generated/cloud/       <- reference-specs/*/cloud/"
 echo "  proto/ifex-generated/test-services/ <- test-services/"
 echo ""
 
@@ -172,7 +184,7 @@ if ! docker images | grep -q "ifex-tools"; then
 fi
 
 # Template directory (local override of ifex-tools built-in templates)
-TEMPLATE_DIR="${SCRIPT_DIR}/templates"
+TEMPLATE_DIR="${SCRIPT_DIR}/tools/ifex/templates"
 
 # Function to process IFEX file
 process_ifex_file() {
@@ -197,39 +209,67 @@ process_ifex_file() {
 
 # Process ORIGINAL IFEX files (not flattened) for proto generation
 # This preserves includes -> proto imports for shared types
-# Format: "source_dir:pattern:output_subdir"
-IFEX_SOURCES=(
-    "reference-specs/common:*.ifex.yml:common"
-    "reference-specs/vehicle:*.ifex.yml:vehicle"
-    "reference-specs/cloud:*.ifex.yml:cloud"
-)
+# Service-centric structure: reference-specs/{service}/{vehicle,cloud,common}/
 
-# Process IFEX files from source directories
-for source_entry in "${IFEX_SOURCES[@]}"; do
-    IFS=':' read -r source_dir pattern output_subdir <<< "$source_entry"
-    full_dir="${SCRIPT_DIR}/${source_dir}"
-    output_dir="${PROTO_BASE_DIR}/${output_subdir}"
+# Process each output category by scanning all service directories
+echo "Processing reference-specs/*/{vehicle,cloud,common}/ -> proto/ifex-generated/{vehicle,cloud,common}/"
 
-    if [ -d "$full_dir" ]; then
-        echo "Processing ${source_dir}/ -> proto/ifex-generated/${output_subdir}/"
-
-        # Find all matching files
-        find "$full_dir" -maxdepth 1 -name "$pattern" | sort | while read yaml_file; do
+# Process vehicle specs from all services
+echo "Processing vehicle specs..."
+output_dir="${PROTO_BASE_DIR}/vehicle"
+mkdir -p "$output_dir"
+for service_dir in "${SCRIPT_DIR}/reference-specs"/*; do
+    if [ -d "$service_dir/vehicle" ]; then
+        for yaml_file in "$service_dir/vehicle"/*.ifex.yml; do
             if [ -f "$yaml_file" ]; then
-                # Get relative path from script dir
                 relative_path="${yaml_file#$SCRIPT_DIR/}"
-
-                # Generate output name (remove extensions)
                 base_name=$(basename "$yaml_file")
                 base_name="${base_name%.ifex.yml}"
                 base_name="${base_name%.yml}"
-
                 process_ifex_file "$yaml_file" "$relative_path" "$output_dir" "$base_name"
             fi
         done
-        echo ""
     fi
 done
+echo ""
+
+# Process cloud specs from all services
+echo "Processing cloud specs..."
+output_dir="${PROTO_BASE_DIR}/cloud"
+mkdir -p "$output_dir"
+for service_dir in "${SCRIPT_DIR}/reference-specs"/*; do
+    if [ -d "$service_dir/cloud" ]; then
+        for yaml_file in "$service_dir/cloud"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                relative_path="${yaml_file#$SCRIPT_DIR/}"
+                base_name=$(basename "$yaml_file")
+                base_name="${base_name%.ifex.yml}"
+                base_name="${base_name%.yml}"
+                process_ifex_file "$yaml_file" "$relative_path" "$output_dir" "$base_name"
+            fi
+        done
+    fi
+done
+echo ""
+
+# Process common specs from all services
+echo "Processing common specs..."
+output_dir="${PROTO_BASE_DIR}/common"
+mkdir -p "$output_dir"
+for service_dir in "${SCRIPT_DIR}/reference-specs"/*; do
+    if [ -d "$service_dir/common" ]; then
+        for yaml_file in "$service_dir/common"/*.ifex.yml; do
+            if [ -f "$yaml_file" ]; then
+                relative_path="${yaml_file#$SCRIPT_DIR/}"
+                base_name=$(basename "$yaml_file")
+                base_name="${base_name%.ifex.yml}"
+                base_name="${base_name%.yml}"
+                process_ifex_file "$yaml_file" "$relative_path" "$output_dir" "$base_name"
+            fi
+        done
+    fi
+done
+echo ""
 
 # Process test services (they're in subdirectories)
 echo "Processing test-services/ -> proto/ifex-generated/test-services/"

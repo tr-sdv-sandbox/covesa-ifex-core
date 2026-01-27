@@ -137,32 +137,13 @@ if [ -d "${IFEX_TOOLS_DIR}" ]; then
     else
         echo "Building IFEX Docker image..."
         cd "${IFEX_TOOLS_DIR}"
-        ./build_ifex.sh
+        ./build.sh
         cd "${SCRIPT_DIR}"
         echo -e "${GREEN}✓ IFEX Docker image built${NC}"
     fi
 else
     echo -e "${YELLOW}⚠ IFEX tools not found at ${IFEX_TOOLS_DIR}${NC}"
     echo "  Proto generation will not work without ifex-tools Docker image."
-fi
-
-# Setup cpp-mcp for MCP server
-echo ""
-echo -e "${YELLOW}Setting up cpp-mcp library...${NC}"
-
-MCP_DIR="${SCRIPT_DIR}/third_party/cpp-mcp"
-if [ ! -d "${MCP_DIR}" ]; then
-    echo "Cloning cpp-mcp repository..."
-    mkdir -p "${SCRIPT_DIR}/third_party"
-    cd "${SCRIPT_DIR}/third_party"
-    git clone git@github.com:skarlsson/cpp-mcp.git || {
-        echo -e "${YELLOW}SSH clone failed, trying HTTPS...${NC}"
-        git clone https://github.com/skarlsson/cpp-mcp.git
-    }
-    cd "${SCRIPT_DIR}"
-    echo -e "${GREEN}✓ cpp-mcp cloned successfully${NC}"
-else
-    echo -e "${GREEN}✓ cpp-mcp already exists${NC}"
 fi
 
 # Create build directory
@@ -199,7 +180,7 @@ echo "     cmake -DGRPC_CPP_PLUGIN_EXECUTABLE=/usr/bin/grpc_cpp_plugin .."
 echo "     make -j\$(nproc)"
 echo ""
 echo "  3. Run services:"
-echo "     ./build/reference-services/discovery/ifex-discovery-service"
-echo "     ./build/reference-services/dispatcher/ifex-dispatcher-service --discovery localhost:50051"
-echo "     ./build/reference-services/scheduler/ifex-scheduler-service --discovery localhost:50051"
+echo "     ./build/reference-services/discovery/vehicle/service/ifex-discovery-service"
+echo "     ./build/reference-services/dispatcher/vehicle/service/ifex-dispatcher-service --discovery localhost:50051"
+echo "     ./build/reference-services/scheduler/vehicle/service/ifex-scheduler-service --discovery localhost:50051"
 echo ""

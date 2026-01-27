@@ -1,0 +1,9 @@
+# Generated proto files (copied by start-simulation.sh)
+protos/
+
+# Generated Python proto stubs (for local development)
+proto_gen/
+
+# Python cache
+__pycache__/
+*.pyc
