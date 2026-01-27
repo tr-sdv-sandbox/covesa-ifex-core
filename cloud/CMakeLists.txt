@@ -8,8 +8,8 @@
 message(STATUS "Building cloud reference services (test-only)")
 
 # Generate proto from cloud IFEX specs
-# Primary location: specs/cloud/ (source of truth)
-set(CLOUD_IFEX_DIR ${CMAKE_SOURCE_DIR}/specs/cloud)
+# Primary location: reference-specs/cloud/ (source of truth)
+set(CLOUD_IFEX_DIR ${CMAKE_SOURCE_DIR}/reference-specs/cloud)
 set(CLOUD_PROTO_DIR ${CMAKE_CURRENT_BINARY_DIR}/proto)
 
 file(MAKE_DIRECTORY ${CLOUD_PROTO_DIR})

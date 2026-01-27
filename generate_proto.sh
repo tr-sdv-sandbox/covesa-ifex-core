@@ -4,7 +4,7 @@
 # Uses the official IFEX Docker-based tool
 #
 # This script performs two separate steps:
-# 1. Flatten IFEX files (resolve includes) -> specs/generated/ (for runtime)
+# 1. Flatten IFEX files (resolve includes) -> reference-specs/generated/ (for runtime)
 # 2. Generate proto files from ORIGINAL IFEX -> proto/ifex-generated/ (for wire compatibility)
 #
 # Why separate?
@@ -19,7 +19,7 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROTO_BASE_DIR="${SCRIPT_DIR}/proto/ifex-generated"
-FLATTENED_BASE_DIR="${SCRIPT_DIR}/specs/generated"
+FLATTENED_BASE_DIR="${SCRIPT_DIR}/reference-specs/generated"
 
 echo "=============================================="
 echo "IFEX Processing: Flatten + Proto Generation"
@@ -33,9 +33,9 @@ echo "Step 1: Flattening IFEX files (resolving includes)..."
 echo "       (Self-contained IFEX for runtime - keeps type prefixes)"
 echo ""
 echo "Output structure:"
-echo "  specs/generated/vehicle/      <- specs/vehicle/ (flattened)"
-echo "  specs/generated/cloud/        <- specs/cloud/ (flattened)"
-echo "  specs/generated/test-services/ <- test-services/ (flattened)"
+echo "  reference-specs/generated/vehicle/      <- reference-specs/vehicle/ (flattened)"
+echo "  reference-specs/generated/cloud/        <- reference-specs/cloud/ (flattened)"
+echo "  reference-specs/generated/test-services/ <- test-services/ (flattened)"
 echo ""
 
 # Check if Python3 and PyYAML are available
@@ -65,7 +65,7 @@ flatten_directory() {
     local full_output="${FLATTENED_BASE_DIR}/${output_subdir}"
 
     if [ -d "$full_source" ]; then
-        echo "Flattening ${source_dir}/ -> specs/generated/${output_subdir}/"
+        echo "Flattening ${source_dir}/ -> reference-specs/generated/${output_subdir}/"
         find "$full_source" -maxdepth 1 -name "*.ifex.yml" | sort | while read yaml_file; do
             if [ -f "$yaml_file" ]; then
                 base_name=$(basename "$yaml_file")
@@ -82,12 +82,12 @@ flatten_directory() {
 }
 
 # Flatten all IFEX directories
-flatten_directory "specs/common" "common"
-flatten_directory "specs/vehicle" "vehicle"
-flatten_directory "specs/cloud" "cloud"
+flatten_directory "reference-specs/common" "common"
+flatten_directory "reference-specs/vehicle" "vehicle"
+flatten_directory "reference-specs/cloud" "cloud"
 
 # Flatten test services (they're in subdirectories)
-echo "Flattening test-services/ -> specs/generated/test-services/"
+echo "Flattening test-services/ -> reference-specs/generated/test-services/"
 for service_dir in "${SCRIPT_DIR}/test-services"/*; do
     if [ -d "$service_dir" ]; then
         for yaml_file in "$service_dir"/*.ifex.yml; do
@@ -128,9 +128,9 @@ echo "Step 2: Generating proto files from ORIGINAL IFEX..."
 echo "       (Uses imports for shared types - wire compatible)"
 echo ""
 echo "Output structure:"
-echo "  proto/ifex-generated/common/      <- specs/common/"
-echo "  proto/ifex-generated/vehicle/     <- specs/vehicle/"
-echo "  proto/ifex-generated/cloud/       <- specs/cloud/"
+echo "  proto/ifex-generated/common/      <- reference-specs/common/"
+echo "  proto/ifex-generated/vehicle/     <- reference-specs/vehicle/"
+echo "  proto/ifex-generated/cloud/       <- reference-specs/cloud/"
 echo "  proto/ifex-generated/test-services/ <- test-services/"
 echo ""
 
@@ -169,9 +169,9 @@ process_ifex_file() {
 # This preserves includes -> proto imports for shared types
 # Format: "source_dir:pattern:output_subdir"
 IFEX_SOURCES=(
-    "specs/common:*.ifex.yml:common"
-    "specs/vehicle:*.ifex.yml:vehicle"
-    "specs/cloud:*.ifex.yml:cloud"
+    "reference-specs/common:*.ifex.yml:common"
+    "reference-specs/vehicle:*.ifex.yml:vehicle"
+    "reference-specs/cloud:*.ifex.yml:cloud"
 )
 
 # Process IFEX files from source directories

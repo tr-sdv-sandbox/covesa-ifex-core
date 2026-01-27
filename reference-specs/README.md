@@ -5,7 +5,7 @@ This directory contains the authoritative specifications for IFEX services and p
 ## Directory Structure
 
 ```
-specs/
+reference-specs/
 ├── vehicle/              # Vehicle-side service APIs (IFEX)
 │   ├── scheduler-service.ifex.yml
 │   ├── discovery-service.ifex.yml
@@ -73,14 +73,14 @@ Define wire formats and state machines for internal communication. These are the
 The specs define **what** services do. Reference implementations in `reference-services/` and `cloud/` show **how** to implement them.
 
 ```
-specs/vehicle/scheduler-service.ifex.yml  →  reference-services/scheduler/
-specs/cloud/cloud-scheduler-service.ifex.yml  →  cloud/cloud-scheduler-service/
-specs/protocols/scheduler-sync-v2.md  →  Used by both sides
+reference-specs/vehicle/scheduler-service.ifex.yml  →  reference-services/scheduler/
+reference-specs/cloud/cloud-scheduler-service.ifex.yml  →  cloud/cloud-scheduler-service/
+reference-specs/protocols/scheduler-sync-v2.md  →  Used by both sides
 ```
 
 ## Legacy Locations (Deprecated)
 
-The following locations are deprecated. Use `specs/` instead:
-- `reference-services/ifex/*.yml` → `specs/vehicle/`
-- `cloud/ifex/*.yml` → `specs/cloud/`
-- `docs/*-protocol.md` → `specs/protocols/`
+The following locations are deprecated. Use `reference-specs/` instead:
+- `reference-services/ifex/*.yml` → `reference-specs/vehicle/`
+- `cloud/ifex/*.yml` → `reference-specs/cloud/`
+- `docs/*-protocol.md` → `reference-specs/protocols/`

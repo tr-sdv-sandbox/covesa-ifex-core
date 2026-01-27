@@ -367,7 +367,7 @@ namespaces:
 
 ```
 ifex-core/
-├── specs/cloud/
+├── reference-specs/cloud/
 │   ├── cloud-scheduler-service.ifex.yml      # Add internal methods for sync bridge
 │   └── cloud-scheduler-sync-bridge.ifex.yml  # Bridge monitoring/control API
 │

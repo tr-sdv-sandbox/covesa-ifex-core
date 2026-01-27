@@ -5,7 +5,7 @@ minor_version: 1
 description: Calendar-style scheduler for IFEX-defined services
 
 includes:
-  - file: specs/common/scheduler-types.ifex.yml
+  - file: reference-specs/common/scheduler-types.ifex.yml
     description: Common scheduler types aligned with sync protocol v2
 
 namespaces:

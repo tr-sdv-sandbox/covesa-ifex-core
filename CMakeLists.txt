@@ -39,9 +39,9 @@ endif()
 # Build protobuf generation first if we're building core or services
 if(BUILD_CORE OR BUILD_REFERENCE_SERVICES OR BUILD_TEST_SERVICES)
     # Proto directories:
-    #   ifex-generated/common/        - Common type protos (from specs/common/)
-    #   ifex-generated/vehicle/       - Vehicle service protos (from specs/vehicle/)
-    #   ifex-generated/cloud/         - Cloud service protos (from specs/cloud/)
+    #   ifex-generated/common/        - Common type protos (from reference-specs/common/)
+    #   ifex-generated/vehicle/       - Vehicle service protos (from reference-specs/vehicle/)
+    #   ifex-generated/cloud/         - Cloud service protos (from reference-specs/cloud/)
     #   ifex-generated/test-services/ - Test service protos
     #   internal/                     - Hand-written internal protocols (sync, etc.)
     #   api/                          - Hand-written external API definitions
