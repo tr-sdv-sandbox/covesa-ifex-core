@@ -4,7 +4,10 @@ major_version: 1
 minor_version: 0
 description: >
   Cloud-side counterpart to backend_transport_service.
-  Each instance is bound to ONE content_id and ONE partition.
+  Acts as a router - single instance handles multiple content_ids and routes
+  messages to subscribers based on their content_id filter. Subscribers specify
+  which content_id they want when subscribing; MQTT subscriptions are created
+  on demand when first subscriber connects for a content_id.
   Partitioning enables horizontal scaling across vehicle fleet.
   Simple implementations use partition_id=0, total_partitions=1.
   Sequence numbers are per-vehicle monotonic; gaps indicate dropped messages.
@@ -116,6 +119,9 @@ namespaces:
           - name: vehicle_id
             datatype: string
             description: Target vehicle identifier
+          - name: content_id
+            datatype: uint32
+            description: Content ID for the message (e.g., 200=RPC, 201=discovery, 202=scheduler)
           - name: payload
             datatype: bytes
             description: Binary payload (opaque - caller handles encoding)
@@ -227,6 +233,34 @@ namespaces:
             datatype: uint32
             description: Total known vehicles in this partition
 
+      - name: vehicle_info_t
+        description: Information about a known vehicle
+        members:
+          - name: vehicle_id
+            datatype: string
+          - name: status
+            datatype: vehicle_status_t
+          - name: last_seen_ms
+            datatype: int64
+            description: Last message timestamp from this vehicle
+
+      - name: list_vehicles_response_t
+        description: List of known vehicles
+        members:
+          - name: vehicles
+            datatype: vehicle_info_t[]
+            description: Array of vehicle info
+
+      - name: message_subscription_filter_t
+        description: >
+          Filter for on_vehicle_message subscription. Specifies which content_id
+          to receive messages for. MQTT subscription to v2c/+/{content_id} is
+          created on demand when first subscriber connects for that content_id.
+        members:
+          - name: content_id
+            datatype: uint32
+            description: Content ID to subscribe to (e.g., 200=RPC, 201=discovery, 202=scheduler)
+
     methods:
       - name: send_to_vehicle
         description: >
@@ -278,6 +312,12 @@ namespaces:
           - name: stats
             datatype: transport_stats_t
 
+      - name: list_vehicles
+        description: List all known vehicles with their status
+        output:
+          - name: result
+            datatype: list_vehicles_response_t
+
       - name: healthy
         description: Check if transport is ready
         output:
@@ -287,10 +327,15 @@ namespaces:
     events:
       - name: on_vehicle_message
         description: >
-          Message received from a vehicle in this partition.
+          Message received from a vehicle. Subscriber specifies content_id when
+          subscribing; all messages on this stream are for that content_id (implicit).
+          MQTT subscription to v2c/+/{content_id} is created on demand.
           Only delivers messages for vehicles assigned to this partition.
           Sequence numbers are per-vehicle; gaps indicate dropped messages.
         input:
+          - name: filter_content_id
+            datatype: uint32
+            description: Content ID to subscribe to (e.g., 200=RPC, 201=discovery, 202=scheduler)
           - name: message
             datatype: vehicle_message_t
 

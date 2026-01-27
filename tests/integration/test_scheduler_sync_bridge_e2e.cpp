@@ -137,7 +137,6 @@ protected:
         cloud::CloudBackendTransportServer::Config transport_config;
         transport_config.mqtt_host = GetMqttHost();
         transport_config.mqtt_port = GetMqttPort();
-        transport_config.content_id = SYNC_CONTENT_ID;
         transport_config.partition_id = 0;
         transport_config.total_partitions = 1;
 
@@ -158,11 +157,8 @@ protected:
         }
         LOG(INFO) << "Cloud transport on port " << cloud_transport_port_;
 
-        // Cloud scheduler
+        // Cloud scheduler (pure storage - sync bridge handles backend communication)
         cloud::CloudSchedulerServiceConfig sched_config;
-        sched_config.backend_transport_address = "localhost:" + std::to_string(cloud_transport_port_);
-        sched_config.scheduler_content_id = SYNC_CONTENT_ID;
-
         cloud_scheduler_ = std::make_unique<cloud::CloudSchedulerService>(sched_config);
 
         {
@@ -190,14 +186,13 @@ protected:
             // Register all scheduler service interfaces
             using namespace swdv::ifex_scheduler;
             builder.RegisterService(static_cast<create_job_service::Service*>(vehicle_scheduler_.get()));
-            builder.RegisterService(static_cast<get_jobs_service::Service*>(vehicle_scheduler_.get()));
+            builder.RegisterService(static_cast<list_jobs_service::Service*>(vehicle_scheduler_.get()));
             builder.RegisterService(static_cast<get_job_service::Service*>(vehicle_scheduler_.get()));
             builder.RegisterService(static_cast<update_job_service::Service*>(vehicle_scheduler_.get()));
             builder.RegisterService(static_cast<delete_job_service::Service*>(vehicle_scheduler_.get()));
             builder.RegisterService(static_cast<pause_job_service::Service*>(vehicle_scheduler_.get()));
             builder.RegisterService(static_cast<resume_job_service::Service*>(vehicle_scheduler_.get()));
             builder.RegisterService(static_cast<trigger_job_service::Service*>(vehicle_scheduler_.get()));
-            builder.RegisterService(static_cast<get_calendar_view_service::Service*>(vehicle_scheduler_.get()));
             vehicle_scheduler_grpc_ = builder.BuildAndStart();
         }
         LOG(INFO) << "Vehicle scheduler on port " << vehicle_scheduler_port_;
@@ -297,7 +292,7 @@ protected:
     }
 
     void StopCloudServices() {
-        if (cloud_scheduler_) cloud_scheduler_->Stop();
+        // CloudSchedulerService has no lifecycle - just shutdown gRPC and reset
         if (cloud_scheduler_grpc_) {
             cloud_scheduler_grpc_->Shutdown();
             cloud_scheduler_grpc_.reset();
@@ -316,8 +311,9 @@ protected:
     // Job Conversion and Comparison using Library Functions
     // =========================================================================
 
-    /// Convert cloud proto job to library Job for hash comparison
-    static sched::Job CloudJobToLibraryJob(const swdv::cloud_scheduler_service::job_info_t& proto) {
+    /// Convert proto job to library Job for hash comparison
+    /// Both cloud and vehicle now use the common scheduler_types::job_t
+    static sched::Job ProtoJobToLibraryJob(const swdv::scheduler_types::job_t& proto) {
         sched::Job job;
         job.job_id = proto.job_id();
         job.title = proto.title();
@@ -336,29 +332,6 @@ protected:
         // Sync state fields for checksum (per spec section 5.5)
         job.version.cloud_seq = proto.cloud_seq();
         job.version.vehicle_seq = proto.vehicle_seq();
-        job.authority = static_cast<sched::JobAuthority>(proto.authority());
-        return job;
-    }
-
-    /// Convert vehicle proto job to library Job for hash comparison
-    static sched::Job VehicleJobToLibraryJob(const swdv::ifex_scheduler::job_t& proto) {
-        sched::Job job;
-        job.job_id = proto.id();
-        job.title = proto.title();
-        job.service = proto.service();
-        job.method = proto.method();
-        job.parameters_json = proto.parameters();
-        job.scheduled_time_ms = proto.scheduled_time_ms();
-        job.recurrence_rule = proto.recurrence_rule();
-        job.end_time_ms = proto.end_time_ms();
-        job.paused = proto.paused();
-        job.deleted = proto.deleted();
-        // wake_policy, sleep_policy, wake_lead_time_s
-        job.wake_policy = static_cast<sched::WakePolicy>(proto.wake_policy());
-        job.sleep_policy = static_cast<sched::SleepPolicy>(proto.sleep_policy());
-        job.wake_lead_time_s = proto.wake_lead_time_s();
-        // Sync state fields for checksum (per spec section 5.5)
-        job.version = sched::VersionVector(proto.cloud_seq(), proto.vehicle_seq());
         job.authority = static_cast<sched::JobAuthority>(proto.authority());
         return job;
     }
@@ -426,7 +399,7 @@ protected:
         job->set_title(title);
         job->set_service("echo_service");
         job->set_method("echo");
-        job->set_parameters(R"({"message": "test"})");
+        job->set_parameters_json(R"({"message": "test"})");
         job->set_scheduled_time_ms(scheduled_time_ms);
 
         swdv::ifex_scheduler::create_job_response response;
@@ -541,7 +514,7 @@ protected:
         }
 
         for (const auto& job : response.jobs()) {
-            result.push_back(CloudJobToLibraryJob(job));
+            result.push_back(ProtoJobToLibraryJob(job));
         }
 
         // Sort by job_id for deterministic checksum
@@ -552,28 +525,29 @@ protected:
     }
 
     /// Get all jobs from vehicle scheduler as library Jobs (sorted by job_id)
-    /// Empty filter = return all jobs including tombstones (exclude_deleted defaults to false)
+    /// Sets include_deleted=true to get all jobs including tombstones
     std::vector<sched::Job> GetAllVehicleJobs() {
         std::vector<sched::Job> result;
 
         auto channel = grpc::CreateChannel(
             "localhost:" + std::to_string(vehicle_scheduler_port_),
             grpc::InsecureChannelCredentials());
-        auto stub = swdv::ifex_scheduler::get_jobs_service::NewStub(channel);
+        auto stub = swdv::ifex_scheduler::list_jobs_service::NewStub(channel);
 
         grpc::ClientContext context;
-        swdv::ifex_scheduler::get_jobs_request request;
-        // Empty filter = all jobs (including tombstones, completed, paused)
-        swdv::ifex_scheduler::get_jobs_response response;
+        swdv::ifex_scheduler::list_jobs_request request;
+        // Include tombstones for sync testing
+        request.mutable_filter()->set_include_deleted(true);
+        swdv::ifex_scheduler::list_jobs_response response;
 
-        auto status = stub->get_jobs(&context, request, &response);
+        auto status = stub->list_jobs(&context, request, &response);
         if (!status.ok() || !response.success()) {
             LOG(ERROR) << "Failed to get vehicle jobs: " << status.error_message();
             return result;
         }
 
         for (const auto& proto_job : response.jobs()) {
-            result.push_back(VehicleJobToLibraryJob(proto_job));
+            result.push_back(ProtoJobToLibraryJob(proto_job));
         }
 
         // Sort by job_id for deterministic checksum

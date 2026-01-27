@@ -209,8 +209,8 @@ protected:
     }
 
     // Client factories
-    CloudBackendTransportClient createCloudClient() {
-        return CloudBackendTransportClient("localhost:" + std::to_string(cloud_grpc_port_));
+    CloudBackendTransportClient createCloudClient(uint32_t content_id = TEST_CONTENT_ID) {
+        return CloudBackendTransportClient("localhost:" + std::to_string(cloud_grpc_port_), content_id);
     }
 
     ifex::client::BackendTransportClient createVehicleClient(uint32_t content_id = TEST_CONTENT_ID) {
@@ -227,7 +227,6 @@ private:
         CloudBackendTransportServer::Config config;
         config.mqtt_host = mqtt_host;
         config.mqtt_port = mqtt_port;
-        config.content_id = TEST_CONTENT_ID;
         config.partition_id = 0;
         config.total_partitions = 1;
 
@@ -801,7 +800,6 @@ protected:
         CloudBackendTransportServer::Config config;
         config.mqtt_host = mqtt_host;
         config.mqtt_port = mqtt_port;
-        config.content_id = TEST_CONTENT_ID;
         config.partition_id = 0;
         config.total_partitions = 1;
 
@@ -833,8 +831,8 @@ protected:
         MqttTestFixture::TearDown();
     }
 
-    CloudBackendTransportClient createCloudClient() {
-        return CloudBackendTransportClient("localhost:" + std::to_string(cloud_grpc_port_));
+    CloudBackendTransportClient createCloudClient(uint32_t content_id = TEST_CONTENT_ID) {
+        return CloudBackendTransportClient("localhost:" + std::to_string(cloud_grpc_port_), content_id);
     }
 
     struct VehicleInstance {

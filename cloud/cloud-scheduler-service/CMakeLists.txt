@@ -79,12 +79,14 @@ if(BUILD_INTEGRATION_TESTS)
             ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/client/include
             ${CMAKE_SOURCE_DIR}/reference-services/scheduler-sync-bridge/include
             ${CMAKE_SOURCE_DIR}/cloud/cloud-backend-transport/include
+            ${CMAKE_SOURCE_DIR}/cloud/cloud-scheduler-sync-bridge/include
             ${MOSQUITTO_INCLUDE}
     )
 
     target_link_libraries(ifex-cloud-scheduler-integration-test
         PRIVATE
             ifex-cloud-scheduler-service
+            ifex-cloud-scheduler-sync-bridge-lib
             ifex-cloud-backend-transport-server
             ifex-cloud-backend-transport-client
             ifex-backend-transport-server

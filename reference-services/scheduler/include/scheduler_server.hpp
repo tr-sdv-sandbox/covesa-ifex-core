@@ -74,7 +74,7 @@ struct Job {
     std::optional<std::chrono::system_clock::time_point> deleted_at;
 
     // Convert to protobuf message
-    void ToProto(swdv::ifex_scheduler::job_t* proto) const;
+    void ToProto(swdv::scheduler_types::job_t* proto) const;
 
     // Convert to sync v2 JobRecord
     void ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const;
@@ -98,14 +98,16 @@ struct Job {
 };
 
 class SchedulerServer final : public swdv::ifex_scheduler::create_job_service::Service,
-                              public swdv::ifex_scheduler::get_jobs_service::Service,
+                              public swdv::ifex_scheduler::list_jobs_service::Service,
+                              public swdv::ifex_scheduler::list_jobs_hash_service::Service,
                               public swdv::ifex_scheduler::get_job_service::Service,
                               public swdv::ifex_scheduler::update_job_service::Service,
                               public swdv::ifex_scheduler::delete_job_service::Service,
                               public swdv::ifex_scheduler::pause_job_service::Service,
                               public swdv::ifex_scheduler::resume_job_service::Service,
                               public swdv::ifex_scheduler::trigger_job_service::Service,
-                              public swdv::ifex_scheduler::get_calendar_view_service::Service {
+                              public swdv::ifex_scheduler::list_executions_service::Service,
+                              public swdv::ifex_scheduler::list_executions_hash_service::Service {
 public:
     struct Config {
         std::string discovery_endpoint;
@@ -121,9 +123,13 @@ public:
                            const swdv::ifex_scheduler::create_job_request* request,
                            swdv::ifex_scheduler::create_job_response* response) override;
 
-    grpc::Status get_jobs(grpc::ServerContext* context,
-                         const swdv::ifex_scheduler::get_jobs_request* request,
-                         swdv::ifex_scheduler::get_jobs_response* response) override;
+    grpc::Status list_jobs(grpc::ServerContext* context,
+                          const swdv::ifex_scheduler::list_jobs_request* request,
+                          swdv::ifex_scheduler::list_jobs_response* response) override;
+
+    grpc::Status list_jobs_hash(grpc::ServerContext* context,
+                               const swdv::ifex_scheduler::list_jobs_hash_request* request,
+                               swdv::ifex_scheduler::list_jobs_hash_response* response) override;
 
     grpc::Status get_job(grpc::ServerContext* context,
                         const swdv::ifex_scheduler::get_job_request* request,
@@ -149,9 +155,14 @@ public:
                             const swdv::ifex_scheduler::trigger_job_request* request,
                             swdv::ifex_scheduler::trigger_job_response* response) override;
 
-    grpc::Status get_calendar_view(grpc::ServerContext* context,
-                                  const swdv::ifex_scheduler::get_calendar_view_request* request,
-                                  swdv::ifex_scheduler::get_calendar_view_response* response) override;
+    // Execution history methods
+    grpc::Status list_executions(grpc::ServerContext* context,
+                                const swdv::ifex_scheduler::list_executions_request* request,
+                                swdv::ifex_scheduler::list_executions_response* response) override;
+
+    grpc::Status list_executions_hash(grpc::ServerContext* context,
+                                     const swdv::ifex_scheduler::list_executions_hash_request* request,
+                                     swdv::ifex_scheduler::list_executions_hash_response* response) override;
 
     // Service lifecycle
     void StartExecutor();
@@ -168,6 +179,10 @@ private:
     // Job storage
     std::unordered_map<std::string, std::unique_ptr<Job>> jobs_;
     std::mutex jobs_mutex_;
+
+    // Execution history storage: job_id -> list of executions (newest first)
+    std::unordered_map<std::string, std::vector<swdv::ifex_scheduler::execution_t>> executions_;
+    mutable std::mutex executions_mutex_;
 
     // Job ID counter
     std::atomic<uint64_t> job_counter_{0};
@@ -215,10 +230,6 @@ private:
 
     // Apply job filter
     bool MatchesFilter(const Job& job, const swdv::ifex_scheduler::job_filter_t& filter);
-
-    // Get date range for calendar view
-    std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>
-    GetCalendarViewRange(swdv::ifex_scheduler::view_type_t view_type, uint64_t reference_time_ms);
 };
 
 } // namespace ifex::reference

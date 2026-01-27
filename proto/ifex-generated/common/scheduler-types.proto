@@ -57,29 +57,29 @@ message job_version_t {
   uint64 vehicle_seq = 2;
 }
 
-// Complete job record with version tracking. This is the canonical job structure used in sync protocol. Both vehicle and cloud store jobs in this format.
+// Complete job record with version tracking. This is the canonical job structure used by both vehicle and cloud. Aligned with scheduler-sync-protocol-v2.md specification.
 
-message job_record_t {
+message job_t {
   string job_id = 1;
   job_authority_t authority = 2;
   uint64 cloud_seq = 3;
   uint64 vehicle_seq = 4;
   bool deleted = 5;
-  uint64 deleted_at_ms = 6;
-  string title = 7;
-  string service = 8;
-  string method = 9;
-  string parameters_json = 10;
-  uint64 scheduled_time_ms = 11;
-  string recurrence_rule = 12;
-  uint64 end_time_ms = 13;
-  bool paused = 14;
-  wake_policy_t wake_policy = 15;
-  sleep_policy_t sleep_policy = 16;
-  uint32 wake_lead_time_s = 17;
-  job_status_t status = 18;
-  uint64 next_run_time_ms = 19;
-  uint64 last_executed_ms = 20;
+  string title = 6;
+  string service = 7;
+  string method = 8;
+  string parameters_json = 9;
+  uint64 scheduled_time_ms = 10;
+  string recurrence_rule = 11;
+  uint64 end_time_ms = 12;
+  bool paused = 13;
+  wake_policy_t wake_policy = 14;
+  sleep_policy_t sleep_policy = 15;
+  uint32 wake_lead_time_s = 16;
+  job_status_t status = 17;
+  uint64 next_run_time_ms = 18;
+  uint64 last_executed_ms = 19;
+  string vehicle_id = 20;
   uint64 created_at_ms = 21;
   uint64 updated_at_ms = 22;
   string created_by = 23;

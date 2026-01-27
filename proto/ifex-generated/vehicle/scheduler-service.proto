@@ -13,44 +13,7 @@ package swdv.ifex_scheduler;
 // Namespace: core
 // Core scheduling functionality
 
-// Calendar view types
-enum view_type_t {
-  DAY = 0;
-  WEEK = 1;
-  MONTH = 2;
-  RANGE = 3;
-}
-
-// Complete job record with version tracking. This is the canonical job structure used in sync protocol. Both vehicle and cloud store jobs in this format.
-
-message job_t {
-  string id = 1;
-  scheduler_types.job_authority_t authority = 2;
-  uint64 cloud_seq = 3;
-  uint64 vehicle_seq = 4;
-  bool deleted = 5;
-  uint64 deleted_at_ms = 6;
-  string title = 7;
-  string service = 8;
-  string method = 9;
-  string parameters = 10;
-  uint64 scheduled_time_ms = 11;
-  string recurrence_rule = 12;
-  uint64 end_time_ms = 13;
-  bool paused = 14;
-  scheduler_types.job_status_t status = 15;
-  uint64 created_at_ms = 16;
-  uint64 updated_at_ms = 17;
-  uint64 executed_at_ms = 18;
-  uint64 next_run_time_ms = 19;
-  string error_message = 20;
-  string result = 21;
-  scheduler_types.wake_policy_t wake_policy = 22;
-  scheduler_types.sleep_policy_t sleep_policy = 23;
-  uint32 wake_lead_time_s = 24;
-}
-
-// Filter criteria for retrieving jobs. Design principle: empty filter returns ALL jobs (no filters = see everything). Use exclude_* flags to hide specific job states.
+// Filter criteria for retrieving jobs. By default returns active (non-deleted) jobs. Set include_deleted=true to include tombstones (for sync protocol).
 
 message job_filter_t {
   uint64 start_time_ms = 1;
@@ -58,9 +21,7 @@ message job_filter_t {
   string service = 3;
   scheduler_types.job_status_t status = 4;
   bool has_status_filter = 5;
-  bool exclude_completed = 6;
-  bool exclude_deleted = 7;
-  bool exclude_paused = 8;
+  bool include_deleted = 6;
 }
 
 // Information needed to create a new job
@@ -69,7 +30,7 @@ message job_create_t {
   string title = 2;
   string service = 3;
   string method = 4;
-  string parameters = 5;
+  string parameters_json = 5;
   uint64 scheduled_time_ms = 6;
   string recurrence_rule = 7;
   uint64 end_time_ms = 8;
@@ -90,7 +51,7 @@ message job_update_t {
   uint64 scheduled_time_ms = 2;
   string recurrence_rule = 3;
   uint64 end_time_ms = 4;
-  string parameters = 5;
+  string parameters_json = 5;
   bool paused = 6;
   scheduler_types.wake_policy_t wake_policy = 7;
   scheduler_types.sleep_policy_t sleep_policy = 8;
@@ -100,6 +61,30 @@ message job_update_t {
   uint64 vehicle_seq = 12;
   bool deleted = 13;
   uint64 deleted_at_ms = 14;
+}
+
+// Immutable record of a job execution. Executions are append-only facts - they never conflict.
+
+message execution_t {
+  string execution_id = 1;
+  string job_id = 2;
+  uint64 executed_at_ms = 3;
+  uint32 duration_ms = 4;
+  scheduler_types.job_status_t status = 5;
+  string result = 6;
+  string error_message = 7;
+}
+
+// Filter criteria for retrieving executions. All filters are optional - empty filter returns all executions.
+
+message execution_filter_t {
+  string job_id = 1;
+  uint64 start_time_ms = 2;
+  uint64 end_time_ms = 3;
+  scheduler_types.job_status_t status = 4;
+  bool has_status_filter = 5;
+  int32 limit = 6;
+  int32 offset = 7;
 }
 
 // Method: create_job
@@ -118,19 +103,35 @@ service create_job_service {
   rpc create_job(create_job_request) returns (create_job_response);
 }
 
-// Method: get_jobs
+// Method: list_jobs
 // Retrieve jobs based on filter criteria (empty filter = all jobs)
-message get_jobs_request {
+message list_jobs_request {
   job_filter_t filter = 1;
 }
 
-message get_jobs_response {
+message list_jobs_response {
   bool success = 1;
-  repeated job_t jobs = 2;
+  repeated scheduler_types.job_t jobs = 2;
 }
 
-service get_jobs_service {
-  rpc get_jobs(get_jobs_request) returns (get_jobs_response);
+service list_jobs_service {
+  rpc list_jobs(list_jobs_request) returns (list_jobs_response);
+}
+
+// Method: list_jobs_hash
+// Get a hash of the job state matching the filter criteria. Used for efficient change detection - poll this endpoint and only fetch full job list when hash changes. Uses same filter as list_jobs.
+
+message list_jobs_hash_request {
+  job_filter_t filter = 1;
+}
+
+message list_jobs_hash_response {
+  uint64 state_hash = 1;
+  int32 job_count = 2;
+}
+
+service list_jobs_hash_service {
+  rpc list_jobs_hash(list_jobs_hash_request) returns (list_jobs_hash_response);
 }
 
 // Method: get_job
@@ -141,7 +142,7 @@ message get_job_request {
 
 message get_job_response {
   bool success = 1;
-  job_t job = 2;
+  scheduler_types.job_t job = 2;
   string message = 3;
 }
 
@@ -218,7 +219,7 @@ message trigger_job_request {
 
 message trigger_job_response {
   bool success = 1;
-  job_t job = 2;
+  scheduler_types.job_t job = 2;
   string message = 3;
 }
 
@@ -226,23 +227,37 @@ service trigger_job_service {
   rpc trigger_job(trigger_job_request) returns (trigger_job_response);
 }
 
-// Method: get_calendar_view
-// Get jobs formatted for calendar display
-message get_calendar_view_request {
-  view_type_t view_type = 1;
-  uint64 reference_time_ms = 2;
-  string timezone = 3;
+// Method: list_executions
+// Retrieve execution history with optional filters. Returns immutable records of past job executions.
+
+message list_executions_request {
+  execution_filter_t filter = 1;
 }
 
-message get_calendar_view_response {
+message list_executions_response {
   bool success = 1;
-  uint64 start_time_ms = 2;
-  uint64 end_time_ms = 3;
-  repeated job_t jobs = 4;
+  repeated execution_t executions = 2;
+  int32 total_count = 3;
 }
 
-service get_calendar_view_service {
-  rpc get_calendar_view(get_calendar_view_request) returns (get_calendar_view_response);
+service list_executions_service {
+  rpc list_executions(list_executions_request) returns (list_executions_response);
+}
+
+// Method: list_executions_hash
+// Get a hash of the execution state matching the filter criteria. Used for efficient change detection - poll this endpoint and only fetch full execution list when hash changes.
+
+message list_executions_hash_request {
+  execution_filter_t filter = 1;
+}
+
+message list_executions_hash_response {
+  uint64 state_hash = 1;
+  int32 execution_count = 2;
+}
+
+service list_executions_hash_service {
+  rpc list_executions_hash(list_executions_hash_request) returns (list_executions_hash_response);
 }
 
 

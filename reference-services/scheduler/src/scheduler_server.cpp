@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <filesystem>
+#include <algorithm>
+#include "job_hash.hpp"
 
 namespace ifex::reference {
 
@@ -49,12 +51,65 @@ static std::chrono::system_clock::time_point MsToTimePoint(uint64_t ms) {
         std::chrono::milliseconds(ms));
 }
 
-void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
-    proto->set_id(id);
+// Helper to convert internal Job to library Job for hash computation
+static scheduler::Job ToLibraryJob(const Job& internal_job) {
+    scheduler::Job lib_job;
+    lib_job.job_id = internal_job.id;
+    lib_job.title = internal_job.title;
+    lib_job.service = internal_job.service_name;
+    lib_job.method = internal_job.method_name;
+    lib_job.parameters_json = internal_job.parameters.dump();
+    lib_job.scheduled_time_ms = TimePointToMs(internal_job.scheduled_time);
+    lib_job.recurrence_rule = internal_job.recurrence_rule;
+    if (internal_job.end_time.has_value()) {
+        lib_job.end_time_ms = TimePointToMs(internal_job.end_time.value());
+    }
+    lib_job.paused = internal_job.paused;
+    lib_job.wake_policy = (internal_job.wake_policy == swdv::scheduler_types::WAKE_REQUIRED)
+        ? scheduler::WakePolicy::WAKE_REQUIRED
+        : scheduler::WakePolicy::NO_WAKE;
+    lib_job.sleep_policy = (internal_job.sleep_policy == swdv::scheduler_types::SLEEP_INHIBIT)
+        ? scheduler::SleepPolicy::INHIBIT
+        : scheduler::SleepPolicy::NORMAL;
+    lib_job.wake_lead_time_s = internal_job.wake_lead_time_s;
+
+    // Status
+    switch (internal_job.status) {
+        case swdv::scheduler_types::JOB_STATUS_PENDING:
+            lib_job.status = scheduler::JobStatus::PENDING; break;
+        case swdv::scheduler_types::JOB_STATUS_RUNNING:
+            lib_job.status = scheduler::JobStatus::RUNNING; break;
+        case swdv::scheduler_types::JOB_STATUS_COMPLETED:
+            lib_job.status = scheduler::JobStatus::COMPLETED; break;
+        case swdv::scheduler_types::JOB_STATUS_FAILED:
+            lib_job.status = scheduler::JobStatus::FAILED; break;
+        case swdv::scheduler_types::JOB_STATUS_CANCELLED:
+            lib_job.status = scheduler::JobStatus::CANCELLED; break;
+    }
+
+    // Sync state
+    lib_job.version.cloud_seq = internal_job.version.cloud_seq;
+    lib_job.version.vehicle_seq = internal_job.version.vehicle_seq;
+    lib_job.authority = (internal_job.authority == swdv::scheduler_sync_v2::AUTHORITY_CLOUD)
+        ? scheduler::JobAuthority::CLOUD
+        : scheduler::JobAuthority::VEHICLE;
+    lib_job.deleted = internal_job.deleted;
+    if (internal_job.deleted_at.has_value()) {
+        lib_job.deleted_at_ms = TimePointToMs(internal_job.deleted_at.value());
+    }
+
+    lib_job.created_at_ms = TimePointToMs(internal_job.created_at);
+    lib_job.updated_at_ms = TimePointToMs(internal_job.updated_at);
+
+    return lib_job;
+}
+
+void Job::ToProto(swdv::scheduler_types::job_t* proto) const {
+    proto->set_job_id(id);
     proto->set_title(title);
     proto->set_service(service_name);
     proto->set_method(method_name);
-    proto->set_parameters(parameters.dump());
+    proto->set_parameters_json(parameters.dump());
     proto->set_scheduled_time_ms(TimePointToMs(scheduled_time));
 
     if (!recurrence_rule.empty()) {
@@ -71,19 +126,11 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     proto->set_updated_at_ms(TimePointToMs(updated_at));
 
     if (executed_at.has_value()) {
-        proto->set_executed_at_ms(TimePointToMs(executed_at.value()));
+        proto->set_last_executed_ms(TimePointToMs(executed_at.value()));
     }
 
     if (next_run_time.has_value()) {
         proto->set_next_run_time_ms(TimePointToMs(next_run_time.value()));
-    }
-
-    if (error_message.has_value()) {
-        proto->set_error_message(error_message.value());
-    }
-
-    if (result.has_value()) {
-        proto->set_result(result.value());
     }
 
     proto->set_wake_policy(wake_policy);
@@ -95,9 +142,6 @@ void Job::ToProto(swdv::ifex_scheduler::job_t* proto) const {
     proto->set_cloud_seq(version.cloud_seq);
     proto->set_vehicle_seq(version.vehicle_seq);
     proto->set_deleted(deleted);
-    if (deleted_at.has_value()) {
-        proto->set_deleted_at_ms(TimePointToMs(deleted_at.value()));
-    }
 
     VLOG(1) << "Job::ToProto: job=" << id
             << " scheduled_time_ms=" << TimePointToMs(scheduled_time)
@@ -114,9 +158,9 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
     job->method_name = proto.method();
 
     // Parse parameters JSON
-    if (!proto.parameters().empty()) {
+    if (!proto.parameters_json().empty()) {
         try {
-            job->parameters = json::parse(proto.parameters());
+            job->parameters = json::parse(proto.parameters_json());
         } catch (const json::exception& e) {
             LOG(ERROR) << "Failed to parse job parameters: " << e.what();
             job->parameters = json::object();
@@ -654,10 +698,10 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
     }
 }
 
-grpc::Status SchedulerServer::get_jobs(grpc::ServerContext* context,
-                                       const swdv::ifex_scheduler::get_jobs_request* request,
-                                       swdv::ifex_scheduler::get_jobs_response* response) {
-    VLOG(1) << "GET JOBS REQUEST";
+grpc::Status SchedulerServer::list_jobs(grpc::ServerContext* context,
+                                        const swdv::ifex_scheduler::list_jobs_request* request,
+                                        swdv::ifex_scheduler::list_jobs_response* response) {
+    VLOG(1) << "LIST JOBS REQUEST";
 
     try {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
@@ -685,6 +729,52 @@ grpc::Status SchedulerServer::get_jobs(grpc::ServerContext* context,
     } catch (const std::exception& e) {
         LOG(ERROR) << "Failed to get jobs: " << e.what();
         response->set_success(false);
+        return grpc::Status::OK;
+    }
+}
+
+grpc::Status SchedulerServer::list_jobs_hash(grpc::ServerContext* context,
+                                             const swdv::ifex_scheduler::list_jobs_hash_request* request,
+                                             swdv::ifex_scheduler::list_jobs_hash_response* response) {
+    VLOG(1) << "LIST JOBS HASH REQUEST";
+
+    try {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+        // Get filter (use default empty filter if not provided)
+        swdv::ifex_scheduler::job_filter_t filter;
+        if (request->has_filter()) {
+            filter = request->filter();
+        }
+
+        // Collect matching jobs and convert to library format
+        std::vector<scheduler::Job> matching_jobs;
+        for (const auto& [job_id, job] : jobs_) {
+            if (!MatchesFilter(*job, filter)) {
+                continue;
+            }
+            matching_jobs.push_back(ToLibraryJob(*job));
+        }
+
+        // Sort by job_id for deterministic hash (required by compute_state_checksum)
+        std::sort(matching_jobs.begin(), matching_jobs.end(),
+                  [](const scheduler::Job& a, const scheduler::Job& b) {
+                      return a.job_id < b.job_id;
+                  });
+
+        // Compute checksum using library function
+        uint64_t state_hash = scheduler::compute_state_checksum(matching_jobs);
+
+        response->set_state_hash(state_hash);
+        response->set_job_count(static_cast<int32_t>(matching_jobs.size()));
+
+        VLOG(1) << "  Returning hash=" << state_hash << " for " << matching_jobs.size() << " jobs";
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to get jobs hash: " << e.what();
+        response->set_state_hash(0);
+        response->set_job_count(0);
         return grpc::Status::OK;
     }
 }
@@ -758,8 +848,8 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
                 job->end_time = MsToTimePoint(updates.end_time_ms());
             }
 
-            if (!updates.parameters().empty()) {
-                job->parameters = json::parse(updates.parameters());
+            if (!updates.parameters_json().empty()) {
+                job->parameters = json::parse(updates.parameters_json());
             }
 
             // Always apply paused state from updates
@@ -1027,64 +1117,6 @@ grpc::Status SchedulerServer::trigger_job(grpc::ServerContext* context,
     }
 }
 
-grpc::Status SchedulerServer::get_calendar_view(grpc::ServerContext* context,
-                                                const swdv::ifex_scheduler::get_calendar_view_request* request,
-                                                swdv::ifex_scheduler::get_calendar_view_response* response) {
-    LOG(INFO) << "GET CALENDAR VIEW REQUEST:";
-    LOG(INFO) << "  View type: " << request->view_type();
-    LOG(INFO) << "  Reference time (ms): " << request->reference_time_ms();
-
-    try {
-        // Calculate date range based on view type
-        auto [start_time, end_time] = GetCalendarViewRange(request->view_type(), request->reference_time_ms());
-
-        response->set_start_time_ms(TimePointToMs(start_time));
-        response->set_end_time_ms(TimePointToMs(end_time));
-
-        std::lock_guard<std::mutex> lock(jobs_mutex_);
-
-        // Find all jobs in the date range
-        for (const auto& [job_id, job] : jobs_) {
-            // Check if job falls within date range
-            bool in_range = false;
-
-            // Check scheduled time
-            if (job->scheduled_time >= start_time && job->scheduled_time < end_time) {
-                in_range = true;
-            }
-
-            // Check recurring jobs
-            if (!in_range && !job->recurrence_rule.empty()) {
-                // Calculate if any occurrence falls within range
-                auto check_time = start_time;
-                while (check_time < end_time) {
-                    auto next_run = CalculateNextRunTime(*job, check_time);
-                    if (next_run.has_value() && next_run.value() < end_time) {
-                        in_range = true;
-                        break;
-                    }
-                    check_time = next_run.value_or(end_time);
-                }
-            }
-
-            if (in_range) {
-                auto* proto_job = response->add_jobs();
-                job->ToProto(proto_job);
-            }
-        }
-
-        VLOG(1) << "  Returning " << response->jobs_size() << " jobs for calendar view";
-        response->set_success(true);
-
-        return grpc::Status::OK;
-
-    } catch (const std::exception& e) {
-        LOG(ERROR) << "Failed to get calendar view: " << e.what();
-        response->set_success(false);
-        return grpc::Status::OK;
-    }
-}
-
 void SchedulerServer::StartExecutor() {
     running_ = true;
     executor_thread_ = std::thread(&SchedulerServer::JobExecutor, this);
@@ -1194,22 +1226,40 @@ void SchedulerServer::JobExecutor() {
 void SchedulerServer::ExecuteJob(Job* job) {
     LOG(INFO) << "Executing job " << job->id << ": " << job->title;
 
+    auto start_time = std::chrono::system_clock::now();
+    std::string job_id = job->id;  // Capture for execution record
+
     {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         job->status = swdv::scheduler_types::JOB_STATUS_RUNNING;
-        job->updated_at = std::chrono::system_clock::now();
+        job->updated_at = start_time;
     }
 
     try {
         // Call the service method
         bool success = CallServiceMethod(job);
+        auto end_time = std::chrono::system_clock::now();
+        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time).count();
+
+        // Create execution record
+        swdv::ifex_scheduler::execution_t exec_record;
+        exec_record.set_execution_id(job_id + "_" + std::to_string(TimePointToMs(start_time)));
+        exec_record.set_job_id(job_id);
+        exec_record.set_executed_at_ms(TimePointToMs(start_time));
+        exec_record.set_duration_ms(static_cast<uint32_t>(duration_ms));
 
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         if (success) {
             job->status = swdv::scheduler_types::JOB_STATUS_COMPLETED;
-            job->executed_at = std::chrono::system_clock::now();
+            job->executed_at = end_time;
             job->updated_at = job->executed_at.value();
             LOG(INFO) << "Job " << job->id << " completed successfully";
+
+            exec_record.set_status(swdv::scheduler_types::JOB_STATUS_COMPLETED);
+            if (job->result.has_value()) {
+                exec_record.set_result(job->result.value());
+            }
 
             // Handle recurring jobs
             if (!job->recurrence_rule.empty()) {
@@ -1231,19 +1281,58 @@ void SchedulerServer::ExecuteJob(Job* job) {
 
                     LOG(INFO) << "Scheduled next occurrence";
                 }
+            } else {
+                // One-time job completed: create tombstone for sync protocol
+                // Per scheduler-sync-protocol-v2.md section 4.3:
+                // "Tombstones are JobRecord{deleted=true} with version vectors"
+                job->deleted = true;
+                job->deleted_at = std::chrono::system_clock::now();
+                job->version.vehicle_seq++;  // Increment vehicle version (vehicle-side change)
+                job->needs_sync = true;
+                LOG(INFO) << "One-time job " << job->id << " completed, created tombstone (v={"
+                          << job->version.cloud_seq << "," << job->version.vehicle_seq << "})";
             }
         } else {
             job->status = swdv::scheduler_types::JOB_STATUS_FAILED;
             job->updated_at = std::chrono::system_clock::now();
             LOG(ERROR) << "Job " << job->id << " failed";
+
+            exec_record.set_status(swdv::scheduler_types::JOB_STATUS_FAILED);
+            if (job->error_message.has_value()) {
+                exec_record.set_error_message(job->error_message.value());
+            }
+        }
+
+        // Store execution record (newest first)
+        {
+            std::lock_guard<std::mutex> exec_lock(executions_mutex_);
+            executions_[job_id].insert(executions_[job_id].begin(), std::move(exec_record));
         }
 
     } catch (const std::exception& e) {
+        auto end_time = std::chrono::system_clock::now();
+        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time - start_time).count();
+
         std::lock_guard<std::mutex> lock(jobs_mutex_);
         job->status = swdv::scheduler_types::JOB_STATUS_FAILED;
         job->error_message = e.what();
         job->updated_at = std::chrono::system_clock::now();
         LOG(ERROR) << "Job " << job->id << " failed with exception: " << e.what();
+
+        // Record failed execution
+        swdv::ifex_scheduler::execution_t exec_record;
+        exec_record.set_execution_id(job_id + "_" + std::to_string(TimePointToMs(start_time)));
+        exec_record.set_job_id(job_id);
+        exec_record.set_executed_at_ms(TimePointToMs(start_time));
+        exec_record.set_duration_ms(static_cast<uint32_t>(duration_ms));
+        exec_record.set_status(swdv::scheduler_types::JOB_STATUS_FAILED);
+        exec_record.set_error_message(e.what());
+
+        {
+            std::lock_guard<std::mutex> exec_lock(executions_mutex_);
+            executions_[job_id].insert(executions_[job_id].begin(), std::move(exec_record));
+        }
     }
 }
 
@@ -1349,73 +1438,152 @@ bool SchedulerServer::MatchesFilter(const Job& job,
         return false;
     }
 
-    // --- Exclude filters (all default false = show everything) ---
+    // --- Include filters (aligned with cloud API) ---
 
-    // exclude_deleted: hide soft-deleted jobs (tombstones)
-    if (filter.exclude_deleted() && job.deleted) {
-        return false;
-    }
-
-    // exclude_completed: hide jobs in terminal state (completed/failed/cancelled)
-    if (filter.exclude_completed()) {
-        if (job.status == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
-            job.status == swdv::scheduler_types::JOB_STATUS_FAILED ||
-            job.status == swdv::scheduler_types::JOB_STATUS_CANCELLED) {
-            return false;
-        }
-    }
-
-    // exclude_paused: hide paused jobs
-    if (filter.exclude_paused() && job.paused) {
+    // include_deleted: by default hide soft-deleted jobs (tombstones)
+    // Set include_deleted=true to include them (needed for sync protocol)
+    if (!filter.include_deleted() && job.deleted) {
         return false;
     }
 
     return true;
 }
 
-std::pair<std::chrono::system_clock::time_point, std::chrono::system_clock::time_point>
-SchedulerServer::GetCalendarViewRange(swdv::ifex_scheduler::view_type_t view_type,
-                                      uint64_t reference_time_ms) {
-    auto reference_time = MsToTimePoint(reference_time_ms);
+// =============================================================================
+// Execution History Methods
+// =============================================================================
 
-    // Get start of day
-    auto time_t = std::chrono::system_clock::to_time_t(reference_time);
-    std::tm tm = *std::localtime(&time_t);
-    tm.tm_hour = 0;
-    tm.tm_min = 0;
-    tm.tm_sec = 0;
-    auto start_of_day = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+grpc::Status SchedulerServer::list_executions(
+    grpc::ServerContext* context,
+    const swdv::ifex_scheduler::list_executions_request* request,
+    swdv::ifex_scheduler::list_executions_response* response) {
 
-    switch (view_type) {
-        case swdv::ifex_scheduler::DAY:
-            return {start_of_day, start_of_day + std::chrono::hours(24)};
+    LOG(INFO) << "LIST EXECUTIONS REQUEST";
 
-        case swdv::ifex_scheduler::WEEK: {
-            // Find start of week (Monday)
-            int days_since_monday = (tm.tm_wday == 0) ? 6 : tm.tm_wday - 1;
-            auto start_of_week = start_of_day - std::chrono::hours(24 * days_since_monday);
-            return {start_of_week, start_of_week + std::chrono::hours(24 * 7)};
-        }
+    try {
+        const auto& filter = request->filter();
+        std::lock_guard<std::mutex> lock(executions_mutex_);
 
-        case swdv::ifex_scheduler::MONTH: {
-            // Start of month
-            tm.tm_mday = 1;
-            auto start_of_month = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        // Collect matching executions
+        std::vector<const swdv::ifex_scheduler::execution_t*> matching;
 
-            // Start of next month
-            tm.tm_mon++;
-            if (tm.tm_mon > 11) {
-                tm.tm_mon = 0;
-                tm.tm_year++;
+        for (const auto& [job_id, exec_list] : executions_) {
+            // Filter by job_id if specified
+            if (!filter.job_id().empty() && job_id != filter.job_id()) {
+                continue;
             }
-            auto start_of_next_month = std::chrono::system_clock::from_time_t(std::mktime(&tm));
 
-            return {start_of_month, start_of_next_month};
+            for (const auto& exec : exec_list) {
+                // Filter by time range
+                if (filter.start_time_ms() > 0 && exec.executed_at_ms() < filter.start_time_ms()) {
+                    continue;
+                }
+                if (filter.end_time_ms() > 0 && exec.executed_at_ms() > filter.end_time_ms()) {
+                    continue;
+                }
+                // Filter by status
+                if (filter.has_status_filter() && exec.status() != filter.status()) {
+                    continue;
+                }
+                matching.push_back(&exec);
+            }
         }
 
-        default:
-            // Default to day view
-            return {start_of_day, start_of_day + std::chrono::hours(24)};
+        // Sort by execution time (newest first)
+        std::sort(matching.begin(), matching.end(),
+            [](const auto* a, const auto* b) {
+                return a->executed_at_ms() > b->executed_at_ms();
+            });
+
+        // Apply pagination
+        int limit = filter.limit() > 0 ? filter.limit() : 100;
+        int offset = filter.offset() > 0 ? filter.offset() : 0;
+        int count = 0;
+
+        for (size_t i = offset; i < matching.size() && count < limit; ++i, ++count) {
+            *response->add_executions() = *matching[i];
+        }
+
+        response->set_success(true);
+        response->set_total_count(static_cast<int>(matching.size()));
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to list executions: " << e.what();
+        response->set_success(false);
+        return grpc::Status::OK;
+    }
+}
+
+grpc::Status SchedulerServer::list_executions_hash(
+    grpc::ServerContext* context,
+    const swdv::ifex_scheduler::list_executions_hash_request* request,
+    swdv::ifex_scheduler::list_executions_hash_response* response) {
+
+    LOG(INFO) << "LIST EXECUTIONS HASH REQUEST";
+
+    try {
+        const auto& filter = request->filter();
+        std::lock_guard<std::mutex> lock(executions_mutex_);
+
+        // Collect matching executions for deterministic ordering
+        std::vector<const swdv::ifex_scheduler::execution_t*> matching;
+
+        for (const auto& [job_id, exec_list] : executions_) {
+            if (!filter.job_id().empty() && job_id != filter.job_id()) {
+                continue;
+            }
+
+            for (const auto& exec : exec_list) {
+                if (filter.start_time_ms() > 0 && exec.executed_at_ms() < filter.start_time_ms()) {
+                    continue;
+                }
+                if (filter.end_time_ms() > 0 && exec.executed_at_ms() > filter.end_time_ms()) {
+                    continue;
+                }
+                if (filter.has_status_filter() && exec.status() != filter.status()) {
+                    continue;
+                }
+                matching.push_back(&exec);
+            }
+        }
+
+        // Sort by execution_id for deterministic hash
+        std::sort(matching.begin(), matching.end(),
+            [](const auto* a, const auto* b) {
+                return a->execution_id() < b->execution_id();
+            });
+
+        // Compute hash using FNV-1a style mixing
+        uint64_t hash = 0;
+        const uint64_t FNV_PRIME = 0x100000001b3ULL;
+        const uint64_t FNV_OFFSET = 0xcbf29ce484222325ULL;
+
+        hash = FNV_OFFSET;
+        for (const auto* exec : matching) {
+            // Mix in execution_id
+            for (char c : exec->execution_id()) {
+                hash ^= static_cast<uint64_t>(c);
+                hash *= FNV_PRIME;
+            }
+            // Mix in executed_at_ms
+            uint64_t ts = exec->executed_at_ms();
+            hash ^= ts;
+            hash *= FNV_PRIME;
+            // Mix in status
+            hash ^= static_cast<uint64_t>(exec->status());
+            hash *= FNV_PRIME;
+        }
+
+        response->set_state_hash(hash);
+        response->set_execution_count(static_cast<int>(matching.size()));
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to compute executions hash: " << e.what();
+        response->set_state_hash(0);
+        response->set_execution_count(0);
+        return grpc::Status::OK;
     }
 }
 

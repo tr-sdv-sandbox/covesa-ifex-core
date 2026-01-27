@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <condition_variable>
 #include <thread>
 #include <vector>
 
@@ -39,6 +40,7 @@ struct CloudSchedulerSyncBridgeConfig {
     std::string transport_address = "localhost:50100";
     uint32_t content_id = 202;  // Scheduler sync content ID
     std::string bridge_instance_id;  // Unique instance ID (for restart detection)
+    uint32_t poll_interval_ms = 1000;  // How often to poll for pending syncs
 };
 
 /// Cloud-side scheduler sync bridge.
@@ -119,6 +121,12 @@ private:
     /// Subscribe to vehicle messages
     void StartMessageSubscription();
 
+    /// Start polling for pending syncs
+    void StartPendingSyncsPoll();
+
+    /// Poll loop for pending syncs
+    void PollLoop();
+
     /// Handle incoming V2C sync message
     void HandleV2CSyncMessage(
         const std::string& vehicle_id,
@@ -130,10 +138,10 @@ private:
         const sync_v2::V2C_SyncMessage& v2c_msg);
 
     /// Get jobs for vehicle from scheduler
-    std::vector<sched_pb::job_info_t> GetCloudJobs(const std::string& vehicle_id);
+    std::vector<scheduler_types::job_t> GetCloudJobs(const std::string& vehicle_id);
 
     /// Upsert a job to scheduler
-    bool UpsertJob(const sched_pb::job_info_t& job);
+    bool UpsertJob(const scheduler_types::job_t& job);
 
     /// Record an execution to scheduler
     bool RecordExecution(
@@ -150,16 +158,16 @@ private:
     /// Build and send C2V sync message
     void SendC2VMessage(const std::string& vehicle_id);
 
-    /// Convert V2C JobRecord to scheduler job_info_t
-    sched_pb::job_info_t V2CRecordToJobInfo(
+    /// Convert V2C JobRecord to scheduler job_t
+    scheduler_types::job_t V2CRecordToJobInfo(
         const std::string& vehicle_id,
         const sync_v2::JobRecord& record);
 
-    /// Convert scheduler job_info_t to C2V JobRecord
-    sync_v2::JobRecord JobInfoToC2VRecord(const sched_pb::job_info_t& job);
+    /// Convert scheduler job_t to C2V JobRecord
+    sync_v2::JobRecord JobInfoToC2VRecord(const scheduler_types::job_t& job);
 
     /// Compute state checksum for C2V message
-    uint64_t ComputeStateChecksum(const std::vector<sched_pb::job_info_t>& jobs);
+    uint64_t ComputeStateChecksum(const std::vector<scheduler_types::job_t>& jobs);
 
     /// Check if sync is quiescent (checksums match)
     bool IsQuiescent(
@@ -184,6 +192,7 @@ private:
     std::unique_ptr<sched_pb::record_execution_service::Stub> record_execution_stub_;
     std::unique_ptr<sched_pb::get_vehicle_sync_state_service::Stub> get_sync_state_stub_;
     std::unique_ptr<sched_pb::update_vehicle_sync_state_service::Stub> update_sync_state_stub_;
+    std::unique_ptr<sched_pb::get_pending_syncs_service::Stub> get_pending_syncs_stub_;
 
     // Backend transport stubs
     std::unique_ptr<transport_pb::send_to_vehicle_service::Stub> send_stub_;
@@ -194,6 +203,11 @@ private:
     std::atomic<bool> subscription_running_{false};
     std::unique_ptr<grpc::ClientContext> subscription_context_;
     std::mutex subscription_context_mutex_;
+
+    // Pending syncs polling thread
+    std::thread poll_thread_;
+    std::condition_variable poll_cv_;
+    std::mutex poll_mutex_;
 
     // Statistics
     mutable std::mutex stats_mutex_;

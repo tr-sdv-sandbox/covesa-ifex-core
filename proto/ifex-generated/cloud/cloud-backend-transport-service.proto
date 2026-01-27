@@ -58,8 +58,9 @@ message transport_metadata_t {
 // Request to send message to a vehicle
 message send_request_t {
   string vehicle_id = 1;
-  bytes payload = 2;
-  persistence_t persistence = 3;
+  uint32 content_id = 2;
+  bytes payload = 3;
+  persistence_t persistence = 4;
 }
 
 // Result of send operation (returned immediately, non-blocking)
@@ -116,6 +117,24 @@ message transport_stats_t {
   uint64 bytes_received = 5;
   uint32 vehicles_online = 6;
   uint32 vehicles_total = 7;
+}
+
+// Information about a known vehicle
+message vehicle_info_t {
+  string vehicle_id = 1;
+  vehicle_status_t status = 2;
+  int64 last_seen_ms = 3;
+}
+
+// List of known vehicles
+message list_vehicles_response_t {
+  repeated vehicle_info_t vehicles = 1;
+}
+
+// Filter for on_vehicle_message subscription. Specifies which content_id to receive messages for. MQTT subscription to v2c/+/{content_id} is created on demand when first subscriber connects for that content_id.
+
+message message_subscription_filter_t {
+  uint32 content_id = 1;
 }
 
 // Method: send_to_vehicle
@@ -189,6 +208,19 @@ service get_stats_service {
   rpc get_stats(get_stats_request) returns (get_stats_response);
 }
 
+// Method: list_vehicles
+// List all known vehicles with their status
+message list_vehicles_request {
+}
+
+message list_vehicles_response {
+  list_vehicles_response_t result = 1;
+}
+
+service list_vehicles_service {
+  rpc list_vehicles(list_vehicles_request) returns (list_vehicles_response);
+}
+
 // Method: healthy
 // Check if transport is ready
 message healthy_request {
@@ -203,13 +235,14 @@ service healthy_service {
 }
 
 // Event: on_vehicle_message
-// Message received from a vehicle in this partition. Only delivers messages for vehicles assigned to this partition. Sequence numbers are per-vehicle; gaps indicate dropped messages.
+// Message received from a vehicle. Subscriber specifies content_id when subscribing; all messages on this stream are for that content_id (implicit). MQTT subscription to v2c/+/{content_id} is created on demand. Only delivers messages for vehicles assigned to this partition. Sequence numbers are per-vehicle; gaps indicate dropped messages.
 
 message on_vehicle_message {
   vehicle_message_t message = 1;
 }
 
 message on_vehicle_message_subscribe_request {
+  uint32 content_id = 1;
 }
 
 service on_vehicle_message_service {

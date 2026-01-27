@@ -72,7 +72,6 @@ static sched_lib::Job ToLibraryJob(const SyncedJobState& state) {
     job.version = sched_lib::VersionVector(state.version.cloud_seq, state.version.vehicle_seq);
     job.authority = static_cast<sched_lib::JobAuthority>(state.authority);
     job.deleted = state.deleted;
-    job.deleted_at_ms = state.deleted_at_ms;
     return job;
 }
 
@@ -127,7 +126,7 @@ bool SchedulerSyncBridge::Start() {
         config_.scheduler_endpoint,
         grpc::InsecureChannelCredentials());
 
-    get_jobs_stub_ = scheduler_pb::get_jobs_service::NewStub(scheduler_channel_);
+    list_jobs_stub_ = scheduler_pb::list_jobs_service::NewStub(scheduler_channel_);
     create_job_stub_ = scheduler_pb::create_job_service::NewStub(scheduler_channel_);
     update_job_stub_ = scheduler_pb::update_job_service::NewStub(scheduler_channel_);
     delete_job_stub_ = scheduler_pb::delete_job_service::NewStub(scheduler_channel_);
@@ -198,7 +197,7 @@ void SchedulerSyncBridge::Stop() {
 
     // Cleanup
     transport_client_.reset();
-    get_jobs_stub_.reset();
+    list_jobs_stub_.reset();
     create_job_stub_.reset();
     update_job_stub_.reset();
     delete_job_stub_.reset();
@@ -363,12 +362,12 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
     grpc::ClientContext context;
     context.set_deadline(std::chrono::system_clock::now() + 5s);
 
-    scheduler_pb::get_jobs_request request;
-    // Empty filter = return all jobs (including tombstones and completed)
-    // No exclude_* flags set = show everything
+    scheduler_pb::list_jobs_request request;
+    // Sync bridge needs all jobs including tombstones
+    request.mutable_filter()->set_include_deleted(true);
 
-    scheduler_pb::get_jobs_response response;
-    auto status = get_jobs_stub_->get_jobs(&context, request, &response);
+    scheduler_pb::list_jobs_response response;
+    auto status = list_jobs_stub_->list_jobs(&context, request, &response);
 
     if (!status.ok()) {
         LOG(WARNING) << "Failed to query Scheduler: " << status.error_message();
@@ -377,11 +376,11 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
 
     for (const auto& job : response.jobs()) {
         SyncedJobState state;
-        state.job_id = job.id();
+        state.job_id = job.job_id();
         state.title = job.title();
         state.service = job.service();
         state.method = job.method();
-        state.parameters = job.parameters();
+        state.parameters = job.parameters_json();
         state.scheduled_time_ms = job.scheduled_time_ms();
         state.scheduled_time = EpochMsToIso8601(job.scheduled_time_ms());  // For display/hash
         state.recurrence_rule = job.recurrence_rule();
@@ -397,9 +396,8 @@ std::vector<SyncedJobState> SchedulerSyncBridge::QuerySchedulerJobs() {
         state.version = sched_lib::VersionVector(job.cloud_seq(), job.vehicle_seq());
         state.authority = static_cast<sync_v2::JobAuthority>(job.authority());
         state.deleted = job.deleted();
-        state.deleted_at_ms = job.deleted_at_ms();
 
-        VLOG(1) << "QuerySchedulerJobs: job=" << job.id()
+        VLOG(1) << "QuerySchedulerJobs: job=" << job.job_id()
                 << " scheduled_time_ms=" << job.scheduled_time_ms()
                 << " wake_policy=" << static_cast<int>(job.wake_policy())
                 << " paused=" << (job.paused() ? "true" : "false")
@@ -689,7 +687,7 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::CreateJobFromCloud(
     new_job->set_title(job.title());
     new_job->set_service(job.service());
     new_job->set_method(job.method());
-    new_job->set_parameters(job.parameters_json());
+    new_job->set_parameters_json(job.parameters_json());
     new_job->set_scheduled_time_ms(job.scheduled_time_ms());
     new_job->set_recurrence_rule(job.recurrence_rule());
     new_job->set_end_time_ms(job.end_time_ms());
@@ -712,7 +710,6 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::CreateJobFromCloud(
     // Handle soft delete (tombstone) from cloud
     if (job.deleted()) {
         new_job->set_deleted(true);
-        new_job->set_deleted_at_ms(job.deleted_at_ms());
     }
 
     scheduler_pb::create_job_response response;
@@ -766,7 +763,7 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::UpdateJobFromCloud(
     updates->set_title(job.title());
     updates->set_scheduled_time_ms(job.scheduled_time_ms());
     updates->set_recurrence_rule(job.recurrence_rule());
-    updates->set_parameters(job.parameters_json());
+    updates->set_parameters_json(job.parameters_json());
     updates->set_end_time_ms(job.end_time_ms());
 
     // Set paused state in the update
@@ -780,7 +777,6 @@ SchedulerSyncBridge::OperationResult SchedulerSyncBridge::UpdateJobFromCloud(
     // Handle soft delete (tombstone) from cloud
     if (job.deleted()) {
         updates->set_deleted(true);
-        updates->set_deleted_at_ms(job.deleted_at_ms());
     }
 
     scheduler_pb::update_job_response response;
@@ -960,9 +956,6 @@ void SyncedJobState::ToJobRecord(sync_v2::JobRecord* record) const {
     ver->set_vehicle_seq(version.vehicle_seq);
 
     record->set_deleted(deleted);
-    if (deleted_at_ms > 0) {
-        record->set_deleted_at_ms(deleted_at_ms);
-    }
 
     record->set_title(title);
     record->set_service(service);
@@ -994,7 +987,6 @@ SyncedJobState SyncedJobState::FromJobRecord(const sync_v2::JobRecord& record) {
     state.version.cloud_seq = record.version().cloud_seq();
     state.version.vehicle_seq = record.version().vehicle_seq();
     state.deleted = record.deleted();
-    state.deleted_at_ms = record.deleted_at_ms();
 
     state.title = record.title();
     state.service = record.service();
@@ -1091,9 +1083,6 @@ void SchedulerSyncBridge::SendDeleteSyncMessage(const std::string& job_id) {
     auto* record = msg.add_jobs();
     record->set_job_id(job_id);
     record->set_deleted(true);
-    record->set_deleted_at_ms(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
 
     msg.set_sync_timestamp_ms(
         std::chrono::duration_cast<std::chrono::milliseconds>(

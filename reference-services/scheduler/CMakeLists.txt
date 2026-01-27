@@ -19,6 +19,7 @@ target_link_libraries(ifex-scheduler-service-lib
         ifex-proto-generated
         ifex-core
         ifex-sync
+        ifex-scheduler
         gRPC::grpc++
         ${PROTOBUF_LIBRARIES}
         yaml-cpp

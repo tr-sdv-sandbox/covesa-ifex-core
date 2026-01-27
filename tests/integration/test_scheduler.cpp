@@ -101,7 +101,7 @@ TEST_F(SchedulerIntegrationTest, CreateAndGetJob) {
 
     json params;
     params["message"] = "Scheduled test message";
-    job->set_parameters(params.dump());
+    job->set_parameters_json(params.dump());
 
     // Schedule for 1 hour from now (won't execute during test)
     job->set_scheduled_time_ms(get_future_time_ms(3600));
@@ -132,7 +132,7 @@ TEST_F(SchedulerIntegrationTest, CreateAndGetJob) {
     EXPECT_TRUE(get_response.success());
 
     const auto& retrieved_job = get_response.job();
-    EXPECT_EQ(retrieved_job.id(), job_id);
+    EXPECT_EQ(retrieved_job.job_id(), job_id);
     EXPECT_EQ(retrieved_job.title(), "Test Job");
     EXPECT_EQ(retrieved_job.service(), "echo_service");
     EXPECT_EQ(retrieved_job.method(), "echo");
@@ -150,7 +150,7 @@ TEST_F(SchedulerIntegrationTest, ListJobs) {
         job->set_title("List Test Job " + std::to_string(i));
         job->set_service("echo_service");
         job->set_method("echo");
-        job->set_parameters(R"({"message": "test"})");
+        job->set_parameters_json(R"({"message": "test"})");
         job->set_scheduled_time_ms(get_future_time_ms(3600 + i));
 
         swdv::ifex_scheduler::create_job_response response;
@@ -163,15 +163,15 @@ TEST_F(SchedulerIntegrationTest, ListJobs) {
     }
 
     // List all jobs
-    auto list_stub = swdv::ifex_scheduler::get_jobs_service::NewStub(scheduler_channel_);
+    auto list_stub = swdv::ifex_scheduler::list_jobs_service::NewStub(scheduler_channel_);
 
-    swdv::ifex_scheduler::get_jobs_request list_request;
+    swdv::ifex_scheduler::list_jobs_request list_request;
     // No filter - get all jobs
 
-    swdv::ifex_scheduler::get_jobs_response list_response;
+    swdv::ifex_scheduler::list_jobs_response list_response;
     grpc::ClientContext list_context;
 
-    auto status = list_stub->get_jobs(&list_context, list_request, &list_response);
+    auto status = list_stub->list_jobs(&list_context, list_request, &list_response);
     ASSERT_TRUE(status.ok()) << "Failed to list jobs: " << status.error_message();
     EXPECT_TRUE(list_response.success());
 
@@ -197,7 +197,7 @@ TEST_F(SchedulerIntegrationTest, UpdateJob) {
     job->set_title("Original Title");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "original"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -216,7 +216,7 @@ TEST_F(SchedulerIntegrationTest, UpdateJob) {
     update_request.set_job_id(job_id);
     auto* updates = update_request.mutable_updates();
     updates->set_title("Updated Title");
-    updates->set_parameters(R"({"message": "updated"})");
+    updates->set_parameters_json(R"({"message": "updated"})");
 
     swdv::ifex_scheduler::update_job_response update_response;
     grpc::ClientContext update_context;
@@ -249,7 +249,7 @@ TEST_F(SchedulerIntegrationTest, DeleteJob) {
     job->set_title("Job to Delete");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "delete me"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -288,51 +288,6 @@ TEST_F(SchedulerIntegrationTest, DeleteJob) {
     EXPECT_FALSE(get_response.success()) << "Job should not be found after deletion";
 }
 
-TEST_F(SchedulerIntegrationTest, GetCalendarView) {
-    // Create jobs for today
-    auto create_stub = swdv::ifex_scheduler::create_job_service::NewStub(scheduler_channel_);
-
-    for (int i = 0; i < 3; i++) {
-        swdv::ifex_scheduler::create_job_request request;
-        auto* job = request.mutable_job();
-        job->set_title("Calendar Job " + std::to_string(i));
-        job->set_service("echo_service");
-        job->set_method("echo");
-        job->set_parameters(R"({"message": "calendar test"})");
-        // Schedule within the next hour
-        job->set_scheduled_time_ms(get_future_time_ms(60 * (i + 1)));
-
-        swdv::ifex_scheduler::create_job_response response;
-        grpc::ClientContext context;
-
-        auto status = create_stub->create_job(&context, request, &response);
-        ASSERT_TRUE(status.ok() && response.success());
-        created_job_ids_.push_back(response.job_id());
-    }
-
-    // Get calendar view for today
-    auto calendar_stub = swdv::ifex_scheduler::get_calendar_view_service::NewStub(scheduler_channel_);
-
-    swdv::ifex_scheduler::get_calendar_view_request request;
-    request.set_view_type(swdv::ifex_scheduler::DAY);
-    request.set_reference_time_ms(get_current_time_ms());
-
-    swdv::ifex_scheduler::get_calendar_view_response response;
-    grpc::ClientContext context;
-
-    auto status = calendar_stub->get_calendar_view(&context, request, &response);
-    ASSERT_TRUE(status.ok()) << "Failed to get calendar view: " << status.error_message();
-    EXPECT_TRUE(response.success());
-
-    // Should have our calendar jobs
-    int found = 0;
-    for (const auto& job : response.jobs()) {
-        if (job.title().find("Calendar Job") != std::string::npos) {
-            found++;
-        }
-    }
-    EXPECT_GE(found, 3);
-}
 
 TEST_F(SchedulerIntegrationTest, CreateJobForNonExistentService) {
     auto create_stub = swdv::ifex_scheduler::create_job_service::NewStub(scheduler_channel_);
@@ -342,7 +297,7 @@ TEST_F(SchedulerIntegrationTest, CreateJobForNonExistentService) {
     job->set_title("Invalid Service Job");
     job->set_service("non_existent_service");
     job->set_method("some_method");
-    job->set_parameters("{}");
+    job->set_parameters_json("{}");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response response;
@@ -364,7 +319,7 @@ TEST_F(SchedulerIntegrationTest, CreateRecurringJob) {
     job->set_title("Recurring Job");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "recurring"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
     job->set_recurrence_rule("daily");
 
@@ -412,7 +367,7 @@ TEST_F(SchedulerIntegrationTest, JobsSurviveRestart) {
         job->set_title("Persistence Test Job " + std::to_string(i));
         job->set_service("echo_service");
         job->set_method("echo");
-        job->set_parameters(R"({"message": "persist me"})");
+        job->set_parameters_json(R"({"message": "test"})");
         job->set_scheduled_time_ms(get_future_time_ms(3600));  // Far future
 
         swdv::ifex_scheduler::create_job_response response;
@@ -429,12 +384,12 @@ TEST_F(SchedulerIntegrationTest, JobsSurviveRestart) {
 
     // Verify jobs exist before restart
     {
-        auto get_stub = swdv::ifex_scheduler::get_jobs_service::NewStub(scheduler_channel_);
-        swdv::ifex_scheduler::get_jobs_request request;
-        swdv::ifex_scheduler::get_jobs_response response;
+        auto get_stub = swdv::ifex_scheduler::list_jobs_service::NewStub(scheduler_channel_);
+        swdv::ifex_scheduler::list_jobs_request request;
+        swdv::ifex_scheduler::list_jobs_response response;
         grpc::ClientContext context;
 
-        auto status = get_stub->get_jobs(&context, request, &response);
+        auto status = get_stub->list_jobs(&context, request, &response);
         ASSERT_TRUE(status.ok());
 
         int found = 0;
@@ -456,12 +411,12 @@ TEST_F(SchedulerIntegrationTest, JobsSurviveRestart) {
     // Verify jobs still exist after restart
     // THIS WILL FAIL UNTIL PERSISTENCE IS IMPLEMENTED
     {
-        auto get_stub = swdv::ifex_scheduler::get_jobs_service::NewStub(scheduler_channel_);
-        swdv::ifex_scheduler::get_jobs_request request;
-        swdv::ifex_scheduler::get_jobs_response response;
+        auto get_stub = swdv::ifex_scheduler::list_jobs_service::NewStub(scheduler_channel_);
+        swdv::ifex_scheduler::list_jobs_request request;
+        swdv::ifex_scheduler::list_jobs_response response;
         grpc::ClientContext context;
 
-        auto status = get_stub->get_jobs(&context, request, &response);
+        auto status = get_stub->list_jobs(&context, request, &response);
         ASSERT_TRUE(status.ok());
 
         int found = 0;
@@ -494,7 +449,7 @@ TEST_F(SchedulerIntegrationTest, PauseJob) {
     job->set_title("Job to Pause");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "pause me"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));  // Far future
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -556,7 +511,7 @@ TEST_F(SchedulerIntegrationTest, PauseJobInvalidStatus) {
     job->set_title("Job for Invalid Pause");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "invalid pause"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -605,7 +560,7 @@ TEST_F(SchedulerIntegrationTest, ResumeJob) {
     job->set_title("Job to Resume");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "resume me"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -667,7 +622,7 @@ TEST_F(SchedulerIntegrationTest, ResumeJobInvalidStatus) {
     job->set_title("Job for Invalid Resume");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "invalid resume"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -705,7 +660,7 @@ TEST_F(SchedulerIntegrationTest, TriggerJob) {
     job->set_title("Job to Trigger");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "triggered execution"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(86400));  // Tomorrow
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -741,20 +696,32 @@ TEST_F(SchedulerIntegrationTest, TriggerJob) {
             << "Triggered job should be in terminal state";
     }
 
-    // Verify via get_job that execution happened
-    auto get_stub = swdv::ifex_scheduler::get_job_service::NewStub(scheduler_channel_);
+    // Verify via list_executions that execution happened
+    // Note: One-time jobs become tombstones after completion, so get_job returns not found
+    // Instead, check execution history which persists independently
+    auto exec_stub = swdv::ifex_scheduler::list_executions_service::NewStub(scheduler_channel_);
     {
-        swdv::ifex_scheduler::get_job_request get_request;
-        get_request.set_job_id(job_id);
-        swdv::ifex_scheduler::get_job_response get_response;
-        grpc::ClientContext get_context;
+        swdv::ifex_scheduler::list_executions_request exec_request;
+        exec_request.mutable_filter()->set_job_id(job_id);
+        swdv::ifex_scheduler::list_executions_response exec_response;
+        grpc::ClientContext exec_context;
 
-        status = get_stub->get_job(&get_context, get_request, &get_response);
-        ASSERT_TRUE(status.ok() && get_response.success());
+        status = exec_stub->list_executions(&exec_context, exec_request, &exec_response);
+        ASSERT_TRUE(status.ok() && exec_response.success())
+            << "list_executions should succeed";
 
-        // Should have executed_at_ms timestamp (non-zero)
-        EXPECT_GT(get_response.job().executed_at_ms(), 0u)
-            << "Triggered job should have executed_at_ms timestamp";
+        // Should have at least one execution record
+        ASSERT_GE(exec_response.executions_size(), 1)
+            << "Should have at least one execution record";
+
+        // Check the execution record
+        const auto& exec = exec_response.executions(0);
+        EXPECT_EQ(exec.job_id(), job_id);
+        EXPECT_GT(exec.executed_at_ms(), 0u)
+            << "Execution should have executed_at_ms timestamp";
+        EXPECT_TRUE(exec.status() == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
+                    exec.status() == swdv::scheduler_types::JOB_STATUS_FAILED)
+            << "Execution should be in terminal state";
     }
 }
 
@@ -767,7 +734,7 @@ TEST_F(SchedulerIntegrationTest, TriggerPausedJob) {
     job->set_title("Paused Job to Trigger");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "trigger paused"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(86400));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -821,7 +788,7 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
     job->set_title("Workflow Test Job");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "workflow test"})");
+    job->set_parameters_json(R"({"message": "test"})");
     job->set_scheduled_time_ms(get_future_time_ms(86400));
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -892,6 +859,9 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
     EXPECT_TRUE(get_paused()) << "Job should be paused after second pause";
 
     // Step 5: Trigger -> COMPLETED or FAILED
+    // Note: One-time jobs become tombstones after completion, so we check
+    // the trigger response or execution history, not get_job
+    swdv::scheduler_types::job_status_t final_status;
     {
         swdv::ifex_scheduler::trigger_job_request req;
         req.set_job_id(job_id);
@@ -899,8 +869,22 @@ TEST_F(SchedulerIntegrationTest, PauseResumeWorkflow) {
         grpc::ClientContext ctx;
         status = trigger_stub->trigger_job(&ctx, req, &resp);
         ASSERT_TRUE(status.ok() && resp.success());
+
+        // Get final status from trigger response (if job is returned)
+        if (resp.has_job()) {
+            final_status = resp.job().status();
+        } else {
+            // Fall back to execution history
+            auto exec_stub = swdv::ifex_scheduler::list_executions_service::NewStub(scheduler_channel_);
+            swdv::ifex_scheduler::list_executions_request exec_req;
+            exec_req.mutable_filter()->set_job_id(job_id);
+            swdv::ifex_scheduler::list_executions_response exec_resp;
+            grpc::ClientContext exec_ctx;
+            exec_stub->list_executions(&exec_ctx, exec_req, &exec_resp);
+            ASSERT_GE(exec_resp.executions_size(), 1) << "Should have execution record";
+            final_status = exec_resp.executions(0).status();
+        }
     }
-    auto final_status = get_status();
     EXPECT_TRUE(final_status == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
                 final_status == swdv::scheduler_types::JOB_STATUS_FAILED)
         << "Status should be terminal after trigger";

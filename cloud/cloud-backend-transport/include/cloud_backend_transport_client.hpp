@@ -40,9 +40,10 @@ public:
         uint32_t queue_size,
         uint32_t queue_capacity)>;
 
-    /// Create client connected to specified server address.
+    /// Create client connected to specified server address, bound to a content_id.
     /// @param server_address gRPC address (e.g., "localhost:50100")
-    explicit CloudBackendTransportClient(const std::string& server_address);
+    /// @param content_id Content ID this client handles (e.g., 200=RPC, 201=discovery, 202=scheduler)
+    CloudBackendTransportClient(const std::string& server_address, uint32_t content_id);
 
     ~CloudBackendTransportClient();
 
@@ -113,6 +114,10 @@ public:
     void StopSubscriptions();
 
 private:
+    // Add content_id metadata to context for channel binding
+    void AddContentIdMetadata(grpc::ClientContext* context);
+
+    uint32_t content_id_;
     std::shared_ptr<grpc::Channel> channel_;
 
     // Stubs for each service

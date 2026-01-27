@@ -493,7 +493,7 @@ class list_jobs_service(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
-class get_job_executions_serviceStub(object):
+class list_jobs_hash_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -502,42 +502,42 @@ class get_job_executions_serviceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.get_job_executions = channel.unary_unary(
-                '/swdv.cloud_scheduler_service.get_job_executions_service/get_job_executions',
-                request_serializer=cloud__scheduler__service__pb2.get_job_executions_request.SerializeToString,
-                response_deserializer=cloud__scheduler__service__pb2.get_job_executions_response.FromString,
+        self.list_jobs_hash = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.list_jobs_hash_service/list_jobs_hash',
+                request_serializer=cloud__scheduler__service__pb2.list_jobs_hash_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.list_jobs_hash_response.FromString,
                 )
 
 
-class get_job_executions_serviceServicer(object):
+class list_jobs_hash_serviceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def get_job_executions(self, request, context):
+    def list_jobs_hash(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_get_job_executions_serviceServicer_to_server(servicer, server):
+def add_list_jobs_hash_serviceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'get_job_executions': grpc.unary_unary_rpc_method_handler(
-                    servicer.get_job_executions,
-                    request_deserializer=cloud__scheduler__service__pb2.get_job_executions_request.FromString,
-                    response_serializer=cloud__scheduler__service__pb2.get_job_executions_response.SerializeToString,
+            'list_jobs_hash': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_jobs_hash,
+                    request_deserializer=cloud__scheduler__service__pb2.list_jobs_hash_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.list_jobs_hash_response.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'swdv.cloud_scheduler_service.get_job_executions_service', rpc_method_handlers)
+            'swdv.cloud_scheduler_service.list_jobs_hash_service', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
 
 
  # This class is part of an EXPERIMENTAL API.
-class get_job_executions_service(object):
+class list_jobs_hash_service(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def get_job_executions(request,
+    def list_jobs_hash(request,
             target,
             options=(),
             channel_credentials=None,
@@ -547,14 +547,14 @@ class get_job_executions_service(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.get_job_executions_service/get_job_executions',
-            cloud__scheduler__service__pb2.get_job_executions_request.SerializeToString,
-            cloud__scheduler__service__pb2.get_job_executions_response.FromString,
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.list_jobs_hash_service/list_jobs_hash',
+            cloud__scheduler__service__pb2.list_jobs_hash_request.SerializeToString,
+            cloud__scheduler__service__pb2.list_jobs_hash_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
-class create_fleet_job_serviceStub(object):
+class list_executions_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -563,42 +563,42 @@ class create_fleet_job_serviceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.create_fleet_job = channel.unary_unary(
-                '/swdv.cloud_scheduler_service.create_fleet_job_service/create_fleet_job',
-                request_serializer=cloud__scheduler__service__pb2.create_fleet_job_request.SerializeToString,
-                response_deserializer=cloud__scheduler__service__pb2.create_fleet_job_response.FromString,
+        self.list_executions = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.list_executions_service/list_executions',
+                request_serializer=cloud__scheduler__service__pb2.list_executions_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.list_executions_response.FromString,
                 )
 
 
-class create_fleet_job_serviceServicer(object):
+class list_executions_serviceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def create_fleet_job(self, request, context):
+    def list_executions(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_create_fleet_job_serviceServicer_to_server(servicer, server):
+def add_list_executions_serviceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'create_fleet_job': grpc.unary_unary_rpc_method_handler(
-                    servicer.create_fleet_job,
-                    request_deserializer=cloud__scheduler__service__pb2.create_fleet_job_request.FromString,
-                    response_serializer=cloud__scheduler__service__pb2.create_fleet_job_response.SerializeToString,
+            'list_executions': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_executions,
+                    request_deserializer=cloud__scheduler__service__pb2.list_executions_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.list_executions_response.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'swdv.cloud_scheduler_service.create_fleet_job_service', rpc_method_handlers)
+            'swdv.cloud_scheduler_service.list_executions_service', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
 
 
  # This class is part of an EXPERIMENTAL API.
-class create_fleet_job_service(object):
+class list_executions_service(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def create_fleet_job(request,
+    def list_executions(request,
             target,
             options=(),
             channel_credentials=None,
@@ -608,14 +608,14 @@ class create_fleet_job_service(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.create_fleet_job_service/create_fleet_job',
-            cloud__scheduler__service__pb2.create_fleet_job_request.SerializeToString,
-            cloud__scheduler__service__pb2.create_fleet_job_response.FromString,
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.list_executions_service/list_executions',
+            cloud__scheduler__service__pb2.list_executions_request.SerializeToString,
+            cloud__scheduler__service__pb2.list_executions_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
-class delete_fleet_job_serviceStub(object):
+class list_executions_hash_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -624,42 +624,42 @@ class delete_fleet_job_serviceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.delete_fleet_job = channel.unary_unary(
-                '/swdv.cloud_scheduler_service.delete_fleet_job_service/delete_fleet_job',
-                request_serializer=cloud__scheduler__service__pb2.delete_fleet_job_request.SerializeToString,
-                response_deserializer=cloud__scheduler__service__pb2.delete_fleet_job_response.FromString,
+        self.list_executions_hash = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.list_executions_hash_service/list_executions_hash',
+                request_serializer=cloud__scheduler__service__pb2.list_executions_hash_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.list_executions_hash_response.FromString,
                 )
 
 
-class delete_fleet_job_serviceServicer(object):
+class list_executions_hash_serviceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def delete_fleet_job(self, request, context):
+    def list_executions_hash(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_delete_fleet_job_serviceServicer_to_server(servicer, server):
+def add_list_executions_hash_serviceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'delete_fleet_job': grpc.unary_unary_rpc_method_handler(
-                    servicer.delete_fleet_job,
-                    request_deserializer=cloud__scheduler__service__pb2.delete_fleet_job_request.FromString,
-                    response_serializer=cloud__scheduler__service__pb2.delete_fleet_job_response.SerializeToString,
+            'list_executions_hash': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_executions_hash,
+                    request_deserializer=cloud__scheduler__service__pb2.list_executions_hash_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.list_executions_hash_response.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'swdv.cloud_scheduler_service.delete_fleet_job_service', rpc_method_handlers)
+            'swdv.cloud_scheduler_service.list_executions_hash_service', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
 
 
  # This class is part of an EXPERIMENTAL API.
-class delete_fleet_job_service(object):
+class list_executions_hash_service(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def delete_fleet_job(request,
+    def list_executions_hash(request,
             target,
             options=(),
             channel_credentials=None,
@@ -669,70 +669,9 @@ class delete_fleet_job_service(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.delete_fleet_job_service/delete_fleet_job',
-            cloud__scheduler__service__pb2.delete_fleet_job_request.SerializeToString,
-            cloud__scheduler__service__pb2.delete_fleet_job_response.FromString,
-            options, channel_credentials,
-            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
-
-
-class get_fleet_job_stats_serviceStub(object):
-    """Missing associated documentation comment in .proto file."""
-
-    def __init__(self, channel):
-        """Constructor.
-
-        Args:
-            channel: A grpc.Channel.
-        """
-        self.get_fleet_job_stats = channel.unary_unary(
-                '/swdv.cloud_scheduler_service.get_fleet_job_stats_service/get_fleet_job_stats',
-                request_serializer=cloud__scheduler__service__pb2.get_fleet_job_stats_request.SerializeToString,
-                response_deserializer=cloud__scheduler__service__pb2.get_fleet_job_stats_response.FromString,
-                )
-
-
-class get_fleet_job_stats_serviceServicer(object):
-    """Missing associated documentation comment in .proto file."""
-
-    def get_fleet_job_stats(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-
-def add_get_fleet_job_stats_serviceServicer_to_server(servicer, server):
-    rpc_method_handlers = {
-            'get_fleet_job_stats': grpc.unary_unary_rpc_method_handler(
-                    servicer.get_fleet_job_stats,
-                    request_deserializer=cloud__scheduler__service__pb2.get_fleet_job_stats_request.FromString,
-                    response_serializer=cloud__scheduler__service__pb2.get_fleet_job_stats_response.SerializeToString,
-            ),
-    }
-    generic_handler = grpc.method_handlers_generic_handler(
-            'swdv.cloud_scheduler_service.get_fleet_job_stats_service', rpc_method_handlers)
-    server.add_generic_rpc_handlers((generic_handler,))
-
-
- # This class is part of an EXPERIMENTAL API.
-class get_fleet_job_stats_service(object):
-    """Missing associated documentation comment in .proto file."""
-
-    @staticmethod
-    def get_fleet_job_stats(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.get_fleet_job_stats_service/get_fleet_job_stats',
-            cloud__scheduler__service__pb2.get_fleet_job_stats_request.SerializeToString,
-            cloud__scheduler__service__pb2.get_fleet_job_stats_response.FromString,
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.list_executions_hash_service/list_executions_hash',
+            cloud__scheduler__service__pb2.list_executions_hash_request.SerializeToString,
+            cloud__scheduler__service__pb2.list_executions_hash_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -1099,5 +1038,66 @@ class update_vehicle_sync_state_service(object):
         return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.update_vehicle_sync_state_service/update_vehicle_sync_state',
             cloud__scheduler__service__pb2.update_vehicle_sync_state_request.SerializeToString,
             cloud__scheduler__service__pb2.update_vehicle_sync_state_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class get_pending_syncs_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.get_pending_syncs = channel.unary_unary(
+                '/swdv.cloud_scheduler_service.get_pending_syncs_service/get_pending_syncs',
+                request_serializer=cloud__scheduler__service__pb2.get_pending_syncs_request.SerializeToString,
+                response_deserializer=cloud__scheduler__service__pb2.get_pending_syncs_response.FromString,
+                )
+
+
+class get_pending_syncs_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def get_pending_syncs(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_get_pending_syncs_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'get_pending_syncs': grpc.unary_unary_rpc_method_handler(
+                    servicer.get_pending_syncs,
+                    request_deserializer=cloud__scheduler__service__pb2.get_pending_syncs_request.FromString,
+                    response_serializer=cloud__scheduler__service__pb2.get_pending_syncs_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_scheduler_service.get_pending_syncs_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class get_pending_syncs_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def get_pending_syncs(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_scheduler_service.get_pending_syncs_service/get_pending_syncs',
+            cloud__scheduler__service__pb2.get_pending_syncs_request.SerializeToString,
+            cloud__scheduler__service__pb2.get_pending_syncs_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

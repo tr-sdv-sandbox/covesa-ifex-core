@@ -8,6 +8,9 @@
 
 namespace ifex::cloud {
 
+// Metadata key for channel-bound content_id (must match client)
+static constexpr const char* kContentIdMetadataKey = "x-content-id";
+
 namespace {
 // Simple hash for partition assignment
 uint32_t HashVehicleId(const std::string& vehicle_id) {
@@ -16,6 +19,20 @@ uint32_t HashVehicleId(const std::string& vehicle_id) {
         hash = hash * 31 + static_cast<uint32_t>(c);
     }
     return hash;
+}
+
+// Extract content_id from gRPC metadata
+uint32_t ExtractContentIdFromMetadata(grpc::ServerContext* context) {
+    const auto& metadata = context->client_metadata();
+    auto it = metadata.find(kContentIdMetadataKey);
+    if (it == metadata.end()) {
+        return 0;
+    }
+    try {
+        return std::stoul(std::string(it->second.data(), it->second.size()));
+    } catch (...) {
+        return 0;
+    }
 }
 }  // namespace
 
@@ -67,7 +84,7 @@ bool CloudBackendTransportServer::Start() {
         return false;
     }
 
-    LOG(INFO) << "CloudBackendTransportServer started for content_id=" << config_.content_id
+    LOG(INFO) << "CloudBackendTransportServer started (multi-content_id router)"
               << " partition=" << config_.partition_id << "/" << config_.total_partitions;
     return true;
 }
@@ -124,22 +141,53 @@ void CloudBackendTransportServer::OnConnect(int rc) {
     connected_.store(true);
     LOG(INFO) << "Connected to MQTT broker";
 
-    // Subscribe to v2c messages for our content_id
-    std::string v2c_pattern = V2cSubscribePattern();
-    int sub_rc = mosquitto_subscribe(mosq_, nullptr, v2c_pattern.c_str(), 1);
-    if (sub_rc != MOSQ_ERR_SUCCESS) {
-        LOG(ERROR) << "Failed to subscribe to " << v2c_pattern << ": " << mosquitto_strerror(sub_rc);
-    } else {
-        LOG(INFO) << "Subscribed to " << v2c_pattern;
-    }
-
-    // Subscribe to status messages
+    // Subscribe to status messages (always needed for vehicle online/offline)
     std::string status_pattern = StatusSubscribePattern();
-    sub_rc = mosquitto_subscribe(mosq_, nullptr, status_pattern.c_str(), 1);
+    int sub_rc = mosquitto_subscribe(mosq_, nullptr, status_pattern.c_str(), 1);
     if (sub_rc != MOSQ_ERR_SUCCESS) {
         LOG(ERROR) << "Failed to subscribe to " << status_pattern << ": " << mosquitto_strerror(sub_rc);
     } else {
         LOG(INFO) << "Subscribed to " << status_pattern;
+    }
+
+    // Re-subscribe to all content_ids that have active subscribers
+    {
+        std::shared_lock lock(subscriptions_mutex_);
+        for (uint32_t content_id : subscribed_content_ids_) {
+            std::string v2c_pattern = V2cSubscribePattern(content_id);
+            sub_rc = mosquitto_subscribe(mosq_, nullptr, v2c_pattern.c_str(), 1);
+            if (sub_rc != MOSQ_ERR_SUCCESS) {
+                LOG(ERROR) << "Failed to resubscribe to " << v2c_pattern << ": " << mosquitto_strerror(sub_rc);
+            } else {
+                LOG(INFO) << "Resubscribed to " << v2c_pattern;
+            }
+        }
+    }
+}
+
+void CloudBackendTransportServer::SubscribeToContentId(uint32_t content_id) {
+    // Check if already subscribed
+    {
+        std::shared_lock lock(subscriptions_mutex_);
+        if (subscribed_content_ids_.count(content_id) > 0) {
+            return;  // Already subscribed
+        }
+    }
+
+    // Add to subscribed set and subscribe to MQTT
+    {
+        std::unique_lock lock(subscriptions_mutex_);
+        subscribed_content_ids_.insert(content_id);
+    }
+
+    if (connected_.load()) {
+        std::string v2c_pattern = V2cSubscribePattern(content_id);
+        int sub_rc = mosquitto_subscribe(mosq_, nullptr, v2c_pattern.c_str(), 1);
+        if (sub_rc != MOSQ_ERR_SUCCESS) {
+            LOG(ERROR) << "Failed to subscribe to " << v2c_pattern << ": " << mosquitto_strerror(sub_rc);
+        } else {
+            LOG(INFO) << "Subscribed to " << v2c_pattern << " (on-demand for content_id=" << content_id << ")";
+        }
     }
 }
 
@@ -159,9 +207,6 @@ void CloudBackendTransportServer::OnMessage(const std::string& topic,
 
     // Try parsing as v2c message
     if (ParseV2cTopic(topic, vehicle_id, content_id)) {
-        if (content_id != config_.content_id) {
-            return;  // Not our content_id
-        }
         if (!OwnsVehicle(vehicle_id)) {
             return;  // Not our partition
         }
@@ -185,7 +230,7 @@ void CloudBackendTransportServer::OnMessage(const std::string& topic,
             seq = vehicles_[vehicle_id].inbound_sequence;
         }
 
-        BroadcastVehicleMessage(vehicle_id, payload, seq);
+        BroadcastVehicleMessage(vehicle_id, payload, seq, content_id);
         return;
     }
 
@@ -217,14 +262,14 @@ void CloudBackendTransportServer::OnMessage(const std::string& topic,
 // Topic Helpers
 // =============================================================================
 
-std::string CloudBackendTransportServer::V2cSubscribePattern() const {
+std::string CloudBackendTransportServer::V2cSubscribePattern(uint32_t content_id) const {
     // v2c/+/{content_id}
-    return config_.v2c_prefix + "/+/" + std::to_string(config_.content_id);
+    return config_.v2c_prefix + "/+/" + std::to_string(content_id);
 }
 
-std::string CloudBackendTransportServer::C2vTopic(const std::string& vehicle_id) const {
+std::string CloudBackendTransportServer::C2vTopic(const std::string& vehicle_id, uint32_t content_id) const {
     // c2v/{vehicle_id}/{content_id}
-    return config_.c2v_prefix + "/" + vehicle_id + "/" + std::to_string(config_.content_id);
+    return config_.c2v_prefix + "/" + vehicle_id + "/" + std::to_string(content_id);
 }
 
 std::string CloudBackendTransportServer::StatusSubscribePattern() const {
@@ -298,7 +343,8 @@ bool CloudBackendTransportServer::OwnsVehicle(const std::string& vehicle_id) con
 
 void CloudBackendTransportServer::BroadcastVehicleMessage(const std::string& vehicle_id,
                                                            const std::vector<uint8_t>& payload,
-                                                           uint64_t sequence) {
+                                                           uint64_t sequence,
+                                                           uint32_t content_id) {
     swdv::cloud_backend_transport_service::on_vehicle_message msg;
     auto* vm = msg.mutable_message();
     vm->set_vehicle_id(vehicle_id);
@@ -307,8 +353,11 @@ void CloudBackendTransportServer::BroadcastVehicleMessage(const std::string& veh
     vm->set_timestamp_ms(NowMs());
 
     std::shared_lock lock(message_streams_mutex_);
-    for (auto* writer : message_streams_) {
-        writer->Write(msg);
+    for (const auto& sub : message_streams_) {
+        // Only send to streams subscribed to this content_id
+        if (sub.content_id == content_id) {
+            sub.writer->Write(msg);
+        }
     }
 }
 
@@ -373,7 +422,15 @@ grpc::Status CloudBackendTransportServer::send_to_vehicle(
 
     const auto& req = request->request();
     const std::string& vehicle_id = req.vehicle_id();
+    uint32_t content_id = req.content_id();
     auto* result = response->mutable_result();
+
+    // Validate content_id
+    if (content_id == 0) {
+        result->set_status(swdv::cloud_backend_transport_service::publish_status_t::INVALID_REQUEST);
+        result->set_sequence(0);
+        return grpc::Status::OK;
+    }
 
     // Check partition ownership
     if (!OwnsVehicle(vehicle_id)) {
@@ -390,7 +447,7 @@ grpc::Status CloudBackendTransportServer::send_to_vehicle(
     }
 
     // Publish to MQTT
-    std::string topic = C2vTopic(vehicle_id);
+    std::string topic = C2vTopic(vehicle_id, content_id);
     const std::string& payload = req.payload();
 
     int rc = mosquitto_publish(mosq_, nullptr, topic.c_str(),
@@ -443,12 +500,15 @@ grpc::Status CloudBackendTransportServer::get_vehicle_status(
 }
 
 grpc::Status CloudBackendTransportServer::get_channel_info(
-    grpc::ServerContext* /*context*/,
+    grpc::ServerContext* context,
     const swdv::cloud_backend_transport_service::get_channel_info_request* /*request*/,
     swdv::cloud_backend_transport_service::get_channel_info_response* response) {
 
+    // Extract content_id from metadata (channel-bound model)
+    uint32_t content_id = ExtractContentIdFromMetadata(context);
+
     auto* info = response->mutable_info();
-    info->set_content_id(config_.content_id);
+    info->set_content_id(content_id);
     info->set_partition_id(config_.partition_id);
     info->set_total_partitions(config_.total_partitions);
 
@@ -500,6 +560,26 @@ grpc::Status CloudBackendTransportServer::get_stats(
     return grpc::Status::OK;
 }
 
+grpc::Status CloudBackendTransportServer::list_vehicles(
+    grpc::ServerContext* /*context*/,
+    const swdv::cloud_backend_transport_service::list_vehicles_request* /*request*/,
+    swdv::cloud_backend_transport_service::list_vehicles_response* response) {
+
+    auto* result = response->mutable_result();
+
+    std::shared_lock lock(vehicles_mutex_);
+    for (const auto& [vid, state] : vehicles_) {
+        auto* vehicle = result->add_vehicles();
+        vehicle->set_vehicle_id(vid);
+        vehicle->set_status(state.is_online
+            ? swdv::cloud_backend_transport_service::vehicle_status_t::ONLINE
+            : swdv::cloud_backend_transport_service::vehicle_status_t::OFFLINE);
+        vehicle->set_last_seen_ms(state.last_seen_ms);
+    }
+
+    return grpc::Status::OK;
+}
+
 grpc::Status CloudBackendTransportServer::healthy(
     grpc::ServerContext* /*context*/,
     const swdv::cloud_backend_transport_service::healthy_request* /*request*/,
@@ -515,12 +595,25 @@ grpc::Status CloudBackendTransportServer::healthy(
 
 grpc::Status CloudBackendTransportServer::subscribe(
     grpc::ServerContext* context,
-    const swdv::cloud_backend_transport_service::on_vehicle_message_subscribe_request* /*request*/,
+    const swdv::cloud_backend_transport_service::on_vehicle_message_subscribe_request* request,
     grpc::ServerWriter<swdv::cloud_backend_transport_service::on_vehicle_message>* writer) {
 
+    // Extract content_id from request (specified in IFEX spec)
+    uint32_t content_id = request->content_id();
+    if (content_id == 0) {
+        return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                           "content_id is required in subscribe request");
+    }
+
+    LOG(INFO) << "Client subscribed to vehicle messages for content_id=" << content_id;
+
+    // Subscribe to MQTT topic on-demand
+    SubscribeToContentId(content_id);
+
+    // Add writer to message streams with content_id binding
     {
         std::unique_lock lock(message_streams_mutex_);
-        message_streams_.push_back(writer);
+        message_streams_.push_back({writer, content_id});
     }
 
     // Block until client disconnects
@@ -528,13 +621,18 @@ grpc::Status CloudBackendTransportServer::subscribe(
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
+    // Remove writer from message streams
     {
         std::unique_lock lock(message_streams_mutex_);
         message_streams_.erase(
-            std::remove(message_streams_.begin(), message_streams_.end(), writer),
+            std::remove_if(message_streams_.begin(), message_streams_.end(),
+                          [writer](const MessageStreamSubscription& sub) {
+                              return sub.writer == writer;
+                          }),
             message_streams_.end());
     }
 
+    LOG(INFO) << "Client unsubscribed from vehicle messages (content_id=" << content_id << ")";
     return grpc::Status::OK;
 }
 

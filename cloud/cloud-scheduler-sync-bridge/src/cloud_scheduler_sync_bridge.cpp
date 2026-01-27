@@ -27,29 +27,26 @@ static uint64_t NowMs() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// Map sync v2 status to scheduler cloud status
-static sched_pb::cloud_job_status_t SyncV2ToCloudStatus(sync_v2::JobStatus status) {
+// Map sync v2 status to common job status
+static scheduler_types::job_status_t SyncV2ToJobStatus(sync_v2::JobStatus status) {
     switch (status) {
-        case sync_v2::JOB_STATUS_PENDING: return sched_pb::JOB_PENDING;
-        case sync_v2::JOB_STATUS_RUNNING: return sched_pb::JOB_RUNNING;
-        case sync_v2::JOB_STATUS_COMPLETED: return sched_pb::JOB_COMPLETED;
-        case sync_v2::JOB_STATUS_FAILED: return sched_pb::JOB_FAILED;
-        case sync_v2::JOB_STATUS_CANCELLED: return sched_pb::JOB_CANCELLED;
-        default: return sched_pb::JOB_PENDING;
+        case sync_v2::JOB_STATUS_PENDING: return scheduler_types::JOB_STATUS_PENDING;
+        case sync_v2::JOB_STATUS_RUNNING: return scheduler_types::JOB_STATUS_RUNNING;
+        case sync_v2::JOB_STATUS_COMPLETED: return scheduler_types::JOB_STATUS_COMPLETED;
+        case sync_v2::JOB_STATUS_FAILED: return scheduler_types::JOB_STATUS_FAILED;
+        case sync_v2::JOB_STATUS_CANCELLED: return scheduler_types::JOB_STATUS_CANCELLED;
+        default: return scheduler_types::JOB_STATUS_PENDING;
     }
 }
 
-// Map scheduler cloud status to sync v2 status
-static sync_v2::JobStatus CloudStatusToSyncV2(sched_pb::cloud_job_status_t status) {
+// Map common job status to sync v2 status
+static sync_v2::JobStatus JobStatusToSyncV2(scheduler_types::job_status_t status) {
     switch (status) {
-        case sched_pb::JOB_PENDING: return sync_v2::JOB_STATUS_PENDING;
-        case sched_pb::JOB_SCHEDULED: return sync_v2::JOB_STATUS_PENDING;
-        case sched_pb::JOB_RUNNING: return sync_v2::JOB_STATUS_RUNNING;
-        case sched_pb::JOB_COMPLETED: return sync_v2::JOB_STATUS_COMPLETED;
-        case sched_pb::JOB_FAILED: return sync_v2::JOB_STATUS_FAILED;
-        case sched_pb::JOB_CANCELLED: return sync_v2::JOB_STATUS_CANCELLED;
-        case sched_pb::JOB_PAUSED: return sync_v2::JOB_STATUS_PENDING;
-        case sched_pb::JOB_DELETING: return sync_v2::JOB_STATUS_CANCELLED;
+        case scheduler_types::JOB_STATUS_PENDING: return sync_v2::JOB_STATUS_PENDING;
+        case scheduler_types::JOB_STATUS_RUNNING: return sync_v2::JOB_STATUS_RUNNING;
+        case scheduler_types::JOB_STATUS_COMPLETED: return sync_v2::JOB_STATUS_COMPLETED;
+        case scheduler_types::JOB_STATUS_FAILED: return sync_v2::JOB_STATUS_FAILED;
+        case scheduler_types::JOB_STATUS_CANCELLED: return sync_v2::JOB_STATUS_CANCELLED;
         default: return sync_v2::JOB_STATUS_PENDING;
     }
 }
@@ -135,6 +132,7 @@ bool CloudSchedulerSyncBridge::Start() {
 
     running_ = true;
     StartMessageSubscription();
+    StartPendingSyncsPoll();
 
     LOG(INFO) << "CloudSchedulerSyncBridge started";
     return true;
@@ -161,12 +159,22 @@ void CloudSchedulerSyncBridge::Stop() {
         subscription_thread_.join();
     }
 
+    // Wake up and stop poll thread
+    {
+        std::lock_guard<std::mutex> lock(poll_mutex_);
+        poll_cv_.notify_all();
+    }
+    if (poll_thread_.joinable()) {
+        poll_thread_.join();
+    }
+
     // Clear stubs
     get_jobs_stub_.reset();
     upsert_job_stub_.reset();
     record_execution_stub_.reset();
     get_sync_state_stub_.reset();
     update_sync_state_stub_.reset();
+    get_pending_syncs_stub_.reset();
     send_stub_.reset();
     subscribe_stub_.reset();
 
@@ -192,6 +200,7 @@ bool CloudSchedulerSyncBridge::ConnectToServices() {
     record_execution_stub_ = sched_pb::record_execution_service::NewStub(scheduler_channel_);
     get_sync_state_stub_ = sched_pb::get_vehicle_sync_state_service::NewStub(scheduler_channel_);
     update_sync_state_stub_ = sched_pb::update_vehicle_sync_state_service::NewStub(scheduler_channel_);
+    get_pending_syncs_stub_ = sched_pb::get_pending_syncs_service::NewStub(scheduler_channel_);
 
     // Create transport stubs
     send_stub_ = transport_pb::send_to_vehicle_service::NewStub(transport_channel_);
@@ -219,7 +228,7 @@ void CloudSchedulerSyncBridge::StartMessageSubscription() {
             }
 
             transport_pb::on_vehicle_message_subscribe_request request;
-            // Subscribe request is empty - receives all messages for this partition
+            request.set_content_id(config_.content_id);  // Scheduler sync content_id (e.g., 202)
 
             auto reader = subscribe_stub_->subscribe(subscription_context_.get(), request);
 
@@ -250,6 +259,58 @@ void CloudSchedulerSyncBridge::StartMessageSubscription() {
 
         LOG(INFO) << "V2C message subscription stopped";
     });
+}
+
+void CloudSchedulerSyncBridge::StartPendingSyncsPoll() {
+    poll_thread_ = std::thread(&CloudSchedulerSyncBridge::PollLoop, this);
+}
+
+void CloudSchedulerSyncBridge::PollLoop() {
+    LOG(INFO) << "Starting pending syncs poll thread, interval=" << config_.poll_interval_ms << "ms";
+
+    while (running_) {
+        {
+            std::unique_lock<std::mutex> lock(poll_mutex_);
+            poll_cv_.wait_for(lock, std::chrono::milliseconds(config_.poll_interval_ms),
+                              [this]() { return !running_; });
+        }
+
+        if (!running_) break;
+
+        // Query scheduler for vehicles with pending syncs
+        grpc::ClientContext context;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+
+        sched_pb::get_pending_syncs_request request;
+        request.set_limit(100);  // Process up to 100 vehicles per poll cycle
+
+        sched_pb::get_pending_syncs_response response;
+        auto status = get_pending_syncs_stub_->get_pending_syncs(&context, request, &response);
+
+        if (!status.ok()) {
+            if (running_) {
+                LOG(WARNING) << "Failed to get pending syncs: " << status.error_message();
+            }
+            continue;
+        }
+
+        // Send C2V to each vehicle with pending changes
+        for (const auto& vehicle_state : response.pending_vehicles()) {
+            const std::string& vehicle_id = vehicle_state.vehicle_id();
+
+            VLOG(1) << "Vehicle " << vehicle_id << " needs sync:"
+                    << " cloud_checksum=" << std::hex << vehicle_state.cloud_checksum()
+                    << " last_seen=" << vehicle_state.last_seen_v2c_checksum() << std::dec;
+
+            SendC2VMessage(vehicle_id);
+        }
+
+        if (response.pending_vehicles_size() > 0) {
+            LOG(INFO) << "Sent C2V sync messages to " << response.pending_vehicles_size() << " vehicles";
+        }
+    }
+
+    LOG(INFO) << "Pending syncs poll thread stopped";
 }
 
 void CloudSchedulerSyncBridge::RegisterServices(grpc::ServerBuilder& builder) {
@@ -315,7 +376,7 @@ void CloudSchedulerSyncBridge::ProcessV2CMessage(
     auto cloud_jobs = GetCloudJobs(vehicle_id);
 
     // Build map of cloud jobs by job_id for comparison
-    std::map<std::string, sched_pb::job_info_t> cloud_job_map;
+    std::map<std::string, scheduler_types::job_t> cloud_job_map;
     for (const auto& job : cloud_jobs) {
         cloud_job_map[job.job_id()] = job;
     }
@@ -415,7 +476,7 @@ void CloudSchedulerSyncBridge::ProcessV2CMessage(
 // Scheduler API Calls
 // =============================================================================
 
-std::vector<sched_pb::job_info_t> CloudSchedulerSyncBridge::GetCloudJobs(
+std::vector<scheduler_types::job_t> CloudSchedulerSyncBridge::GetCloudJobs(
     const std::string& vehicle_id) {
 
     grpc::ClientContext context;
@@ -436,7 +497,7 @@ std::vector<sched_pb::job_info_t> CloudSchedulerSyncBridge::GetCloudJobs(
     return {response.jobs().begin(), response.jobs().end()};
 }
 
-bool CloudSchedulerSyncBridge::UpsertJob(const sched_pb::job_info_t& job) {
+bool CloudSchedulerSyncBridge::UpsertJob(const scheduler_types::job_t& job) {
     grpc::ClientContext context;
     sched_pb::upsert_job_request request;
     sched_pb::upsert_job_response response;
@@ -469,7 +530,7 @@ bool CloudSchedulerSyncBridge::RecordExecution(
     exec->set_execution_id(execution.execution_id());
     exec->set_executed_at_ms(execution.executed_at_ms());
     exec->set_duration_ms(execution.duration_ms());
-    exec->set_status(SyncV2ToCloudStatus(execution.status()));
+    exec->set_status(SyncV2ToJobStatus(execution.status()));
     exec->set_result_json(execution.result_json());
     exec->set_error_message(execution.error_message());
 
@@ -554,6 +615,7 @@ void CloudSchedulerSyncBridge::SendC2VMessage(const std::string& vehicle_id) {
 
     auto* send_req = request.mutable_request();
     send_req->set_vehicle_id(vehicle_id);
+    send_req->set_content_id(config_.content_id);
     send_req->set_payload(serialized);
     send_req->set_persistence(transport_pb::persistence_t::VOLATILE);
 
@@ -591,11 +653,11 @@ void CloudSchedulerSyncBridge::SendC2VMessage(const std::string& vehicle_id) {
 // Type Conversions
 // =============================================================================
 
-sched_pb::job_info_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
+scheduler_types::job_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
     const std::string& vehicle_id,
     const sync_v2::JobRecord& record) {
 
-    sched_pb::job_info_t job;
+    scheduler_types::job_t job;
     job.set_vehicle_id(vehicle_id);
     job.set_job_id(record.job_id());
     job.set_authority(SyncV2ToAuthority(record.authority()));
@@ -613,7 +675,7 @@ sched_pb::job_info_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
     job.set_wake_policy(SyncV2ToWakePolicy(record.wake_policy()));
     job.set_sleep_policy(SyncV2ToSleepPolicy(record.sleep_policy()));
     job.set_wake_lead_time_s(record.wake_lead_time_s());
-    job.set_status(SyncV2ToCloudStatus(record.status()));
+    job.set_status(SyncV2ToJobStatus(record.status()));
     job.set_next_run_time_ms(record.next_run_time_ms());
     job.set_last_executed_ms(record.last_executed_ms());
     job.set_created_at_ms(record.created_at_ms());
@@ -624,7 +686,7 @@ sched_pb::job_info_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
 }
 
 sync_v2::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
-    const sched_pb::job_info_t& job) {
+    const scheduler_types::job_t& job) {
 
     sync_v2::JobRecord record;
     record.set_job_id(job.job_id());
@@ -643,7 +705,7 @@ sync_v2::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
     record.set_wake_policy(WakePolicyToSyncV2(job.wake_policy()));
     record.set_sleep_policy(SleepPolicyToSyncV2(job.sleep_policy()));
     record.set_wake_lead_time_s(job.wake_lead_time_s());
-    record.set_status(CloudStatusToSyncV2(job.status()));
+    record.set_status(JobStatusToSyncV2(job.status()));
     record.set_next_run_time_ms(job.next_run_time_ms());
     record.set_last_executed_ms(job.last_executed_ms());
     record.set_created_at_ms(job.created_at_ms());
@@ -654,9 +716,10 @@ sync_v2::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
 }
 
 uint64_t CloudSchedulerSyncBridge::ComputeStateChecksum(
-    const std::vector<sched_pb::job_info_t>& jobs) {
+    const std::vector<scheduler_types::job_t>& jobs) {
 
     // Use the scheduler library for consistent checksum computation
+    // Must include ALL fields that are part of the hash (see job_hash.cpp)
     std::vector<sched_lib::Job> lib_jobs;
     for (const auto& job : jobs) {
         sched_lib::Job lib_job;
@@ -669,6 +732,13 @@ uint64_t CloudSchedulerSyncBridge::ComputeStateChecksum(
         lib_job.recurrence_rule = job.recurrence_rule();
         lib_job.end_time_ms = job.end_time_ms();
         lib_job.paused = job.paused();
+        lib_job.wake_policy = static_cast<sched_lib::WakePolicy>(job.wake_policy());
+        lib_job.sleep_policy = static_cast<sched_lib::SleepPolicy>(job.sleep_policy());
+        lib_job.wake_lead_time_s = job.wake_lead_time_s();
+        lib_job.status = static_cast<sched_lib::JobStatus>(job.status());
+        lib_job.authority = static_cast<sched_lib::JobAuthority>(job.authority());
+        lib_job.version.cloud_seq = job.cloud_seq();
+        lib_job.version.vehicle_seq = job.vehicle_seq();
         lib_job.deleted = job.deleted();
         lib_jobs.push_back(lib_job);
     }

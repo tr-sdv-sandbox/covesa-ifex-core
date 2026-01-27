@@ -123,14 +123,16 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
 
     // Register services (IFEX generates separate services per method)
     builder.RegisterService(static_cast<swdv::ifex_scheduler::create_job_service::Service*>(service.get()));
-    builder.RegisterService(static_cast<swdv::ifex_scheduler::get_jobs_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::list_jobs_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::list_jobs_hash_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::get_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::update_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::delete_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::pause_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::resume_job_service::Service*>(service.get()));
     builder.RegisterService(static_cast<swdv::ifex_scheduler::trigger_job_service::Service*>(service.get()));
-    builder.RegisterService(static_cast<swdv::ifex_scheduler::get_calendar_view_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::list_executions_service::Service*>(service.get()));
+    builder.RegisterService(static_cast<swdv::ifex_scheduler::list_executions_hash_service::Service*>(service.get()));
 
     // Build and start the server
     server = builder.BuildAndStart();
@@ -152,6 +154,7 @@ void RunServer(const std::string& listen_address, const std::string& service_dis
         LOG(INFO) << "  CRUD API: create_job, get_jobs, get_job, update_job, delete_job";
         LOG(INFO) << "  Control: pause_job, resume_job, trigger_job";
         LOG(INFO) << "  Calendar views: get_calendar_view (day/week/month)";
+        LOG(INFO) << "  Change detection: get_jobs_hash (for efficient polling)";
         LOG(INFO) << "  Cron expressions and recurring jobs supported";
 
         // Wait for server shutdown with periodic checks

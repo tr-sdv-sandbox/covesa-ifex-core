@@ -144,14 +144,15 @@ service {{ method.name }}_service {
 
 {% endfor %}
 {# Generate events as messages + streaming services #}
-{# Fields starting with 'filter_' go into subscribe_request, others into event message #}
+{# subscribe_input: explicit subscription parameters (preferred) #}
+{# Fallback: fields starting with 'filter_' go into subscribe_request #}
 {% for event in n.events %}
 // Event: {{ event.name }}
 {% if event.description %}// {{ event.description }}{% endif %}
 
 message {{ event.name }} {
 {% set event_idx = namespace(value=1) %}
-{% for arg in event.input %}
+{% for arg in event.input|default([]) %}
 {% if not arg.name.startswith('filter_') %}
   {{ convert_type(arg.datatype) }} {{ arg.name }} = {{ event_idx.value }};
 {% set event_idx.value = event_idx.value + 1 %}
@@ -161,7 +162,13 @@ message {{ event.name }} {
 
 message {{ event.name }}_subscribe_request {
 {% set filter_idx = namespace(value=1) %}
-{% for arg in event.input %}
+{# First check for explicit subscribe_input (clean IFEX API) #}
+{% for arg in event.subscribe_input|default([]) %}
+  {{ convert_type(arg.datatype) }} {{ arg.name }} = {{ filter_idx.value }};
+{% set filter_idx.value = filter_idx.value + 1 %}
+{% endfor %}
+{# Fallback: legacy filter_ prefix in input fields #}
+{% for arg in event.input|default([]) %}
 {% if arg.name.startswith('filter_') %}
   {{ convert_type(arg.datatype) }} {{ arg.name[7:] }} = {{ filter_idx.value }};
 {% set filter_idx.value = filter_idx.value + 1 %}

@@ -117,11 +117,11 @@ namespaces:
             datatype: uint64
             description: Incremented by vehicle on any change
 
-      - name: job_record_t
+      - name: job_t
         description: >
           Complete job record with version tracking.
-          This is the canonical job structure used in sync protocol.
-          Both vehicle and cloud store jobs in this format.
+          This is the canonical job structure used by both vehicle and cloud.
+          Aligned with scheduler-sync-protocol-v2.md specification.
         members:
           # --- Identity ---
           - name: job_id
@@ -145,10 +145,6 @@ namespaces:
           - name: deleted
             datatype: boolean
             description: Soft delete tombstone flag
-            mandatory: false
-          - name: deleted_at_ms
-            datatype: uint64
-            description: When deleted (epoch ms, for GC timing only)
             mandatory: false
 
           # --- Content (included in checksum, synced) ---
@@ -206,7 +202,13 @@ namespaces:
             description: Last execution timestamp (epoch ms)
             mandatory: false
 
-          # --- Metadata (NOT in checksum) ---
+          # --- Metadata (NOT in checksum, NOT synced) ---
+          - name: vehicle_id
+            datatype: string
+            description: >
+              Target vehicle ID. Assigned by cloud, not synced to vehicle.
+              Vehicle scheduler ignores this field.
+            mandatory: false
           - name: created_at_ms
             datatype: uint64
             description: Creation timestamp (epoch ms)

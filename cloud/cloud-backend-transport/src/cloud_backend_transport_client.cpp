@@ -4,8 +4,12 @@
 
 namespace ifex::cloud {
 
-CloudBackendTransportClient::CloudBackendTransportClient(const std::string& server_address)
-    : channel_(grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials())) {
+// Metadata key for channel-bound content_id (must match server)
+static constexpr const char* kContentIdMetadataKey = "x-content-id";
+
+CloudBackendTransportClient::CloudBackendTransportClient(const std::string& server_address, uint32_t content_id)
+    : content_id_(content_id),
+      channel_(grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials())) {
 
     send_stub_ = swdv::cloud_backend_transport_service::send_to_vehicle_service::NewStub(channel_);
     status_stub_ = swdv::cloud_backend_transport_service::get_vehicle_status_service::NewStub(channel_);
@@ -17,6 +21,10 @@ CloudBackendTransportClient::CloudBackendTransportClient(const std::string& serv
     ack_event_stub_ = swdv::cloud_backend_transport_service::on_ack_service::NewStub(channel_);
     status_event_stub_ = swdv::cloud_backend_transport_service::on_vehicle_status_service::NewStub(channel_);
     queue_event_stub_ = swdv::cloud_backend_transport_service::on_queue_status_changed_service::NewStub(channel_);
+}
+
+void CloudBackendTransportClient::AddContentIdMetadata(grpc::ClientContext* context) {
+    context->AddMetadata(kContentIdMetadataKey, std::to_string(content_id_));
 }
 
 CloudBackendTransportClient::~CloudBackendTransportClient() {
@@ -38,6 +46,7 @@ swdv::cloud_backend_transport_service::send_response_t CloudBackendTransportClie
 
     auto* req = request.mutable_request();
     req->set_vehicle_id(vehicle_id);
+    req->set_content_id(content_id_);
     req->set_payload(payload.data(), payload.size());
     req->set_persistence(persistence);
 
@@ -75,6 +84,8 @@ CloudBackendTransportClient::GetVehicleStatus(const std::string& vehicle_id) {
 swdv::cloud_backend_transport_service::channel_info_t CloudBackendTransportClient::GetChannelInfo() {
 
     grpc::ClientContext context;
+    AddContentIdMetadata(&context);
+
     swdv::cloud_backend_transport_service::get_channel_info_request request;
     swdv::cloud_backend_transport_service::get_channel_info_response response;
 
@@ -153,9 +164,11 @@ void CloudBackendTransportClient::SubscribeToVehicleMessages(VehicleMessageCallb
             {
                 std::lock_guard lock(context_mutex_);
                 message_context_ = std::make_unique<grpc::ClientContext>();
+                AddContentIdMetadata(message_context_.get());
             }
 
             swdv::cloud_backend_transport_service::on_vehicle_message_subscribe_request request;
+            request.set_content_id(content_id_);
             auto reader = msg_event_stub_->subscribe(message_context_.get(), request);
 
             swdv::cloud_backend_transport_service::on_vehicle_message msg;
@@ -188,6 +201,7 @@ void CloudBackendTransportClient::SubscribeToVehicleStatus(VehicleStatusCallback
             {
                 std::lock_guard lock(context_mutex_);
                 status_context_ = std::make_unique<grpc::ClientContext>();
+                AddContentIdMetadata(status_context_.get());
             }
 
             swdv::cloud_backend_transport_service::on_vehicle_status_subscribe_request request;
@@ -222,6 +236,7 @@ void CloudBackendTransportClient::SubscribeToAcks(AckCallback callback) {
             {
                 std::lock_guard lock(context_mutex_);
                 ack_context_ = std::make_unique<grpc::ClientContext>();
+                AddContentIdMetadata(ack_context_.get());
             }
 
             swdv::cloud_backend_transport_service::on_ack_subscribe_request request;
@@ -256,6 +271,7 @@ void CloudBackendTransportClient::SubscribeToQueueStatus(QueueStatusCallback cal
             {
                 std::lock_guard lock(context_mutex_);
                 queue_context_ = std::make_unique<grpc::ClientContext>();
+                AddContentIdMetadata(queue_context_.get());
             }
 
             swdv::cloud_backend_transport_service::on_queue_status_changed_subscribe_request request;

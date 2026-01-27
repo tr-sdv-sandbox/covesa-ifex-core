@@ -137,7 +137,7 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
     job->set_method("echo");
 
     json params = {{"message", "scheduled execution test"}};
-    job->set_parameters(params.dump());
+    job->set_parameters_json(params.dump());
     job->set_scheduled_time_ms(get_future_time_ms(1));  // 1 second from now
 
     swdv::ifex_scheduler::create_job_response create_response;
@@ -154,28 +154,35 @@ TEST_F(FullChainIntegrationTest, SchedulerExecutesJobThroughDispatcher) {
     // Wait for job to execute (2.5 seconds should be enough)
     std::this_thread::sleep_for(std::chrono::milliseconds(2500));
 
-    // Check job status - should be COMPLETED or RUNNING
-    auto get_stub = swdv::ifex_scheduler::get_job_service::NewStub(scheduler_channel_);
+    // Check execution history - one-time jobs become tombstones after completion
+    // so we use list_executions instead of get_job
+    auto exec_stub = swdv::ifex_scheduler::list_executions_service::NewStub(scheduler_channel_);
 
-    swdv::ifex_scheduler::get_job_request get_request;
-    get_request.set_job_id(job_id);
+    swdv::ifex_scheduler::list_executions_request exec_request;
+    exec_request.mutable_filter()->set_job_id(job_id);
 
-    swdv::ifex_scheduler::get_job_response get_response;
-    grpc::ClientContext get_context;
+    swdv::ifex_scheduler::list_executions_response exec_response;
+    grpc::ClientContext exec_context;
 
-    status = get_stub->get_job(&get_context, get_request, &get_response);
-    ASSERT_TRUE(status.ok());
+    status = exec_stub->list_executions(&exec_context, exec_request, &exec_response);
+    ASSERT_TRUE(status.ok() && exec_response.success());
 
-    auto job_status = get_response.job().status();
+    // Job should have been executed (at least one execution record)
+    ASSERT_GE(exec_response.executions_size(), 1)
+        << "Job should have been executed by now";
+
+    const auto& exec = exec_response.executions(0);
+    auto job_status = exec.status();
     LOG(INFO) << "Job status after execution: " << job_status;
 
-    // Job should have been executed (status COMPLETED or at least not PENDING)
-    EXPECT_NE(job_status, swdv::scheduler_types::JOB_STATUS_PENDING)
+    // Verify job completed or failed (not still pending)
+    EXPECT_TRUE(job_status == swdv::scheduler_types::JOB_STATUS_COMPLETED ||
+                job_status == swdv::scheduler_types::JOB_STATUS_FAILED)
         << "Job should have been executed by now";
 
     // Verify the echo service response was captured
     if (job_status == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
-        const auto& result = get_response.job().result();
+        const auto& result = exec.result();
         EXPECT_FALSE(result.empty()) << "Completed job should have a result";
         LOG(INFO) << "Job result: " << result;
 
@@ -274,7 +281,7 @@ TEST_F(FullChainIntegrationTest, SchedulerValidatesServiceViaDiscovery) {
     job->set_title("Invalid Service Job");
     job->set_service("this_service_does_not_exist");
     job->set_method("some_method");
-    job->set_parameters("{}");
+    job->set_parameters_json("{}");
     job->set_scheduled_time_ms(get_future_time_ms(3600));
 
     swdv::ifex_scheduler::create_job_response response;
@@ -302,7 +309,7 @@ TEST_F(FullChainIntegrationTest, MultipleJobsExecuteInOrder) {
         job->set_method("echo");
 
         json params = {{"message", "job " + std::to_string(i)}};
-        job->set_parameters(params.dump());
+        job->set_parameters_json(params.dump());
         job->set_scheduled_time_ms(get_future_time_ms(1 + i));  // 1, 2, 3 seconds
 
         swdv::ifex_scheduler::create_job_response response;
@@ -318,21 +325,23 @@ TEST_F(FullChainIntegrationTest, MultipleJobsExecuteInOrder) {
     // Wait for all jobs to complete (last job at 3s + 1.5s buffer)
     std::this_thread::sleep_for(std::chrono::milliseconds(4500));
 
-    // Verify all jobs completed
-    auto get_stub = swdv::ifex_scheduler::get_job_service::NewStub(scheduler_channel_);
+    // Verify all jobs completed via execution history
+    // (One-time jobs become tombstones after completion, so get_job returns not found)
+    auto exec_stub = swdv::ifex_scheduler::list_executions_service::NewStub(scheduler_channel_);
 
     int completed_count = 0;
     for (const auto& job_id : job_ids) {
-        swdv::ifex_scheduler::get_job_request request;
-        request.set_job_id(job_id);
+        swdv::ifex_scheduler::list_executions_request request;
+        request.mutable_filter()->set_job_id(job_id);
 
-        swdv::ifex_scheduler::get_job_response response;
+        swdv::ifex_scheduler::list_executions_response response;
         grpc::ClientContext context;
 
-        auto status = get_stub->get_job(&context, request, &response);
-        ASSERT_TRUE(status.ok());
+        auto status = exec_stub->list_executions(&context, request, &response);
+        ASSERT_TRUE(status.ok() && response.success());
 
-        if (response.job().status() == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
+        if (response.executions_size() > 0 &&
+            response.executions(0).status() == swdv::scheduler_types::JOB_STATUS_COMPLETED) {
             completed_count++;
         }
     }
@@ -358,7 +367,7 @@ TEST_F(FullChainIntegrationTest, CompleteJobLifecycle) {
     job->set_title("Lifecycle Test Job");
     job->set_service("echo_service");
     job->set_method("echo");
-    job->set_parameters(R"({"message": "lifecycle test"})");
+    job->set_parameters_json(R"({"message": "lifecycle test"})");
     job->set_scheduled_time_ms(get_future_time_ms(3600));  // Far future - won't execute
 
     swdv::ifex_scheduler::create_job_response create_response;

@@ -128,7 +128,6 @@ struct SyncedJobState {
     swdv::scheduler_sync_v2::JobAuthority authority =
         swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
     bool deleted = false;
-    uint64_t deleted_at_ms = 0;
     uint64_t scheduled_time_ms = 0;
     uint64_t end_time_ms = 0;
     bool needs_sync = false;  // Local tracking: needs to be sent to remote
@@ -262,7 +261,7 @@ private:
     std::shared_ptr<grpc::Channel> scheduler_channel_;
 
     /// Scheduler service stubs
-    std::unique_ptr<swdv::ifex_scheduler::get_jobs_service::Stub> get_jobs_stub_;
+    std::unique_ptr<swdv::ifex_scheduler::list_jobs_service::Stub> list_jobs_stub_;
     std::unique_ptr<swdv::ifex_scheduler::create_job_service::Stub> create_job_stub_;
     std::unique_ptr<swdv::ifex_scheduler::update_job_service::Stub> update_job_stub_;
     std::unique_ptr<swdv::ifex_scheduler::delete_job_service::Stub> delete_job_stub_;

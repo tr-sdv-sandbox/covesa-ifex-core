@@ -16,8 +16,7 @@ DEFINE_int32(mqtt_port, 1883, "MQTT broker port");
 DEFINE_string(mqtt_username, "", "MQTT username (optional)");
 DEFINE_string(mqtt_password, "", "MQTT password (optional)");
 
-// Channel binding
-DEFINE_uint32(content_id, 200, "Content ID to handle");
+// Partitioning (for horizontal scaling)
 DEFINE_uint32(partition_id, 0, "Partition ID (0 for single partition)");
 DEFINE_uint32(total_partitions, 1, "Total number of partitions");
 
@@ -51,7 +50,6 @@ int main(int argc, char* argv[]) {
     config.mqtt_port = FLAGS_mqtt_port;
     config.mqtt_username = FLAGS_mqtt_username;
     config.mqtt_password = FLAGS_mqtt_password;
-    config.content_id = FLAGS_content_id;
     config.partition_id = FLAGS_partition_id;
     config.total_partitions = FLAGS_total_partitions;
     config.v2c_prefix = FLAGS_v2c_prefix;
@@ -82,6 +80,8 @@ int main(int argc, char* argv[]) {
     builder.RegisterService(
         static_cast<swdv::cloud_backend_transport_service::get_stats_service::Service*>(transport.get()));
     builder.RegisterService(
+        static_cast<swdv::cloud_backend_transport_service::list_vehicles_service::Service*>(transport.get()));
+    builder.RegisterService(
         static_cast<swdv::cloud_backend_transport_service::healthy_service::Service*>(transport.get()));
     builder.RegisterService(
         static_cast<swdv::cloud_backend_transport_service::on_vehicle_message_service::Service*>(transport.get()));
@@ -99,9 +99,9 @@ int main(int argc, char* argv[]) {
     }
 
     LOG(INFO) << "CloudBackendTransportServer listening on " << FLAGS_listen;
-    LOG(INFO) << "  content_id=" << FLAGS_content_id
-              << " partition=" << FLAGS_partition_id << "/" << FLAGS_total_partitions;
+    LOG(INFO) << "  partition=" << FLAGS_partition_id << "/" << FLAGS_total_partitions;
     LOG(INFO) << "  mqtt=" << FLAGS_mqtt_host << ":" << FLAGS_mqtt_port;
+    LOG(INFO) << "  content_id routing: on-demand (clients specify in subscribe request)";
 
     // Block until shutdown
     g_server->Wait();

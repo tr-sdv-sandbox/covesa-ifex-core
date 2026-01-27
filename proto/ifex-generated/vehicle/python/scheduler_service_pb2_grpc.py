@@ -66,7 +66,7 @@ class create_job_service(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
-class get_jobs_serviceStub(object):
+class list_jobs_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -75,42 +75,42 @@ class get_jobs_serviceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.get_jobs = channel.unary_unary(
-                '/swdv.ifex_scheduler.get_jobs_service/get_jobs',
-                request_serializer=scheduler__service__pb2.get_jobs_request.SerializeToString,
-                response_deserializer=scheduler__service__pb2.get_jobs_response.FromString,
+        self.list_jobs = channel.unary_unary(
+                '/swdv.ifex_scheduler.list_jobs_service/list_jobs',
+                request_serializer=scheduler__service__pb2.list_jobs_request.SerializeToString,
+                response_deserializer=scheduler__service__pb2.list_jobs_response.FromString,
                 )
 
 
-class get_jobs_serviceServicer(object):
+class list_jobs_serviceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def get_jobs(self, request, context):
+    def list_jobs(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_get_jobs_serviceServicer_to_server(servicer, server):
+def add_list_jobs_serviceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'get_jobs': grpc.unary_unary_rpc_method_handler(
-                    servicer.get_jobs,
-                    request_deserializer=scheduler__service__pb2.get_jobs_request.FromString,
-                    response_serializer=scheduler__service__pb2.get_jobs_response.SerializeToString,
+            'list_jobs': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_jobs,
+                    request_deserializer=scheduler__service__pb2.list_jobs_request.FromString,
+                    response_serializer=scheduler__service__pb2.list_jobs_response.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'swdv.ifex_scheduler.get_jobs_service', rpc_method_handlers)
+            'swdv.ifex_scheduler.list_jobs_service', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
 
 
  # This class is part of an EXPERIMENTAL API.
-class get_jobs_service(object):
+class list_jobs_service(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def get_jobs(request,
+    def list_jobs(request,
             target,
             options=(),
             channel_credentials=None,
@@ -120,9 +120,70 @@ class get_jobs_service(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/swdv.ifex_scheduler.get_jobs_service/get_jobs',
-            scheduler__service__pb2.get_jobs_request.SerializeToString,
-            scheduler__service__pb2.get_jobs_response.FromString,
+        return grpc.experimental.unary_unary(request, target, '/swdv.ifex_scheduler.list_jobs_service/list_jobs',
+            scheduler__service__pb2.list_jobs_request.SerializeToString,
+            scheduler__service__pb2.list_jobs_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class list_jobs_hash_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.list_jobs_hash = channel.unary_unary(
+                '/swdv.ifex_scheduler.list_jobs_hash_service/list_jobs_hash',
+                request_serializer=scheduler__service__pb2.list_jobs_hash_request.SerializeToString,
+                response_deserializer=scheduler__service__pb2.list_jobs_hash_response.FromString,
+                )
+
+
+class list_jobs_hash_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def list_jobs_hash(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_list_jobs_hash_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'list_jobs_hash': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_jobs_hash,
+                    request_deserializer=scheduler__service__pb2.list_jobs_hash_request.FromString,
+                    response_serializer=scheduler__service__pb2.list_jobs_hash_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.ifex_scheduler.list_jobs_hash_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class list_jobs_hash_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def list_jobs_hash(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.ifex_scheduler.list_jobs_hash_service/list_jobs_hash',
+            scheduler__service__pb2.list_jobs_hash_request.SerializeToString,
+            scheduler__service__pb2.list_jobs_hash_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -493,7 +554,7 @@ class trigger_job_service(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
-class get_calendar_view_serviceStub(object):
+class list_executions_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -502,42 +563,42 @@ class get_calendar_view_serviceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.get_calendar_view = channel.unary_unary(
-                '/swdv.ifex_scheduler.get_calendar_view_service/get_calendar_view',
-                request_serializer=scheduler__service__pb2.get_calendar_view_request.SerializeToString,
-                response_deserializer=scheduler__service__pb2.get_calendar_view_response.FromString,
+        self.list_executions = channel.unary_unary(
+                '/swdv.ifex_scheduler.list_executions_service/list_executions',
+                request_serializer=scheduler__service__pb2.list_executions_request.SerializeToString,
+                response_deserializer=scheduler__service__pb2.list_executions_response.FromString,
                 )
 
 
-class get_calendar_view_serviceServicer(object):
+class list_executions_serviceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def get_calendar_view(self, request, context):
+    def list_executions(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_get_calendar_view_serviceServicer_to_server(servicer, server):
+def add_list_executions_serviceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'get_calendar_view': grpc.unary_unary_rpc_method_handler(
-                    servicer.get_calendar_view,
-                    request_deserializer=scheduler__service__pb2.get_calendar_view_request.FromString,
-                    response_serializer=scheduler__service__pb2.get_calendar_view_response.SerializeToString,
+            'list_executions': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_executions,
+                    request_deserializer=scheduler__service__pb2.list_executions_request.FromString,
+                    response_serializer=scheduler__service__pb2.list_executions_response.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'swdv.ifex_scheduler.get_calendar_view_service', rpc_method_handlers)
+            'swdv.ifex_scheduler.list_executions_service', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
 
 
  # This class is part of an EXPERIMENTAL API.
-class get_calendar_view_service(object):
+class list_executions_service(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def get_calendar_view(request,
+    def list_executions(request,
             target,
             options=(),
             channel_credentials=None,
@@ -547,8 +608,69 @@ class get_calendar_view_service(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/swdv.ifex_scheduler.get_calendar_view_service/get_calendar_view',
-            scheduler__service__pb2.get_calendar_view_request.SerializeToString,
-            scheduler__service__pb2.get_calendar_view_response.FromString,
+        return grpc.experimental.unary_unary(request, target, '/swdv.ifex_scheduler.list_executions_service/list_executions',
+            scheduler__service__pb2.list_executions_request.SerializeToString,
+            scheduler__service__pb2.list_executions_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
+class list_executions_hash_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.list_executions_hash = channel.unary_unary(
+                '/swdv.ifex_scheduler.list_executions_hash_service/list_executions_hash',
+                request_serializer=scheduler__service__pb2.list_executions_hash_request.SerializeToString,
+                response_deserializer=scheduler__service__pb2.list_executions_hash_response.FromString,
+                )
+
+
+class list_executions_hash_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def list_executions_hash(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_list_executions_hash_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'list_executions_hash': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_executions_hash,
+                    request_deserializer=scheduler__service__pb2.list_executions_hash_request.FromString,
+                    response_serializer=scheduler__service__pb2.list_executions_hash_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.ifex_scheduler.list_executions_hash_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class list_executions_hash_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def list_executions_hash(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.ifex_scheduler.list_executions_hash_service/list_executions_hash',
+            scheduler__service__pb2.list_executions_hash_request.SerializeToString,
+            scheduler__service__pb2.list_executions_hash_response.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

@@ -32,3 +32,9 @@ add_subdirectory(cloud-scheduler-service)
 
 # Cloud Scheduler Sync Bridge (protocol logic for vehicle sync)
 add_subdirectory(cloud-scheduler-sync-bridge)
+
+# Cloud Discovery Service (aggregates vehicle service registries)
+add_subdirectory(cloud-discovery-service)
+
+# Cloud Dispatcher Service (cloud-initiated RPC calls to vehicles)
+add_subdirectory(cloud-dispatcher-service)

@@ -21,6 +21,7 @@
  */
 
 #include "cloud_scheduler_service.hpp"
+#include "cloud_scheduler_sync_bridge.hpp"
 #include "cloud_backend_transport_server.hpp"
 #include "cloud_backend_transport_client.hpp"
 #include "backend_transport_server.hpp"
@@ -206,23 +207,9 @@ protected:
 
 TEST_F(CloudSchedulerServiceTest, CanInstantiate) {
     CloudSchedulerServiceConfig config;
-    config.backend_transport_address = "localhost:50201";
-    config.scheduler_content_id = 202;
-
     CloudSchedulerService service(config);
-    EXPECT_FALSE(service.IsRunning());
-}
-
-TEST_F(CloudSchedulerServiceTest, StartWithoutTransportFails) {
-    CloudSchedulerServiceConfig config;
-    config.backend_transport_address = "localhost:59999";
-    config.scheduler_content_id = 202;
-
-    CloudSchedulerService service(config);
-    EXPECT_TRUE(service.Start());
-    EXPECT_TRUE(service.IsRunning());
-    service.Stop();
-    EXPECT_FALSE(service.IsRunning());
+    // Service is stateless storage - no lifecycle management
+    EXPECT_EQ(service.GetTotalJobCount(), 0);
 }
 
 TEST_F(CloudSchedulerServiceTest, JobCountStartsAtZero) {
@@ -267,6 +254,10 @@ protected:
     static std::unique_ptr<CloudSchedulerService> cloud_scheduler_service_;
     static std::unique_ptr<grpc::Server> cloud_scheduler_grpc_server_;
     static int cloud_scheduler_grpc_port_;
+
+    static std::unique_ptr<CloudSchedulerSyncBridge> cloud_sync_bridge_;
+    static std::unique_ptr<grpc::Server> cloud_sync_bridge_grpc_server_;
+    static int cloud_sync_bridge_grpc_port_;
 
     // Vehicle side
     static std::unique_ptr<ifex::reference::BackendTransportServer> vehicle_transport_service_;
@@ -351,6 +342,13 @@ protected:
             return;
         }
 
+        // 9. Start cloud scheduler sync bridge (handles C2V communication)
+        if (!StartCloudSchedulerSyncBridge()) {
+            TearDownTestSuite();
+            ADD_FAILURE() << "Failed to start cloud scheduler sync bridge";
+            return;
+        }
+
         // Wait for all to connect and settle
         std::this_thread::sleep_for(2s);
         LOG(INFO) << "=== All services started and connected ===";
@@ -358,6 +356,9 @@ protected:
 
     static void TearDownTestSuite() {
         // Stop in reverse order with delays to allow clean shutdown
+        StopCloudSchedulerSyncBridge();
+        std::this_thread::sleep_for(100ms);
+
         StopCloudSchedulerService();
         std::this_thread::sleep_for(100ms);
 
@@ -410,6 +411,68 @@ protected:
 
     CloudSchedulerStubs createCloudSchedulerStubs() {
         return CloudSchedulerStubs::Create(cloud_scheduler_grpc_port_);
+    }
+
+    /// Get state hash from vehicle scheduler via gRPC
+    static uint64_t GetVehicleSchedulerHash() {
+        auto channel = grpc::CreateChannel(TEST_SCHEDULER_ADDRESS, grpc::InsecureChannelCredentials());
+        auto stub = vehicle_sched::list_jobs_hash_service::NewStub(channel);
+
+        grpc::ClientContext context;
+        vehicle_sched::list_jobs_hash_request request;
+        // Include tombstones to match cloud scheduler behavior
+        request.mutable_filter()->set_include_deleted(true);
+        vehicle_sched::list_jobs_hash_response response;
+
+        auto status = stub->list_jobs_hash(&context, request, &response);
+        if (!status.ok()) {
+            LOG(ERROR) << "Failed to get vehicle hash: " << status.error_message();
+            return 0;
+        }
+        return response.state_hash();
+    }
+
+    /// Get state hash from cloud scheduler via gRPC
+    static uint64_t GetCloudSchedulerHash() {
+        auto channel = grpc::CreateChannel(
+            "localhost:" + std::to_string(cloud_scheduler_grpc_port_),
+            grpc::InsecureChannelCredentials());
+        auto stub = cloud_sched::list_jobs_hash_service::NewStub(channel);
+
+        grpc::ClientContext context;
+        cloud_sched::list_jobs_hash_request request;
+        request.mutable_filter()->set_vehicle_id_filter(TEST_VEHICLE_ID);
+        // Include tombstones to match vehicle scheduler behavior
+        request.mutable_filter()->set_include_deleted(true);
+        cloud_sched::list_jobs_hash_response response;
+
+        auto status = stub->list_jobs_hash(&context, request, &response);
+        if (!status.ok()) {
+            LOG(ERROR) << "Failed to get cloud hash: " << status.error_message();
+            return 0;
+        }
+        return response.result().state_hash();
+    }
+
+    /// Wait for cloud and vehicle scheduler hashes to match
+    static bool WaitForConvergence(std::chrono::seconds timeout = 15s) {
+        auto start = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - start < timeout) {
+            uint64_t cloud_hash = GetCloudSchedulerHash();
+            uint64_t vehicle_hash = GetVehicleSchedulerHash();
+
+            if (cloud_hash == vehicle_hash && cloud_hash != 0) {
+                LOG(INFO) << "Converged: hash=" << std::hex << cloud_hash << std::dec;
+                return true;
+            }
+            std::this_thread::sleep_for(200ms);
+        }
+
+        uint64_t cloud_hash = GetCloudSchedulerHash();
+        uint64_t vehicle_hash = GetVehicleSchedulerHash();
+        LOG(WARNING) << "Convergence timeout: cloud=" << std::hex << cloud_hash
+                     << " vehicle=" << vehicle_hash << std::dec;
+        return false;
     }
 
 private:
@@ -692,7 +755,6 @@ private:
         CloudBackendTransportServer::Config config;
         config.mqtt_host = mqtt_host;
         config.mqtt_port = mqtt_port;
-        config.content_id = SCHEDULER_CONTENT_ID;
         config.partition_id = 0;
         config.total_partitions = 1;
 
@@ -789,16 +851,10 @@ private:
     static bool StartCloudSchedulerService() {
         LOG(INFO) << "Starting cloud scheduler service...";
 
+        // CloudSchedulerService is pure storage - no transport config needed
+        // Sync bridge handles all backend communication
         CloudSchedulerServiceConfig config;
-        config.backend_transport_address = "localhost:" + std::to_string(cloud_transport_grpc_port_);
-        config.scheduler_content_id = SCHEDULER_CONTENT_ID;
-
         cloud_scheduler_service_ = std::make_unique<CloudSchedulerService>(config);
-
-        if (!cloud_scheduler_service_->Start()) {
-            LOG(ERROR) << "Failed to start cloud scheduler";
-            return false;
-        }
 
         grpc::ServerBuilder builder;
         builder.AddListeningPort("0.0.0.0:0", grpc::InsecureServerCredentials(), &cloud_scheduler_grpc_port_);
@@ -814,10 +870,43 @@ private:
             cloud_scheduler_grpc_server_->Shutdown();
             cloud_scheduler_grpc_server_.reset();
         }
-        if (cloud_scheduler_service_) {
-            cloud_scheduler_service_->Stop();
-            cloud_scheduler_service_.reset();
+        // CloudSchedulerService has no lifecycle management - just reset
+        cloud_scheduler_service_.reset();
+    }
+
+    static bool StartCloudSchedulerSyncBridge() {
+        LOG(INFO) << "Starting cloud scheduler sync bridge...";
+
+        CloudSchedulerSyncBridgeConfig config;
+        config.scheduler_address = "localhost:" + std::to_string(cloud_scheduler_grpc_port_);
+        config.transport_address = "localhost:" + std::to_string(cloud_transport_grpc_port_);
+        config.content_id = SCHEDULER_CONTENT_ID;
+
+        cloud_sync_bridge_ = std::make_unique<CloudSchedulerSyncBridge>(config);
+
+        grpc::ServerBuilder builder;
+        builder.AddListeningPort("0.0.0.0:0", grpc::InsecureServerCredentials(), &cloud_sync_bridge_grpc_port_);
+        cloud_sync_bridge_->RegisterServices(builder);
+        cloud_sync_bridge_grpc_server_ = builder.BuildAndStart();
+
+        if (!cloud_sync_bridge_->Start()) {
+            LOG(ERROR) << "Failed to start cloud scheduler sync bridge";
+            return false;
         }
+
+        LOG(INFO) << "Cloud scheduler sync bridge listening on port " << cloud_sync_bridge_grpc_port_;
+        return true;
+    }
+
+    static void StopCloudSchedulerSyncBridge() {
+        if (cloud_sync_bridge_) {
+            cloud_sync_bridge_->Stop();
+        }
+        if (cloud_sync_bridge_grpc_server_) {
+            cloud_sync_bridge_grpc_server_->Shutdown();
+            cloud_sync_bridge_grpc_server_.reset();
+        }
+        cloud_sync_bridge_.reset();
     }
 
     static void StopVehicleSyncBridge() {
@@ -886,6 +975,10 @@ std::unique_ptr<CloudSchedulerService> SchedulerBidirectionalSyncTest::cloud_sch
 std::unique_ptr<grpc::Server> SchedulerBidirectionalSyncTest::cloud_scheduler_grpc_server_;
 int SchedulerBidirectionalSyncTest::cloud_scheduler_grpc_port_ = 0;
 
+std::unique_ptr<CloudSchedulerSyncBridge> SchedulerBidirectionalSyncTest::cloud_sync_bridge_;
+std::unique_ptr<grpc::Server> SchedulerBidirectionalSyncTest::cloud_sync_bridge_grpc_server_;
+int SchedulerBidirectionalSyncTest::cloud_sync_bridge_grpc_port_ = 0;
+
 std::unique_ptr<ifex::reference::BackendTransportServer> SchedulerBidirectionalSyncTest::vehicle_transport_service_;
 std::unique_ptr<grpc::Server> SchedulerBidirectionalSyncTest::vehicle_transport_grpc_server_;
 
@@ -929,8 +1022,8 @@ TEST_F(SchedulerBidirectionalSyncTest, CreateJobSendsCommandToVehicle) {
     size_t new_count = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
     EXPECT_EQ(new_count, initial_count + 1) << "Job count should increase by 1";
 
-    // Wait for command to propagate to vehicle and sync back
-    std::this_thread::sleep_for(3s);
+    // Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge";
 
     // Check sync bridge received and processed the sync message SUCCESSFULLY
     auto stats = vehicle_sync_bridge_->GetStats();
@@ -971,8 +1064,8 @@ TEST_F(SchedulerBidirectionalSyncTest, EpochMillisecondsFlowCorrectly) {
     ASSERT_TRUE(status.ok());
     EXPECT_TRUE(response.result().success());
 
-    // Wait for sync
-    std::this_thread::sleep_for(3s);
+    // Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge";
 
     // Verify sync was processed successfully on vehicle
     auto final_stats = vehicle_sync_bridge_->GetStats();
@@ -1161,8 +1254,8 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneCloudInitiatedDelete) {
     std::string job_id = create_response.result().job_id();
     LOG(INFO) << "Created job for tombstone test: " << job_id;
 
-    // Step 2: Wait for job to sync to vehicle
-    std::this_thread::sleep_for(3s);
+    // Step 2: Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge after create";
 
     // Verify job count before delete
     size_t count_before_delete = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
@@ -1186,8 +1279,8 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneCloudInitiatedDelete) {
     }
     LOG(INFO) << "Deleted job (tombstone created): " << job_id;
 
-    // Step 4: Wait for tombstone to sync to vehicle and back
-    std::this_thread::sleep_for(3s);
+    // Step 4: Wait for cloud and vehicle schedulers to converge (including tombstone)
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge after delete";
 
     // Step 5: Verify job count decreased (tombstones are not counted)
     size_t count_after_delete = cloud_scheduler_service_->GetJobCount(TEST_VEHICLE_ID);
@@ -1252,8 +1345,8 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneVehicleInitiatedDelete) {
     std::string job_id = create_response.result().job_id();
     LOG(INFO) << "Created job for vehicle delete test: " << job_id;
 
-    // Step 2: Wait for job to sync to vehicle
-    std::this_thread::sleep_for(3s);
+    // Step 2: Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge after create";
 
     // Verify vehicle received the job
     auto stats_after_create = vehicle_sync_bridge_->GetStats();
@@ -1280,8 +1373,8 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneVehicleInitiatedDelete) {
     }
     LOG(INFO) << "Deleted job from vehicle side: " << job_id;
 
-    // Step 4: Wait for tombstone to sync back to cloud
-    std::this_thread::sleep_for(3s);
+    // Step 4: Wait for cloud and vehicle schedulers to converge (including tombstone from vehicle)
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge after vehicle delete";
 
     // Step 5: Verify cloud no longer returns the job
     cloud_sched::get_job_request get_request;
@@ -1319,9 +1412,9 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceSilenceWhenSynced) {
     LOG(INFO) << "Stats before quiescence wait: syncs_sent=" << syncs_sent_before
               << " bytes_sent=" << stats_before.bytes_sent;
 
-    // Wait for a period - if quiescent, minimal/no new syncs should occur
-    // (Only heartbeats if enabled, but we disabled them in test config)
-    std::this_thread::sleep_for(3s);
+    // Wait for potential sync activity - if quiescent, minimal/no new syncs should occur
+    // Use convergence check to ensure we're in steady state first
+    WaitForConvergence(5s);  // Allow time for any pending syncs
 
     auto stats_after = vehicle_sync_bridge_->GetStats();
     uint64_t syncs_sent_after = stats_after.full_syncs_sent + stats_after.delta_syncs_sent;
@@ -1365,8 +1458,8 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceConvergenceAfterChange) {
     }
     LOG(INFO) << "Created job to trigger sync convergence: " << response.result().job_id();
 
-    // Wait for convergence
-    std::this_thread::sleep_for(3s);
+    // Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge";
 
     // Verify sync activity occurred
     auto stats_after_change = vehicle_sync_bridge_->GetStats();
@@ -1404,6 +1497,9 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceChecksumConsistency) {
     //
     // When no changes occur, the checksum should remain stable.
 
+    // First wait for any pending syncs from previous tests to complete
+    WaitForConvergence(5s);
+
     // Get initial checksum
     uint64_t checksum1 = vehicle_sync_bridge_->GetStateChecksum();
     LOG(INFO) << "Initial checksum: " << checksum1;
@@ -1436,8 +1532,8 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceChecksumConsistency) {
         stubs.create_job->create_job(&context, request, &response);
     }
 
-    // Wait for sync
-    std::this_thread::sleep_for(3s);
+    // Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge";
 
     uint64_t checksum3 = vehicle_sync_bridge_->GetStateChecksum();
     LOG(INFO) << "Checksum after job added: " << checksum3;
@@ -1495,8 +1591,8 @@ TEST_F(SchedulerBidirectionalSyncTest, SyncVersionDominanceCloudWins) {
     std::string job_id = create_response.result().job_id();
     LOG(INFO) << "Created cloud-authoritative job: " << job_id;
 
-    // Wait for initial sync
-    std::this_thread::sleep_for(3s);
+    // Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge after create";
 
     // Update from cloud (simulates cloud modification)
     cloud_sched::update_job_request update_request;
@@ -1516,8 +1612,8 @@ TEST_F(SchedulerBidirectionalSyncTest, SyncVersionDominanceCloudWins) {
     }
     LOG(INFO) << "Updated job from cloud";
 
-    // Wait for sync to converge
-    std::this_thread::sleep_for(3s);
+    // Wait for cloud and vehicle schedulers to converge
+    ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge after update";
 
     // Verify cloud's version is preserved
     cloud_sched::get_job_request get_request;

@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -30,6 +31,7 @@ class CloudBackendTransportServer final
       public swdv::cloud_backend_transport_service::get_channel_info_service::Service,
       public swdv::cloud_backend_transport_service::get_queue_status_service::Service,
       public swdv::cloud_backend_transport_service::get_stats_service::Service,
+      public swdv::cloud_backend_transport_service::list_vehicles_service::Service,
       public swdv::cloud_backend_transport_service::healthy_service::Service,
       public swdv::cloud_backend_transport_service::on_vehicle_message_service::Service,
       public swdv::cloud_backend_transport_service::on_ack_service::Service,
@@ -43,8 +45,7 @@ public:
         std::string mqtt_username;
         std::string mqtt_password;
 
-        // Channel binding
-        uint32_t content_id = 200;
+        // Partitioning (for horizontal scaling)
         uint32_t partition_id = 0;
         uint32_t total_partitions = 1;
 
@@ -98,6 +99,11 @@ public:
         const swdv::cloud_backend_transport_service::get_stats_request* request,
         swdv::cloud_backend_transport_service::get_stats_response* response) override;
 
+    grpc::Status list_vehicles(
+        grpc::ServerContext* context,
+        const swdv::cloud_backend_transport_service::list_vehicles_request* request,
+        swdv::cloud_backend_transport_service::list_vehicles_response* response) override;
+
     grpc::Status healthy(
         grpc::ServerContext* context,
         const swdv::cloud_backend_transport_service::healthy_request* request,
@@ -139,8 +145,8 @@ private:
     void OnMessage(const std::string& topic, const std::vector<uint8_t>& payload);
 
     // Topic helpers
-    std::string V2cSubscribePattern() const;
-    std::string C2vTopic(const std::string& vehicle_id) const;
+    std::string V2cSubscribePattern(uint32_t content_id) const;
+    std::string C2vTopic(const std::string& vehicle_id, uint32_t content_id) const;
     std::string StatusSubscribePattern() const;
     bool ParseV2cTopic(const std::string& topic, std::string& vehicle_id, uint32_t& content_id) const;
     bool ParseStatusTopic(const std::string& topic, std::string& vehicle_id) const;
@@ -148,10 +154,14 @@ private:
     // Partition check
     bool OwnsVehicle(const std::string& vehicle_id) const;
 
+    // MQTT subscription management (on-demand)
+    void SubscribeToContentId(uint32_t content_id);
+
     // Stream management
     void BroadcastVehicleMessage(const std::string& vehicle_id,
                                   const std::vector<uint8_t>& payload,
-                                  uint64_t sequence);
+                                  uint64_t sequence,
+                                  uint32_t content_id);
     void BroadcastVehicleStatus(const std::string& vehicle_id,
                                  swdv::cloud_backend_transport_service::vehicle_status_t status);
     void BroadcastAck(const std::string& vehicle_id, uint64_t sequence);
@@ -182,9 +192,17 @@ private:
     std::atomic<uint64_t> messages_received_{0};
     std::atomic<uint64_t> bytes_received_{0};
 
-    // Stream subscribers
+    // Subscribed content_ids (for MQTT on-demand subscription)
+    std::shared_mutex subscriptions_mutex_;
+    std::set<uint32_t> subscribed_content_ids_;
+
+    // Stream subscribers (message streams include content_id binding)
+    struct MessageStreamSubscription {
+        grpc::ServerWriter<swdv::cloud_backend_transport_service::on_vehicle_message>* writer;
+        uint32_t content_id;
+    };
     std::shared_mutex message_streams_mutex_;
-    std::vector<grpc::ServerWriter<swdv::cloud_backend_transport_service::on_vehicle_message>*> message_streams_;
+    std::vector<MessageStreamSubscription> message_streams_;
 
     std::shared_mutex status_streams_mutex_;
     std::vector<grpc::ServerWriter<swdv::cloud_backend_transport_service::on_vehicle_status>*> status_streams_;

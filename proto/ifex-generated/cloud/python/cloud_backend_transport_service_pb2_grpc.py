@@ -310,6 +310,67 @@ class get_stats_service(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
 
+class list_vehicles_serviceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.list_vehicles = channel.unary_unary(
+                '/swdv.cloud_backend_transport_service.list_vehicles_service/list_vehicles',
+                request_serializer=cloud__backend__transport__service__pb2.list_vehicles_request.SerializeToString,
+                response_deserializer=cloud__backend__transport__service__pb2.list_vehicles_response.FromString,
+                )
+
+
+class list_vehicles_serviceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def list_vehicles(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_list_vehicles_serviceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'list_vehicles': grpc.unary_unary_rpc_method_handler(
+                    servicer.list_vehicles,
+                    request_deserializer=cloud__backend__transport__service__pb2.list_vehicles_request.FromString,
+                    response_serializer=cloud__backend__transport__service__pb2.list_vehicles_response.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'swdv.cloud_backend_transport_service.list_vehicles_service', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+ # This class is part of an EXPERIMENTAL API.
+class list_vehicles_service(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def list_vehicles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/swdv.cloud_backend_transport_service.list_vehicles_service/list_vehicles',
+            cloud__backend__transport__service__pb2.list_vehicles_request.SerializeToString,
+            cloud__backend__transport__service__pb2.list_vehicles_response.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+
 class healthy_serviceStub(object):
     """Missing associated documentation comment in .proto file."""
 

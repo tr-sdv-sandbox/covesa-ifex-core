@@ -12,131 +12,15 @@ namespaces:
   - name: core
     description: Core scheduling functionality
 
-    enumerations:
-      # Vehicle-specific enumerations (not in common types)
-      - name: view_type_t
-        datatype: uint8
-        description: Calendar view types
-        options:
-          - name: DAY
-            value: 0
-            description: Daily view
-          - name: WEEK
-            value: 1
-            description: Weekly view
-          - name: MONTH
-            value: 2
-            description: Monthly view
-          - name: RANGE
-            value: 3
-            description: Custom date range
-
     structs:
-      - name: job_t
-        description: >
-          Complete job record with version tracking.
-          This is the canonical job structure used in sync protocol.
-          Both vehicle and cloud store jobs in this format.
-        members:
-          # --- Identity ---
-          - name: id
-            datatype: string
-            description: >
-              Globally unique ID with source namespace.
-              Format: <source>-<uuid> where source is "cloud", "veh-<vin>", or "phone"
-          - name: authority
-            datatype: scheduler_types.job_authority_t
-            description: Who wins conflicts (immutable after creation)
-
-          # --- Version (for sync protocol) ---
-          - name: cloud_seq
-            datatype: uint64
-            description: Cloud sequence number (version vector component)
-          - name: vehicle_seq
-            datatype: uint64
-            description: Vehicle sequence number (version vector component)
-
-          # --- Lifecycle ---
-          - name: deleted
-            datatype: boolean
-            description: Soft delete tombstone flag
-            mandatory: false
-          - name: deleted_at_ms
-            datatype: uint64
-            description: When deleted (epoch ms, for GC timing only)
-            mandatory: false
-
-          # --- Content ---
-          - name: title
-            datatype: string
-            description: Human-readable job title
-          - name: service
-            datatype: string
-            description: Target service name
-          - name: method
-            datatype: string
-            description: Target method name
-          - name: parameters
-            datatype: string
-            description: JSON-encoded method parameters
-          - name: scheduled_time_ms
-            datatype: uint64
-            description: Scheduled execution time (epoch milliseconds UTC)
-          - name: recurrence_rule
-            datatype: string
-            description: Cron expression or RFC 5545 RRULE
-            mandatory: false
-          - name: end_time_ms
-            datatype: uint64
-            description: End time for recurring jobs (epoch milliseconds UTC)
-            mandatory: false
-          - name: paused
-            datatype: boolean
-            description: User intent - job should not be scheduled until resumed
-            default: false
-          - name: status
-            datatype: scheduler_types.job_status_t
-            description: Current execution status (vehicle-authoritative)
-          - name: created_at_ms
-            datatype: uint64
-            description: Creation timestamp (epoch milliseconds UTC)
-          - name: updated_at_ms
-            datatype: uint64
-            description: Last update timestamp (epoch milliseconds UTC)
-          - name: executed_at_ms
-            datatype: uint64
-            description: Last execution timestamp (epoch milliseconds UTC)
-            mandatory: false
-          - name: next_run_time_ms
-            datatype: uint64
-            description: Next scheduled run time (epoch milliseconds UTC)
-            mandatory: false
-          - name: error_message
-            datatype: string
-            description: Error message if failed
-            mandatory: false
-          - name: result
-            datatype: string
-            description: JSON-encoded result from service call
-            mandatory: false
-          - name: wake_policy
-            datatype: scheduler_types.wake_policy_t
-            description: Whether to wake vehicle for this job
-            mandatory: false
-          - name: sleep_policy
-            datatype: scheduler_types.sleep_policy_t
-            description: Sleep behavior during execution
-            mandatory: false
-          - name: wake_lead_time_s
-            datatype: uint32
-            description: Seconds before scheduled_time to wake vehicle
-            mandatory: false
+      # job_t is defined in scheduler_types (common types)
+      # Vehicle and cloud both use scheduler_types.job_t
 
       - name: job_filter_t
         description: >
           Filter criteria for retrieving jobs.
-          Design principle: empty filter returns ALL jobs (no filters = see everything).
-          Use exclude_* flags to hide specific job states.
+          By default returns active (non-deleted) jobs.
+          Set include_deleted=true to include tombstones (for sync protocol).
         members:
           # --- Range filters ---
           - name: start_time_ms
@@ -161,20 +45,10 @@ namespaces:
             description: Whether to apply status filter (needed because status enum has no "unset" value)
             mandatory: false
             default: false
-          # --- Exclude filters (all default false = show everything) ---
-          - name: exclude_completed
+          # --- Include filters (aligned with cloud API) ---
+          - name: include_deleted
             datatype: boolean
-            description: If true, hide jobs with completed/failed/cancelled status
-            mandatory: false
-            default: false
-          - name: exclude_deleted
-            datatype: boolean
-            description: If true, hide soft-deleted jobs (tombstones)
-            mandatory: false
-            default: false
-          - name: exclude_paused
-            datatype: boolean
-            description: If true, hide paused jobs
+            description: If true, include soft-deleted jobs (tombstones). Default false.
             mandatory: false
             default: false
 
@@ -194,7 +68,7 @@ namespaces:
           - name: method
             datatype: string
             description: Target method name
-          - name: parameters
+          - name: parameters_json
             datatype: string
             description: JSON-encoded method parameters
           - name: scheduled_time_ms
@@ -266,7 +140,7 @@ namespaces:
             datatype: uint64
             description: New end time for recurring (epoch milliseconds UTC)
             mandatory: false
-          - name: parameters
+          - name: parameters_json
             datatype: string
             description: New JSON parameters
             mandatory: false
@@ -308,6 +182,70 @@ namespaces:
             description: Deletion timestamp - used by sync bridge
             mandatory: false
 
+      - name: execution_t
+        description: >
+          Immutable record of a job execution.
+          Executions are append-only facts - they never conflict.
+        members:
+          - name: execution_id
+            datatype: string
+            description: Globally unique execution identifier
+          - name: job_id
+            datatype: string
+            description: Job that was executed
+          - name: executed_at_ms
+            datatype: uint64
+            description: When execution started (epoch ms)
+          - name: duration_ms
+            datatype: uint32
+            description: Execution duration in milliseconds
+          - name: status
+            datatype: scheduler_types.job_status_t
+            description: Result - JOB_STATUS_COMPLETED or JOB_STATUS_FAILED
+          - name: result
+            datatype: string
+            description: JSON result (for completed jobs)
+            mandatory: false
+          - name: error_message
+            datatype: string
+            description: Error message (for failed jobs)
+            mandatory: false
+
+      - name: execution_filter_t
+        description: >
+          Filter criteria for retrieving executions.
+          All filters are optional - empty filter returns all executions.
+        members:
+          - name: job_id
+            datatype: string
+            description: If set, only executions for this job
+            mandatory: false
+          - name: start_time_ms
+            datatype: uint64
+            description: If set, only executions with executed_at >= this value
+            mandatory: false
+          - name: end_time_ms
+            datatype: uint64
+            description: If set, only executions with executed_at <= this value
+            mandatory: false
+          - name: status
+            datatype: scheduler_types.job_status_t
+            description: If set (with has_status_filter=true), only executions with this status
+            mandatory: false
+          - name: has_status_filter
+            datatype: boolean
+            description: Whether to apply status filter
+            mandatory: false
+            default: false
+          - name: limit
+            datatype: int32
+            description: Maximum number of executions to return (default 100)
+            mandatory: false
+          - name: offset
+            datatype: int32
+            description: Number of executions to skip (for pagination)
+            mandatory: false
+
     methods:
       - name: create_job
         description: Create a new scheduled job
@@ -327,7 +265,7 @@ namespaces:
             datatype: string
             description: Success or error message
 
-      - name: get_jobs
+      - name: list_jobs
         description: Retrieve jobs based on filter criteria (empty filter = all jobs)
         input:
           - name: filter
@@ -339,8 +277,26 @@ namespaces:
             datatype: boolean
             description: Whether request succeeded
           - name: jobs
-            datatype: job_t[]
+            datatype: scheduler_types.job_t[]
             description: List of jobs matching criteria
+
+      - name: list_jobs_hash
+        description: >
+          Get a hash of the job state matching the filter criteria.
+          Used for efficient change detection - poll this endpoint and only
+          fetch full job list when hash changes. Uses same filter as list_jobs.
+        input:
+          - name: filter
+            datatype: job_filter_t
+            description: Filter criteria (same as list_jobs)
+            mandatory: false
+        output:
+          - name: state_hash
+            datatype: uint64
+            description: xxHash64 of the filtered job state (IDs, versions, statuses)
+          - name: job_count
+            datatype: int32
+            description: Number of jobs matching the filter
 
       - name: get_job
         description: Retrieve a specific job by ID
@@ -354,7 +310,7 @@ namespaces:
             datatype: boolean
             description: Whether job was found
           - name: job
-            datatype: job_t
+            datatype: scheduler_types.job_t
             description: Job details
             mandatory: false
           - name: message
@@ -438,39 +394,47 @@ namespaces:
             datatype: boolean
             description: Whether trigger succeeded
           - name: job
-            datatype: job_t
+            datatype: scheduler_types.job_t
             description: Updated job with execution result
             mandatory: false
           - name: message
             datatype: string
             description: Success or error message
 
-      - name: get_calendar_view
-        description: Get jobs formatted for calendar display
+      - name: list_executions
+        description: >
+          Retrieve execution history with optional filters.
+          Returns immutable records of past job executions.
         input:
-          - name: view_type
-            datatype: view_type_t
-            description: Type of calendar view
-            mandatory: true
-          - name: reference_time_ms
-            datatype: uint64
-            description: Reference time (epoch milliseconds UTC)
-            mandatory: true
-          - name: timezone
-            datatype: string
-            description: IANA timezone (e.g., "America/New_York")
+          - name: filter
+            datatype: execution_filter_t
+            description: Filter criteria (empty for all executions)
             mandatory: false
-            default: "UTC"
         output:
           - name: success
             datatype: boolean
             description: Whether request succeeded
-          - name: start_time_ms
+          - name: executions
+            datatype: execution_t[]
+            description: List of executions matching criteria
+          - name: total_count
+            datatype: int32
+            description: Total matching executions (for pagination)
+
+      - name: list_executions_hash
+        description: >
+          Get a hash of the execution state matching the filter criteria.
+          Used for efficient change detection - poll this endpoint and only
+          fetch full execution list when hash changes.
+        input:
+          - name: filter
+            datatype: execution_filter_t
+            description: Filter criteria (same as list_executions)
+            mandatory: false
+        output:
+          - name: state_hash
             datatype: uint64
-            description: Actual start time of the view (epoch milliseconds UTC)
-          - name: end_time_ms
-            datatype: uint64
-            description: Actual end time of the view (epoch milliseconds UTC)
-          - name: jobs
-            datatype: job_t[]
-            description: Jobs within the date range
+            description: xxHash64 of the filtered execution state
+          - name: execution_count
+            datatype: int32
+            description: Number of executions matching the filter
