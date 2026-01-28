@@ -2,8 +2,8 @@
 
 ## Status: DRAFT
 
-**Version:** 3.0
-**Date:** 2026-01-21
+**Version:** 3.1
+**Date:** 2026-01-28
 **Authors:** Claude + Human
 
 ## 1. Overview
@@ -14,8 +14,8 @@ This specification defines a bandwidth-efficient bidirectional synchronization p
 
 **Key improvements over v2:**
 - Hash-first sync: Exchange checksums/hashes before full data
-- Separate message types: Clear purpose for each message
-- Independent execution stream: Fire-and-forget execution reporting
+- Envelope messages: Type-safe message discrimination via protobuf oneof
+- Independent execution stream: Immediate execution reporting with optional acknowledgment
 - Optimized reconnect: Minimize data when state unchanged
 
 ### 1.2 Design Goals
@@ -28,6 +28,7 @@ This specification defines a bandwidth-efficient bidirectional synchronization p
 | Clock independence | Logical clocks (version vectors) |
 | Low latency executions | Independent stream, immediate send |
 | Simple reconnect | Single checksum comparison first |
+| Type safety | Envelope messages with explicit type discrimination |
 
 ### 1.3 Bandwidth Comparison
 
@@ -41,7 +42,7 @@ This specification defines a bandwidth-efficient bidirectional synchronization p
 
 ### 2.1 Overview
 
-All messages use **content_id = 202**. Message type is discriminated by protobuf type.
+All messages use **content_id = 202**. Messages are wrapped in envelope types (`V2C_Envelope` or `C2V_Envelope`) with explicit type discrimination via protobuf `oneof`.
 
 **Vehicle → Cloud (V2C):**
 
@@ -58,6 +59,8 @@ All messages use **content_id = 202**. Message type is discriminated by protobuf
 |---------|---------|-----------|
 | `C2V_RequestHashes` | Request hash manifest | When vehicle checksum unknown |
 | `C2V_SyncDelta` | Send jobs + request jobs | After comparing hashes |
+| `C2V_ExecutionAck` | Acknowledge received executions | After storing executions |
+| `C2V_TriggerJob` | Request immediate job execution | User-initiated trigger |
 
 ### 2.2 Protocol Buffers
 
@@ -65,15 +68,42 @@ All messages use **content_id = 202**. Message type is discriminated by protobuf
 syntax = "proto3";
 package swdv.scheduler_sync_v3;
 
+option cc_enable_arenas = true;
+
 // ============================================================================
-// Vehicle → Cloud
+// Envelope Messages (for type-safe discrimination)
+// ============================================================================
+
+// Vehicle → Cloud envelope
+message V2C_Envelope {
+    oneof message {
+        V2C_Hello hello = 1;
+        V2C_HashManifest hash_manifest = 2;
+        V2C_JobData job_data = 3;
+        V2C_Executions executions = 4;
+        V2C_TriggerResponse trigger_response = 5;
+    }
+}
+
+// Cloud → Vehicle envelope
+message C2V_Envelope {
+    oneof message {
+        C2V_RequestHashes request_hashes = 1;
+        C2V_SyncDelta sync_delta = 2;
+        C2V_ExecutionAck execution_ack = 3;
+        C2V_TriggerJob trigger_job = 4;
+    }
+}
+
+// ============================================================================
+// Vehicle → Cloud Messages
 // ============================================================================
 
 // Initial handshake / state announcement
 // Sent on connect and after applying any changes
 message V2C_Hello {
     string vehicle_id = 1;
-    string bridge_instance_id = 2;      // Detect bridge restarts
+    string bridge_instance_id = 2;       // Detect bridge restarts
     uint64 state_checksum = 3;           // xxHash64 of all jobs
     uint64 last_seen_c2v_checksum = 4;   // Last cloud checksum we processed
 }
@@ -92,14 +122,24 @@ message V2C_JobData {
     uint64 state_checksum = 3;
 }
 
-// Execution results (independent stream - fire and forget)
+// Execution results (independent stream)
 message V2C_Executions {
     string vehicle_id = 1;
     repeated ExecutionRecord executions = 2;
 }
 
+// Response to trigger request
+message V2C_TriggerResponse {
+    string vehicle_id = 1;
+    string job_id = 2;
+    string request_id = 3;               // Correlation ID from C2V_TriggerJob
+    bool accepted = 4;
+    string error_message = 5;            // If !accepted
+    uint64 timestamp_ms = 6;
+}
+
 // ============================================================================
-// Cloud → Vehicle
+// Cloud → Vehicle Messages
 // ============================================================================
 
 // Request hash manifest (when vehicle checksum is unknown/changed)
@@ -111,10 +151,26 @@ message C2V_RequestHashes {
 // Sync delta - request specific jobs and/or send jobs
 message C2V_SyncDelta {
     string vehicle_id = 1;
-    repeated string request_job_ids = 2;  // Jobs cloud needs from vehicle
-    repeated JobRecord jobs = 3;           // Jobs vehicle needs from cloud
+    repeated string request_job_ids = 2; // Jobs cloud needs from vehicle
+    repeated JobRecord jobs = 3;         // Jobs vehicle needs from cloud
     uint64 state_checksum = 4;
     uint64 last_seen_v2c_checksum = 5;
+}
+
+// Acknowledge received executions (allows vehicle to stop retrying)
+message C2V_ExecutionAck {
+    string vehicle_id = 1;
+    repeated string execution_ids = 2;   // Executions cloud has stored
+}
+
+// Request immediate job execution (imperative command, not state sync)
+message C2V_TriggerJob {
+    string vehicle_id = 1;
+    string job_id = 2;
+    string request_id = 3;               // For correlation with response
+    string requester_id = 4;             // Who requested (for audit)
+    uint64 timestamp_ms = 5;
+    uint64 expires_at_ms = 6;            // Request expires after this (0 = no expiry)
 }
 
 // ============================================================================
@@ -123,9 +179,9 @@ message C2V_SyncDelta {
 
 message JobHashEntry {
     string job_id = 1;
-    uint64 content_hash = 2;              // xxHash64 of job content
-    JobVersion version = 3;                // For quick dominance check
-    bool deleted = 4;                      // Tombstone flag
+    uint64 content_hash = 2;             // xxHash64 of job content
+    JobVersion version = 3;              // For quick dominance check
+    bool deleted = 4;                    // Tombstone flag
 }
 
 message JobVersion {
@@ -166,11 +222,11 @@ message JobRecord {
 }
 
 message ExecutionRecord {
-    string execution_id = 1;              // Globally unique (for dedup)
+    string execution_id = 1;             // Globally unique (for dedup)
     string job_id = 2;
     uint64 executed_at_ms = 3;
     uint64 duration_ms = 4;
-    JobStatus status = 5;                 // COMPLETED or FAILED
+    JobStatus status = 5;                // COMPLETED or FAILED
     string result_json = 6;
     string error_message = 7;
 }
@@ -211,14 +267,14 @@ VEHICLE                                           CLOUD
    │ state=0xAAAA                                   │ state=0xBBBB
    │                                                │ last_seen_v2c=0xAAAA
    │                                                │
-   │─── V2C_Hello ─────────────────────────────────►│
+   │─── V2C_Envelope{hello} ───────────────────────►│
    │    state_checksum: 0xAAAA                      │
    │                                                │
    │                      0xAAAA == last_seen_v2c ✓ │
    │                      Vehicle unchanged!        │
    │                      Just send our changes     │
    │                                                │
-   │◄─── C2V_SyncDelta ─────────────────────────────│
+   │◄─── C2V_Envelope{sync_delta} ─────────────────│
    │     request_job_ids: []                        │
    │     jobs: [job-X, job-Y]  ← new cloud jobs     │
    │     state_checksum: 0xBBBB                     │
@@ -226,7 +282,7 @@ VEHICLE                                           CLOUD
    │ Apply jobs                                     │
    │ new state=0xBBBB                               │
    │                                                │
-   │─── V2C_Hello ─────────────────────────────────►│
+   │─── V2C_Envelope{hello} ───────────────────────►│
    │    state_checksum: 0xBBBB                      │
    │    last_seen_c2v: 0xBBBB                       │
    │                                                │
@@ -248,17 +304,17 @@ VEHICLE                                           CLOUD
    │ state=0xCCCC (changed offline)                 │ state=0xBBBB
    │                                                │ last_seen_v2c=0xAAAA
    │                                                │
-   │─── V2C_Hello ─────────────────────────────────►│
+   │─── V2C_Envelope{hello} ───────────────────────►│
    │    state_checksum: 0xCCCC                      │
    │                                                │
    │                      0xCCCC != last_seen_v2c   │
    │                      Vehicle changed!          │
    │                      Need hash manifest        │
    │                                                │
-   │◄─── C2V_RequestHashes ─────────────────────────│
+   │◄─── C2V_Envelope{request_hashes} ─────────────│
    │     cloud_state_checksum: 0xBBBB               │
    │                                                │
-   │─── V2C_HashManifest ──────────────────────────►│
+   │─── V2C_Envelope{hash_manifest} ───────────────►│
    │    job_hashes: [                               │
    │      {A, 0x111, v:{3,4}},                      │
    │      {B, 0x222, v:{2,5}},  ← vehicle modified  │
@@ -273,21 +329,21 @@ VEHICLE                                           CLOUD
    │                      C: same                   │
    │                      X: missing (cloud has)    │
    │                                                │
-   │◄─── C2V_SyncDelta ─────────────────────────────│
+   │◄─── C2V_Envelope{sync_delta} ─────────────────│
    │     request_job_ids: ["B"]  ← need from veh    │
    │     jobs: [job-X]           ← veh needs        │
    │     state_checksum: 0xDDDD                     │
    │                                                │
    │ Apply job-X                                    │
    │                                                │
-   │─── V2C_JobData ───────────────────────────────►│
+   │─── V2C_Envelope{job_data} ────────────────────►│
    │    jobs: [job-B]                               │
    │    state_checksum: 0xEEEE                      │
    │                                                │
    │                      Apply job-B               │
    │                      Cloud state now 0xEEEE   │
    │                                                │
-   │◄─── C2V_SyncDelta ─────────────────────────────│
+   │◄─── C2V_Envelope{sync_delta} ─────────────────│
    │     request_job_ids: []                        │
    │     jobs: []                                   │
    │     state_checksum: 0xEEEE                     │
@@ -308,7 +364,7 @@ VEHICLE                                           CLOUD
    │ state=0xAAAA                                   │ state=0xAAAA
    │                                                │ last_seen_v2c=0xAAAA
    │                                                │
-   │─── V2C_Hello ─────────────────────────────────►│
+   │─── V2C_Envelope{hello} ───────────────────────►│
    │    state_checksum: 0xAAAA                      │
    │    last_seen_c2v: 0xAAAA                       │
    │                                                │
@@ -316,7 +372,7 @@ VEHICLE                                           CLOUD
    │                      0xAAAA == our state ✓     │
    │                      Already in sync!          │
    │                                                │
-   │◄─── C2V_SyncDelta ─────────────────────────────│
+   │◄─── C2V_Envelope{sync_delta} ─────────────────│
    │     request_job_ids: []                        │
    │     jobs: []                                   │
    │     state_checksum: 0xAAAA                     │
@@ -327,16 +383,16 @@ VEHICLE                                           CLOUD
 
 **Bandwidth:** ~100 bytes (just checksums)
 
-### 3.4 Execution Reporting (Independent Stream)
+### 3.4 Execution Reporting (With Acknowledgment)
 
-Executions are sent immediately, independent of sync state.
+Executions are sent immediately. Cloud acknowledges to stop retries.
 
 ```
 VEHICLE                                           CLOUD
    │                                                │
    │ Job X completes                                │
    │                                                │
-   │─── V2C_Executions ────────────────────────────►│
+   │─── V2C_Envelope{executions} ──────────────────►│
    │    executions: [{                              │
    │      execution_id: "exec-123",                 │
    │      job_id: "job-X",                          │
@@ -348,24 +404,48 @@ VEHICLE                                           CLOUD
    │                      Store execution           │
    │                      (dedup by execution_id)   │
    │                                                │
-   │ Job Y fails                                    │
+   │◄─── C2V_Envelope{execution_ack} ──────────────│
+   │     execution_ids: ["exec-123"]                │
    │                                                │
-   │─── V2C_Executions ────────────────────────────►│
-   │    executions: [{                              │
-   │      execution_id: "exec-124",                 │
-   │      job_id: "job-Y",                          │
-   │      status: FAILED,                           │
-   │      error_message: "Service unavailable"      │
-   │    }]                                          │
+   │ Remove from retry queue                        │
    │                                                │
 ```
 
 **Key properties:**
-- Fire and forget (no ack)
 - Sent immediately when job completes
 - Cloud deduplicates by `execution_id`
 - Independent of job sync state
-- Can batch multiple executions
+- Vehicle queues for retry until acknowledged
+- Can batch multiple executions in one message
+- Acknowledgment is optional (vehicle times out after N retries)
+
+### 3.5 Job Trigger (Imperative Command)
+
+Trigger is the only imperative command - everything else is state sync.
+
+```
+VEHICLE                                           CLOUD
+   │                                                │
+   │                      User clicks "Run Now"     │
+   │                                                │
+   │◄─── C2V_Envelope{trigger_job} ────────────────│
+   │     job_id: "job-X"                            │
+   │     request_id: "req-456"                      │
+   │     requester_id: "dashboard-user"             │
+   │                                                │
+   │ Execute job immediately                        │
+   │                                                │
+   │─── V2C_Envelope{trigger_response} ────────────►│
+   │    job_id: "job-X"                             │
+   │    request_id: "req-456"                       │
+   │    accepted: true                              │
+   │                                                │
+   │ ... job runs ...                               │
+   │                                                │
+   │─── V2C_Envelope{executions} ──────────────────►│
+   │    executions: [{...}]                         │
+   │                                                │
+```
 
 ## 4. Cloud Decision Logic
 
@@ -381,24 +461,24 @@ def handle_v2c_hello(msg):
         # We know vehicle's state - just send our changes
         if vehicle_checksum == our_checksum:
             # Already in sync - send empty delta (confirm quiescent)
-            send_c2v_sync_delta(
+            send_c2v_envelope(sync_delta=C2V_SyncDelta(
                 request_job_ids=[],
                 jobs=[],
                 state_checksum=our_checksum
-            )
+            ))
         else:
             # Vehicle unchanged, but we have changes
             changed_jobs = get_jobs_changed_since(known_checksum)
-            send_c2v_sync_delta(
+            send_c2v_envelope(sync_delta=C2V_SyncDelta(
                 request_job_ids=[],
                 jobs=changed_jobs,
                 state_checksum=our_checksum
-            )
+            ))
     else:
         # Vehicle changed - we need their hash manifest
-        send_c2v_request_hashes(
+        send_c2v_envelope(request_hashes=C2V_RequestHashes(
             cloud_state_checksum=our_checksum
-        )
+        ))
 ```
 
 ### 4.2 On Receiving V2C_HashManifest
@@ -437,16 +517,31 @@ def handle_v2c_hash_manifest(msg):
         if job_id not in cloud_jobs:
             request_jobs.append(job_id)
 
-    send_c2v_sync_delta(
+    send_c2v_envelope(sync_delta=C2V_SyncDelta(
         request_job_ids=request_jobs,
         jobs=send_jobs,
         state_checksum=compute_checksum()
-    )
+    ))
+```
+
+### 4.3 On Receiving V2C_Executions
+
+```python
+def handle_v2c_executions(msg):
+    acked_ids = []
+    for exec in msg.executions:
+        # Deduplicate by execution_id
+        if not execution_exists(exec.execution_id):
+            store_execution(msg.vehicle_id, exec)
+        acked_ids.append(exec.execution_id)
+
+    # Acknowledge all (including duplicates - idempotent)
+    send_c2v_envelope(execution_ack=C2V_ExecutionAck(
+        execution_ids=acked_ids
+    ))
 ```
 
 ## 5. Version Vectors & Conflict Resolution
-
-(Unchanged from v2 - see scheduler-sync-protocol-v2.md sections 3-4)
 
 ### 5.1 Dominance
 
@@ -485,8 +580,6 @@ Same fields as state checksum, but for a single job.
 
 ## 7. Tombstone Deletion
 
-(Unchanged from v2 - see scheduler-sync-protocol-v2.md section 4.3)
-
 - Tombstones are `JobRecord{deleted=true}`
 - Included in hash manifest with `deleted=true`
 - GC after confirmed + retention period (7 days)
@@ -496,10 +589,10 @@ Same fields as state checksum, but for a single job.
 ### 8.1 Properties
 
 - **Append-only:** Immutable facts, never modified
-- **Independent:** Not part of job sync, own message type
+- **Independent:** Not part of job sync, own message type in envelope
 - **Immediate:** Sent as soon as job completes
 - **Deduplicated:** Cloud stores by `execution_id`
-- **No ack:** Fire and forget
+- **Acknowledged:** Cloud sends `C2V_ExecutionAck` to stop retries
 
 ### 8.2 Vehicle Behavior
 
@@ -516,52 +609,102 @@ def on_job_completed(job, result):
     )
 
     # Send immediately
-    send_v2c_executions([execution])
+    send_v2c_envelope(executions=V2C_Executions(
+        executions=[execution]
+    ))
 
-    # Also queue for retry if offline
-    queue_for_retry(execution)
+    # Queue for retry until acknowledged
+    pending_executions[execution.execution_id] = execution
+
+def on_execution_ack(msg):
+    for exec_id in msg.execution_ids:
+        pending_executions.pop(exec_id, None)
+
+def retry_pending_executions():
+    """Called periodically (e.g., every 30s)"""
+    if pending_executions:
+        send_v2c_envelope(executions=V2C_Executions(
+            executions=list(pending_executions.values())
+        ))
 ```
 
 ### 8.3 Cloud Behavior
 
 ```python
 def handle_v2c_executions(msg):
+    acked_ids = []
     for exec in msg.executions:
-        # Deduplicate by execution_id
+        # Deduplicate by execution_id - idempotent
         if not execution_exists(exec.execution_id):
             store_execution(msg.vehicle_id, exec)
+        acked_ids.append(exec.execution_id)
+
+    # Always acknowledge (idempotent)
+    send_c2v_envelope(execution_ack=C2V_ExecutionAck(
+        execution_ids=acked_ids
+    ))
 ```
 
 ## 9. Implementation Notes
 
-### 9.1 Message Discrimination
+### 9.1 Message Handling
 
-All messages on content_id 202. Discriminate by attempting parse:
+All messages use envelope types with protobuf `oneof` for type-safe discrimination:
 
 ```cpp
-bool handle_v2c_message(const bytes& payload) {
-    // Try each message type
-    V2C_Hello hello;
-    if (hello.ParseFromString(payload) && !hello.vehicle_id().empty()) {
-        return handle_hello(hello);
+void handle_v2c_message(const bytes& payload) {
+    V2C_Envelope envelope;
+    if (!envelope.ParseFromString(payload)) {
+        LOG(WARNING) << "Failed to parse V2C_Envelope";
+        return;
     }
 
-    V2C_HashManifest manifest;
-    if (manifest.ParseFromString(payload) && manifest.job_hashes_size() > 0) {
-        return handle_hash_manifest(manifest);
+    switch (envelope.message_case()) {
+        case V2C_Envelope::kHello:
+            handle_hello(envelope.hello());
+            break;
+        case V2C_Envelope::kHashManifest:
+            handle_hash_manifest(envelope.hash_manifest());
+            break;
+        case V2C_Envelope::kJobData:
+            handle_job_data(envelope.job_data());
+            break;
+        case V2C_Envelope::kExecutions:
+            handle_executions(envelope.executions());
+            break;
+        case V2C_Envelope::kTriggerResponse:
+            handle_trigger_response(envelope.trigger_response());
+            break;
+        case V2C_Envelope::MESSAGE_NOT_SET:
+            LOG(WARNING) << "Empty V2C_Envelope";
+            break;
+    }
+}
+
+void handle_c2v_message(const bytes& payload) {
+    C2V_Envelope envelope;
+    if (!envelope.ParseFromString(payload)) {
+        LOG(WARNING) << "Failed to parse C2V_Envelope";
+        return;
     }
 
-    V2C_JobData job_data;
-    if (job_data.ParseFromString(payload) && job_data.jobs_size() > 0) {
-        return handle_job_data(job_data);
+    switch (envelope.message_case()) {
+        case C2V_Envelope::kRequestHashes:
+            handle_request_hashes(envelope.request_hashes());
+            break;
+        case C2V_Envelope::kSyncDelta:
+            handle_sync_delta(envelope.sync_delta());
+            break;
+        case C2V_Envelope::kExecutionAck:
+            handle_execution_ack(envelope.execution_ack());
+            break;
+        case C2V_Envelope::kTriggerJob:
+            handle_trigger_job(envelope.trigger_job());
+            break;
+        case C2V_Envelope::MESSAGE_NOT_SET:
+            LOG(WARNING) << "Empty C2V_Envelope";
+            break;
     }
-
-    V2C_Executions executions;
-    if (executions.ParseFromString(payload) && executions.executions_size() > 0) {
-        return handle_executions(executions);
-    }
-
-    return false;  // Unknown message
 }
 ```
 
@@ -575,7 +718,7 @@ bool handle_v2c_message(const bytes& payload) {
     ───────►│   SEND_HELLO  │                              │
    connect  └───────┬───────┘                              │
                     │                                      │
-                    │ send V2C_Hello                       │
+                    │ send V2C_Envelope{hello}             │
                     ▼                                      │
             ┌───────────────┐                              │
             │ WAIT_RESPONSE │                              │
@@ -584,9 +727,8 @@ bool handle_v2c_message(const bytes& payload) {
         ┌───────────┼───────────┐                          │
         │           │           │                          │
         ▼           ▼           ▼                          │
-   C2V_Request  C2V_Sync    C2V_Sync                       │
-   Hashes       Delta       Delta                          │
-   (need hash)  (has jobs)  (empty)                        │
+   request_     sync_delta  sync_delta                     │
+   hashes       (has jobs)  (empty)                        │
         │           │           │                          │
         ▼           │           ▼                          │
 ┌───────────────┐   │   ┌───────────────┐                  │
@@ -606,6 +748,29 @@ bool handle_v2c_message(const bytes& payload) {
             └───────────────┘
 ```
 
+### 9.3 Execution Retry State Machine
+
+```
+                ┌────────────────────────────────────┐
+                │                                    │
+                ▼                                    │
+        ┌───────────────┐                            │
+        │    PENDING    │ ◄─── job completes         │
+        └───────┬───────┘                            │
+                │                                    │
+                │ send V2C_Envelope{executions}      │
+                ▼                                    │
+        ┌───────────────┐                            │
+        │ AWAIT_ACK     │────── timeout ─────────────┘
+        └───────┬───────┘       (retry)
+                │
+                │ C2V_ExecutionAck received
+                ▼
+        ┌───────────────┐
+        │    DONE       │
+        └───────────────┘
+```
+
 ## 10. Migration from v2
 
 ### 10.1 Compatibility
@@ -616,15 +781,23 @@ v3 is NOT backward compatible with v2. Both sides must upgrade.
 
 1. Deploy cloud with v3 support (accept both v2 and v3)
 2. Deploy vehicles with v3
-3. Vehicles send V2C_Hello (v3 format)
+3. Vehicles send `V2C_Envelope{hello}` (v3 format)
 4. Cloud responds with v3 messages
 5. After all vehicles upgraded, remove v2 support
 
 ### 10.3 Version Detection
 
 Cloud can detect v2 vs v3 by message format:
-- v2: `V2C_SyncMessage` has `jobs` field populated
-- v3: `V2C_Hello` has only checksums, no jobs
+- v2: Raw `V2C_SyncMessage` (no envelope wrapper)
+- v3: `V2C_Envelope` with `oneof` discriminator
+
+```cpp
+bool is_v3_message(const bytes& payload) {
+    V2C_Envelope envelope;
+    return envelope.ParseFromString(payload) &&
+           envelope.message_case() != V2C_Envelope::MESSAGE_NOT_SET;
+}
+```
 
 ---
 
@@ -638,6 +811,7 @@ Cloud can detect v2 vs v3 by message format:
 | Direction | Mostly V2C | Bidirectional |
 | First message | Hash list | Single checksum |
 | Request granularity | By hash | By job_id |
+| Message wrapper | None | Envelope with oneof |
 
 ## Appendix B: Test Scenarios
 
@@ -647,4 +821,14 @@ Cloud can detect v2 vs v3 by message format:
 | Reconnect, cloud +5 jobs | Hello → SyncDelta(5 jobs) | ~2 KB |
 | Reconnect, both +5 jobs | Hello → RequestHashes → Manifest → SyncDelta → JobData | ~8 KB |
 | 10K jobs, 50 differ | Hello → RequestHashes → Manifest → SyncDelta → JobData | ~500 KB |
-| Execution report | Executions | ~200 B |
+| Execution report | Executions → ExecutionAck | ~250 B |
+| Trigger job | TriggerJob → TriggerResponse → Executions | ~400 B |
+
+## Appendix C: Changes from v3.0 to v3.1
+
+| Change | v3.0 | v3.1 |
+|--------|------|------|
+| Message discrimination | Try-parse each type | Envelope with oneof |
+| Execution ack | None (fire-and-forget) | `C2V_ExecutionAck` |
+| Trigger command | Not specified | `C2V_TriggerJob`, `V2C_TriggerResponse` |
+| Type safety | Runtime parsing | Compile-time oneof |
