@@ -133,13 +133,19 @@ namespaces:
             datatype: job_authority_t
             description: Who wins conflicts (immutable after creation)
 
-          # --- Version (for sync protocol) ---
-          - name: cloud_seq
-            datatype: uint64
-            description: Cloud sequence number (version vector component)
-          - name: vehicle_seq
-            datatype: uint64
-            description: Vehicle sequence number (version vector component)
+          # --- Version tracking (for sync protocol) ---
+          - name: local_version
+            datatype: job_version_t
+            description: >
+              My current version of this job. Contains cloud_seq and vehicle_seq.
+              Transmitted in sync messages.
+          - name: remote_version
+            datatype: job_version_t
+            description: >
+              Last known remote version (what I believe remote has confirmed).
+              Local tracking only - used to compute is_dirty().
+              NOT transmitted in sync messages.
+            mandatory: false
 
           # --- Lifecycle ---
           - name: deleted

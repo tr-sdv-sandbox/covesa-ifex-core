@@ -62,8 +62,8 @@ message job_version_t {
 message job_t {
   string job_id = 1;
   job_authority_t authority = 2;
-  uint64 cloud_seq = 3;
-  uint64 vehicle_seq = 4;
+  job_version_t local_version = 3;
+  job_version_t remote_version = 4;
   bool deleted = 5;
   string title = 6;
   string service = 7;

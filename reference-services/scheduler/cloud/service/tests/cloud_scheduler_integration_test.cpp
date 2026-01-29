@@ -22,6 +22,7 @@
 
 #include "cloud_scheduler_service.hpp"
 #include "cloud_scheduler_sync_bridge.hpp"
+#include "job_hash.hpp"  // For sched_lib::compute_state_checksum
 #include "cloud_backend_transport_server.hpp"
 #include "cloud_backend_transport_client.hpp"
 #include "backend_transport_server.hpp"
@@ -49,6 +50,9 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+// Namespace aliases
+namespace sched_lib = ifex::scheduler;
 
 namespace {
 // Global pointers for signal handler cleanup
@@ -454,24 +458,137 @@ protected:
         return response.result().state_hash();
     }
 
-    /// Wait for cloud and vehicle scheduler hashes to match
+    /// Compute state checksum from job list (without sync_state)
+    /// This matches the sync protocol checksum calculation
+    static uint64_t ComputeJobsChecksum(const std::vector<sched_lib::Job>& jobs) {
+        return sched_lib::compute_state_checksum(jobs);
+    }
+
+    /// Get jobs from vehicle scheduler and compute checksum
+    static uint64_t GetVehicleJobsChecksum() {
+        auto channel = grpc::CreateChannel(
+            TEST_SCHEDULER_ADDRESS, grpc::InsecureChannelCredentials());
+        auto stub = vehicle_sched::list_jobs_service::NewStub(channel);
+
+        grpc::ClientContext context;
+        vehicle_sched::list_jobs_request request;
+        request.mutable_filter()->set_include_deleted(true);  // Include tombstones
+        vehicle_sched::list_jobs_response response;
+
+        auto status = stub->list_jobs(&context, request, &response);
+        if (!status.ok()) {
+            LOG(ERROR) << "Failed to get vehicle jobs: " << status.error_message();
+            return 0;
+        }
+
+        // Convert to library Job type for checksum calculation
+        std::vector<sched_lib::Job> jobs;
+        for (const auto& job : response.jobs()) {
+            jobs.push_back(sched_lib::Job{
+                .job_id = job.job_id(),
+                .title = job.title(),
+                .service = job.service(),
+                .method = job.method(),
+                .parameters_json = job.parameters_json(),
+                .scheduled_time_ms = job.scheduled_time_ms(),
+                .recurrence_rule = job.recurrence_rule(),
+                .end_time_ms = job.end_time_ms(),
+                .paused = job.paused(),
+                .wake_policy = static_cast<sched_lib::WakePolicy>(job.wake_policy()),
+                .sleep_policy = static_cast<sched_lib::SleepPolicy>(job.sleep_policy()),
+                .wake_lead_time_s = job.wake_lead_time_s(),
+                .status = static_cast<sched_lib::JobStatus>(job.status()),
+                .local_version = sched_lib::VersionVector(job.local_version().cloud_seq(), job.local_version().vehicle_seq()),
+                .authority = static_cast<sched_lib::JobAuthority>(job.authority()),
+                .deleted = job.deleted()
+            });
+        }
+
+        // Debug: log what test sees from scheduler
+        LOG(INFO) << "DEBUG GetVehicleJobsChecksum: " << jobs.size() << " jobs:";
+        for (const auto& job : jobs) {
+            uint64_t job_hash = sched_lib::compute_job_content_hash(job);
+            LOG(INFO) << "  - " << job.job_id
+                      << " version={" << job.local_version.cloud_seq << "," << job.local_version.vehicle_seq << "}"
+                      << " deleted=" << job.deleted
+                      << " authority=" << static_cast<int>(job.authority)
+                      << " content_hash=" << std::hex << job_hash << std::dec;
+        }
+
+        return ComputeJobsChecksum(jobs);
+    }
+
+    /// Get jobs from cloud scheduler for this vehicle and compute checksum
+    static uint64_t GetCloudJobsChecksum() {
+        auto channel = grpc::CreateChannel(
+            "localhost:" + std::to_string(cloud_scheduler_grpc_port_),
+            grpc::InsecureChannelCredentials());
+        auto stub = cloud_sched::list_jobs_service::NewStub(channel);
+
+        grpc::ClientContext context;
+        cloud_sched::list_jobs_request request;
+        request.mutable_filter()->set_vehicle_id_filter(TEST_VEHICLE_ID);
+        request.mutable_filter()->set_include_deleted(true);  // Include tombstones
+        cloud_sched::list_jobs_response response;
+
+        auto status = stub->list_jobs(&context, request, &response);
+        if (!status.ok()) {
+            LOG(ERROR) << "Failed to get cloud jobs: " << status.error_message();
+            return 0;
+        }
+
+        // Convert to library Job type for checksum calculation
+        std::vector<sched_lib::Job> jobs;
+        for (const auto& job : response.result().jobs()) {
+            jobs.push_back(sched_lib::Job{
+                .job_id = job.job_id(),
+                .title = job.title(),
+                .service = job.service(),
+                .method = job.method(),
+                .parameters_json = job.parameters_json(),
+                .scheduled_time_ms = job.scheduled_time_ms(),
+                .recurrence_rule = job.recurrence_rule(),
+                .end_time_ms = job.end_time_ms(),
+                .paused = job.paused(),
+                .wake_policy = static_cast<sched_lib::WakePolicy>(job.wake_policy()),
+                .sleep_policy = static_cast<sched_lib::SleepPolicy>(job.sleep_policy()),
+                .wake_lead_time_s = job.wake_lead_time_s(),
+                .status = static_cast<sched_lib::JobStatus>(job.status()),
+                .local_version = sched_lib::VersionVector(job.local_version().cloud_seq(), job.local_version().vehicle_seq()),
+                .authority = static_cast<sched_lib::JobAuthority>(job.authority()),
+                .deleted = job.deleted()
+            });
+        }
+
+        return ComputeJobsChecksum(jobs);
+    }
+
+    /// Wait for schedulers to have the same job state (source of truth)
+    /// Uses scheduler state directly, not the eventually-consistent sync bridges
     static bool WaitForConvergence(std::chrono::seconds timeout = 15s) {
         auto start = std::chrono::steady_clock::now();
         while (std::chrono::steady_clock::now() - start < timeout) {
-            uint64_t cloud_hash = GetCloudSchedulerHash();
-            uint64_t vehicle_hash = GetVehicleSchedulerHash();
+            // Query both schedulers directly for their job checksums
+            uint64_t vehicle_checksum = GetVehicleJobsChecksum();
+            uint64_t cloud_checksum = GetCloudJobsChecksum();
 
-            if (cloud_hash == vehicle_hash && cloud_hash != 0) {
-                LOG(INFO) << "Converged: hash=" << std::hex << cloud_hash << std::dec;
+            if (vehicle_checksum != 0 && vehicle_checksum == cloud_checksum) {
+                LOG(INFO) << "Converged: checksum=" << std::hex << vehicle_checksum << std::dec
+                          << " (both schedulers agree)";
                 return true;
             }
+
             std::this_thread::sleep_for(200ms);
         }
 
-        uint64_t cloud_hash = GetCloudSchedulerHash();
-        uint64_t vehicle_hash = GetVehicleSchedulerHash();
-        LOG(WARNING) << "Convergence timeout: cloud=" << std::hex << cloud_hash
-                     << " vehicle=" << vehicle_hash << std::dec;
+        // Log detailed state on timeout
+        uint64_t vehicle_checksum = GetVehicleJobsChecksum();
+        uint64_t cloud_checksum = GetCloudJobsChecksum();
+
+        LOG(WARNING) << "Convergence timeout:"
+                     << " vehicle_checksum=" << std::hex << vehicle_checksum
+                     << " cloud_checksum=" << cloud_checksum
+                     << std::dec;
         return false;
     }
 
@@ -1000,11 +1117,12 @@ TEST_F(SchedulerBidirectionalSyncTest, CreateJobSendsCommandToVehicle) {
 
     // Check sync bridge received and processed the sync message SUCCESSFULLY
     auto stats = vehicle_sync_bridge_->GetStats();
-    LOG(INFO) << "Sync bridge stats: syncs_received=" << stats.syncs_received
+    LOG(INFO) << "Sync bridge stats: sync_messages_received=" << stats.sync_messages_received
               << " jobs_created_from_cloud=" << stats.jobs_created_from_cloud
               << " jobs_updated_from_cloud=" << stats.jobs_updated_from_cloud;
 
-    EXPECT_GE(stats.syncs_received, 1u) << "Vehicle should have received at least 1 sync message";
+    // v3.2 protocol uses SyncMessage instead of SyncDelta
+    EXPECT_GE(stats.sync_messages_received, 1u) << "Vehicle should have received at least 1 sync message";
     EXPECT_GE(stats.jobs_created_from_cloud, 1u)
         << "At least one job should be created from cloud sync";
 }
@@ -1040,9 +1158,9 @@ TEST_F(SchedulerBidirectionalSyncTest, EpochMillisecondsFlowCorrectly) {
     // Wait for cloud and vehicle schedulers to converge
     ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge";
 
-    // Verify sync was processed successfully on vehicle
+    // Verify sync was processed successfully on vehicle (v3.2 uses SyncMessage)
     auto final_stats = vehicle_sync_bridge_->GetStats();
-    EXPECT_GT(final_stats.syncs_received, initial_stats.syncs_received)
+    EXPECT_GT(final_stats.sync_messages_received, initial_stats.sync_messages_received)
         << "Sync should have been received on vehicle";
     EXPECT_GT(final_stats.jobs_created_from_cloud, initial_stats.jobs_created_from_cloud)
         << "Job should have been created from cloud sync";
@@ -1261,13 +1379,13 @@ TEST_F(SchedulerBidirectionalSyncTest, TombstoneCloudInitiatedDelete) {
     EXPECT_EQ(count_after_delete, count_before_delete - 1)
         << "Job count should decrease after delete";
 
-    // Step 6: Verify vehicle received the tombstone sync
+    // Step 6: Verify vehicle received the tombstone sync (v3.2 uses SyncMessage)
     auto stats_after = vehicle_sync_bridge_->GetStats();
-    LOG(INFO) << "Sync stats: syncs_received before=" << stats_before.syncs_received
-              << " after=" << stats_after.syncs_received;
+    LOG(INFO) << "Sync stats: sync_messages_received before=" << stats_before.sync_messages_received
+              << " after=" << stats_after.sync_messages_received;
 
     // Vehicle should have received sync message(s) with the tombstone
-    EXPECT_GT(stats_after.syncs_received, stats_before.syncs_received)
+    EXPECT_GT(stats_after.sync_messages_received, stats_before.sync_messages_received)
         << "Vehicle should have received tombstone sync";
 
     // Verify GetJob returns not found (tombstone exists but job is "deleted")
@@ -1379,10 +1497,10 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceSilenceWhenSynced) {
     // Wait for any pending syncs to complete
     std::this_thread::sleep_for(2s);
 
-    // Record current sync stats
+    // Record current sync stats (v3.1 protocol)
     auto stats_before = vehicle_sync_bridge_->GetStats();
-    uint64_t syncs_sent_before = stats_before.full_syncs_sent + stats_before.delta_syncs_sent;
-    LOG(INFO) << "Stats before quiescence wait: syncs_sent=" << syncs_sent_before
+    uint64_t events_sent_before = stats_before.events_sent;
+    LOG(INFO) << "Stats before quiescence wait: events_sent=" << events_sent_before
               << " bytes_sent=" << stats_before.bytes_sent;
 
     // Wait for potential sync activity - if quiescent, minimal/no new syncs should occur
@@ -1390,13 +1508,13 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceSilenceWhenSynced) {
     WaitForConvergence(5s);  // Allow time for any pending syncs
 
     auto stats_after = vehicle_sync_bridge_->GetStats();
-    uint64_t syncs_sent_after = stats_after.full_syncs_sent + stats_after.delta_syncs_sent;
-    LOG(INFO) << "Stats after quiescence wait: syncs_sent=" << syncs_sent_after
+    uint64_t events_sent_after = stats_after.events_sent;
+    LOG(INFO) << "Stats after quiescence wait: events_sent=" << events_sent_after
               << " bytes_sent=" << stats_after.bytes_sent;
 
-    // Allow at most 1 sync (possible timing edge case)
-    EXPECT_LE(syncs_sent_after - syncs_sent_before, 1u)
-        << "Should send minimal syncs when quiescent";
+    // Allow at most 1 event (possible timing edge case - heartbeat)
+    EXPECT_LE(events_sent_after - events_sent_before, 1u)
+        << "Should send minimal events when quiescent";
 }
 
 TEST_F(SchedulerBidirectionalSyncTest, QuiescenceConvergenceAfterChange) {
@@ -1434,9 +1552,9 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceConvergenceAfterChange) {
     // Wait for cloud and vehicle schedulers to converge
     ASSERT_TRUE(WaitForConvergence()) << "Schedulers failed to converge";
 
-    // Verify sync activity occurred
+    // Verify sync activity occurred (v3.2: check sync_messages_received)
     auto stats_after_change = vehicle_sync_bridge_->GetStats();
-    EXPECT_GT(stats_after_change.syncs_received, stats_before.syncs_received)
+    EXPECT_GT(stats_after_change.sync_messages_received, stats_before.sync_messages_received)
         << "Should have received sync messages after change";
 
     // Now wait again - should be quiescent
@@ -1444,12 +1562,11 @@ TEST_F(SchedulerBidirectionalSyncTest, QuiescenceConvergenceAfterChange) {
     std::this_thread::sleep_for(2s);
     auto stats_after_quiescence = vehicle_sync_bridge_->GetStats();
 
-    uint64_t syncs_during_quiescence =
-        (stats_after_quiescence.full_syncs_sent + stats_after_quiescence.delta_syncs_sent) -
-        (stats_before_quiescence.full_syncs_sent + stats_before_quiescence.delta_syncs_sent);
+    uint64_t events_during_quiescence =
+        stats_after_quiescence.events_sent - stats_before_quiescence.events_sent;
 
-    LOG(INFO) << "Syncs during post-convergence quiescence: " << syncs_during_quiescence;
-    EXPECT_LE(syncs_during_quiescence, 1u)
+    LOG(INFO) << "Events during post-convergence quiescence: " << events_during_quiescence;
+    EXPECT_LE(events_during_quiescence, 1u)
         << "Should be quiescent after convergence";
 
     // Cleanup

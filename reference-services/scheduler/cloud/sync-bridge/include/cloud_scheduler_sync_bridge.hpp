@@ -3,7 +3,7 @@
 #include "cloud-scheduler-sync-bridge.grpc.pb.h"
 #include "cloud-scheduler-service.grpc.pb.h"
 #include "cloud-backend-transport-service.grpc.pb.h"
-#include "scheduler-sync-v2.pb.h"
+#include "scheduler-sync-v3.pb.h"
 #include "scheduler-types.pb.h"
 
 // ifex-scheduler library (version vectors, sync engine)
@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <condition_variable>
 #include <thread>
@@ -31,7 +32,7 @@ namespace ifex::cloud {
 namespace bridge_pb = ::swdv::cloud_scheduler_sync_bridge;
 namespace sched_pb = ::swdv::cloud_scheduler_service;
 namespace transport_pb = ::swdv::cloud_backend_transport_service;
-namespace sync_v2 = ::swdv::scheduler_sync_v2;
+namespace sync_v3 = ::swdv::scheduler_sync_v3;
 namespace scheduler_types = ::swdv::scheduler_types;
 
 /// Configuration for CloudSchedulerSyncBridge
@@ -43,18 +44,22 @@ struct CloudSchedulerSyncBridgeConfig {
     uint32_t poll_interval_ms = 1000;  // How often to poll for pending syncs
 };
 
-/// Cloud-side scheduler sync bridge.
+/// Cloud-side scheduler sync bridge (v3.2 protocol).
 ///
-/// Handles bidirectional sync between cloud scheduler and vehicles.
-/// Uses gRPC interfaces only - agnostic to scheduler/transport implementations.
+/// Handles bidirectional sync between cloud scheduler and vehicles using
+/// the dirty-first v3.2 protocol for bandwidth efficiency.
 ///
 /// Protocol flow:
 /// 1. Subscribe to V2C messages from vehicles via backend transport
-/// 2. Parse V2C_SyncMessage, extract jobs and executions
-/// 3. Get current cloud jobs via scheduler internal API
-/// 4. Compare version vectors, resolve conflicts using sync engine
-/// 5. Upsert jobs and record executions via scheduler internal API
-/// 6. Build and send C2V_SyncMessage if not quiescent
+/// 2. Handle V2C_Envelope messages:
+///    - V2C_Hello: Compare checksums, send dirty jobs or job_ids for gap detection
+///    - V2C_JobData: Accept jobs, process gap detection requests
+///    - V2C_Executions: Store executions, send ack
+///    - V2C_TriggerResponse: Record trigger result
+/// 3. Send C2V_Envelope responses:
+///    - C2V_SyncDelta: Send jobs and/or request jobs (with job_ids for gap detection)
+///    - C2V_ExecutionAck: Acknowledge received executions
+///    - C2V_TriggerJob: Request immediate job execution
 class CloudSchedulerSyncBridge final
     : public bridge_pb::get_stats_service::Service
     , public bridge_pb::get_health_service::Service
@@ -116,6 +121,14 @@ public:
         const bridge_pb::healthy_request* request,
         bridge_pb::healthy_response* response) override;
 
+    // =========================================================================
+    // Testing / Monitoring API
+    // =========================================================================
+
+    /// Get vehicle sync state (for testing and monitoring)
+    /// Returns the cloud's view of sync state for a vehicle
+    sched_pb::vehicle_sync_state_t GetVehicleSyncState(const std::string& vehicle_id);
+
 private:
     // =========================================================================
     // Internal Implementation
@@ -133,15 +146,60 @@ private:
     /// Poll loop for pending syncs
     void PollLoop();
 
-    /// Handle incoming V2C sync message
-    void HandleV2CSyncMessage(
+    // =========================================================================
+    // V2C Message Handling (v3.2 Protocol)
+    // =========================================================================
+
+    /// Handle incoming V2C envelope message
+    void HandleV2CEnvelope(
         const std::string& vehicle_id,
         const std::vector<uint8_t>& payload);
 
-    /// Process a V2C_SyncMessage
-    void ProcessV2CMessage(
+    /// Handle SyncMessage from vehicle (v3.2 - process jobs, ACKs, check quiescence)
+    void HandleSyncMessage(
         const std::string& vehicle_id,
-        const sync_v2::V2C_SyncMessage& v2c_msg);
+        const sync_v3::SyncMessage& msg);
+
+    /// Handle GapDetect from vehicle (v3.2 - compare job_ids, send missing jobs)
+    void HandleGapDetect(
+        const std::string& vehicle_id,
+        const sync_v3::GapDetect& msg);
+
+    /// Handle V2C_Executions
+    void HandleExecutions(
+        const std::string& vehicle_id,
+        const sync_v3::V2C_Executions& executions);
+
+    /// Handle V2C_TriggerResponse
+    void HandleTriggerResponse(
+        const std::string& vehicle_id,
+        const sync_v3::V2C_TriggerResponse& response);
+
+    // =========================================================================
+    // C2V Message Sending (v3.2 Protocol)
+    // =========================================================================
+
+    /// Send C2V_Envelope to vehicle
+    void SendC2VEnvelope(const std::string& vehicle_id,
+                         const sync_v3::C2V_Envelope& envelope);
+
+    /// Send SyncMessage to vehicle (v3.2 - jobs + acks + checksum)
+    void SendSyncMessage(const std::string& vehicle_id,
+                         const std::vector<sync_v3::JobRecord>& jobs,
+                         const std::vector<sync_v3::JobVersionAck>& acked_jobs);
+
+    /// Send GapDetect to vehicle (v3.2 - job_ids for gap detection)
+    void SendGapDetect(const std::string& vehicle_id,
+                       const std::vector<std::string>& job_ids,
+                       const std::vector<std::string>& request_job_ids);
+
+    /// Send C2V_ExecutionAck
+    void SendExecutionAck(const std::string& vehicle_id,
+                          const std::vector<std::string>& execution_ids);
+
+    // =========================================================================
+    // Scheduler API
+    // =========================================================================
 
     /// Get jobs for vehicle from scheduler
     std::vector<scheduler_types::job_t> GetCloudJobs(const std::string& vehicle_id);
@@ -153,32 +211,44 @@ private:
     bool RecordExecution(
         const std::string& vehicle_id,
         const std::string& job_id,
-        const sync_v2::ExecutionRecord& execution);
-
-    /// Get vehicle sync state from scheduler
-    sched_pb::vehicle_sync_state_t GetVehicleSyncState(const std::string& vehicle_id);
+        const sync_v3::ExecutionRecord& execution);
 
     /// Update vehicle sync state in scheduler
     void UpdateVehicleSyncState(const std::string& vehicle_id, uint64_t v2c_checksum);
 
-    /// Build and send C2V sync message
-    void SendC2VMessage(const std::string& vehicle_id);
+    // =========================================================================
+    // Type Conversions
+    // =========================================================================
 
     /// Convert V2C JobRecord to scheduler job_t
     scheduler_types::job_t V2CRecordToJobInfo(
         const std::string& vehicle_id,
-        const sync_v2::JobRecord& record);
+        const sync_v3::JobRecord& record);
 
     /// Convert scheduler job_t to C2V JobRecord
-    sync_v2::JobRecord JobInfoToC2VRecord(const scheduler_types::job_t& job);
+    sync_v3::JobRecord JobInfoToC2VRecord(const scheduler_types::job_t& job);
 
-    /// Compute state checksum for C2V message
+    /// Compute state checksum
     uint64_t ComputeStateChecksum(const std::vector<scheduler_types::job_t>& jobs);
 
     /// Check if sync is quiescent (checksums match)
     bool IsQuiescent(
         const sched_pb::vehicle_sync_state_t& state,
         uint64_t v2c_checksum);
+
+    // =========================================================================
+    // v3.2 Dirty Tracking and Gap Detection
+    // =========================================================================
+
+    /// Get jobs that are dirty (version != synced_version) for a vehicle
+    std::vector<scheduler_types::job_t> GetDirtyJobs(const std::string& vehicle_id);
+
+    /// Get all job IDs for a vehicle (for gap detection)
+    std::vector<std::string> GetAllJobIds(const std::string& vehicle_id);
+
+    /// Update remote_version for a job to track what vehicle has confirmed
+    void SetJobRemoteVersion(const std::string& vehicle_id, const std::string& job_id,
+                             uint64_t cloud_seq, uint64_t vehicle_seq);
 
     // =========================================================================
     // State
@@ -199,6 +269,7 @@ private:
     std::unique_ptr<sched_pb::get_vehicle_sync_state_service::Stub> get_sync_state_stub_;
     std::unique_ptr<sched_pb::update_vehicle_sync_state_service::Stub> update_sync_state_stub_;
     std::unique_ptr<sched_pb::get_pending_syncs_service::Stub> get_pending_syncs_stub_;
+    std::unique_ptr<sched_pb::set_job_remote_version_service::Stub> set_remote_version_stub_;
 
     // Backend transport stubs
     std::unique_ptr<transport_pb::send_to_vehicle_service::Stub> send_stub_;

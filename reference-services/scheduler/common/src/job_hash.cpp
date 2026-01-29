@@ -94,14 +94,14 @@ static uint64_t compute_job_state_hash(const Job& job) {
     // NOTE: sync_state is NOT included here - it's a local derived field that differs
     // between cloud and vehicle, so including it would break quiescence detection.
     h = hash_mix(h, static_cast<uint64_t>(job.authority));
-    h = hash_mix(h, job.version.cloud_seq);
-    h = hash_mix(h, job.version.vehicle_seq);
+    h = hash_mix(h, job.local_version.cloud_seq);
+    h = hash_mix(h, job.local_version.vehicle_seq);
     h = hash_mix(h, bool_hash(job.deleted));
 
     return h;
 }
 
-uint64_t compute_state_checksum(const std::vector<Job>& jobs) {
+uint64_t compute_state_checksum(std::vector<Job> jobs) {
     // xxHash64-style seed - return this for empty state to match original implementation
     constexpr uint64_t SEED = 0x9e3779b97f4a7c15ULL;
 
@@ -109,16 +109,9 @@ uint64_t compute_state_checksum(const std::vector<Job>& jobs) {
         return SEED;
     }
 
-    // Jobs must be sorted by job_id for deterministic results
-    // Caller should ensure this, but we'll verify in debug
-#ifndef NDEBUG
-    for (size_t i = 1; i < jobs.size(); ++i) {
-        if (jobs[i].job_id < jobs[i-1].job_id) {
-            // Not sorted - this is a bug
-            throw std::runtime_error("compute_state_checksum: jobs must be sorted by job_id");
-        }
-    }
-#endif
+    // Sort by job_id for deterministic results
+    std::sort(jobs.begin(), jobs.end(),
+              [](const Job& a, const Job& b) { return a.job_id < b.job_id; });
 
     // xxHash64-style seed
     uint64_t hash = 0x9e3779b97f4a7c15ULL;

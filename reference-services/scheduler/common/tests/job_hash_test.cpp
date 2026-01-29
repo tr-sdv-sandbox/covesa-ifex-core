@@ -82,8 +82,8 @@ TEST_F(JobHashTest, MetadataNotIncludedInHash) {
 TEST_F(JobHashTest, VersionNotIncludedInHash) {
     Job job1 = create_test_job();
     Job job2 = create_test_job();
-    job2.version.cloud_seq = 10;
-    job2.version.vehicle_seq = 5;
+    job2.local_version.cloud_seq = 10;
+    job2.local_version.vehicle_seq = 5;
 
     EXPECT_EQ(compute_job_content_hash(job1), compute_job_content_hash(job2));
 }
@@ -110,10 +110,7 @@ TEST_F(JobHashTest, StateChecksumDeterministic) {
     jobs.push_back(create_test_job("job-2"));
     jobs.push_back(create_test_job("job-3"));
 
-    // Sort by job_id
-    std::sort(jobs.begin(), jobs.end(),
-              [](const Job& a, const Job& b) { return a.job_id < b.job_id; });
-
+    // No need to sort - compute_state_checksum sorts internally
     uint64_t checksum1 = compute_state_checksum(jobs);
     uint64_t checksum2 = compute_state_checksum(jobs);
 
@@ -124,8 +121,7 @@ TEST_F(JobHashTest, StateChecksumChangesWithJob) {
     std::vector<Job> jobs1;
     jobs1.push_back(create_test_job("job-1"));
     jobs1.push_back(create_test_job("job-2"));
-    std::sort(jobs1.begin(), jobs1.end(),
-              [](const Job& a, const Job& b) { return a.job_id < b.job_id; });
+    // No need to sort - compute_state_checksum sorts internally
 
     std::vector<Job> jobs2 = jobs1;
     jobs2[0].title = "Modified Title";

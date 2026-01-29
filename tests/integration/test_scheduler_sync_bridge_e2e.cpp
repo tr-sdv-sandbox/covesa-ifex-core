@@ -47,7 +47,7 @@
 // Proto
 #include "scheduler-service.grpc.pb.h"
 #include "cloud-scheduler-service.grpc.pb.h"
-#include "scheduler-sync-v2.pb.h"
+#include "scheduler-sync-v3.pb.h"
 
 #include <algorithm>
 #include <atomic>
@@ -330,8 +330,8 @@ protected:
         job.sleep_policy = static_cast<sched::SleepPolicy>(proto.sleep_policy());
         job.wake_lead_time_s = proto.wake_lead_time_s();
         // Sync state fields for checksum (per spec section 5.5)
-        job.version.cloud_seq = proto.cloud_seq();
-        job.version.vehicle_seq = proto.vehicle_seq();
+        job.local_version.cloud_seq = proto.local_version().cloud_seq();
+        job.local_version.vehicle_seq = proto.local_version().vehicle_seq();
         job.authority = static_cast<sched::JobAuthority>(proto.authority());
         return job;
     }
@@ -489,6 +489,39 @@ protected:
 
         swdv::ifex_scheduler::delete_job_response response;
         auto status = stub->delete_job(&context, request, &response);
+        return status.ok() && response.success();
+    }
+
+    /// Pause a job on the cloud scheduler
+    bool PauseCloudJob(const std::string& job_id) {
+        auto channel = grpc::CreateChannel(
+            "localhost:" + std::to_string(cloud_scheduler_port_),
+            grpc::InsecureChannelCredentials());
+        auto stub = swdv::cloud_scheduler_service::pause_job_service::NewStub(channel);
+
+        grpc::ClientContext context;
+        swdv::cloud_scheduler_service::pause_job_request request;
+        request.set_vehicle_id(TEST_VEHICLE_ID);
+        request.set_job_id(job_id);
+
+        swdv::cloud_scheduler_service::pause_job_response response;
+        auto status = stub->pause_job(&context, request, &response);
+        return status.ok() && response.result().success();
+    }
+
+    /// Pause a job on the vehicle scheduler
+    bool PauseVehicleJob(const std::string& job_id) {
+        auto channel = grpc::CreateChannel(
+            "localhost:" + std::to_string(vehicle_scheduler_port_),
+            grpc::InsecureChannelCredentials());
+        auto stub = swdv::ifex_scheduler::pause_job_service::NewStub(channel);
+
+        grpc::ClientContext context;
+        swdv::ifex_scheduler::pause_job_request request;
+        request.set_job_id(job_id);
+
+        swdv::ifex_scheduler::pause_job_response response;
+        auto status = stub->pause_job(&context, request, &response);
         return status.ok() && response.success();
     }
 
@@ -687,6 +720,12 @@ protected:
     bool IsJobDeleted(const std::vector<sched::Job>& jobs, const std::string& job_id) {
         auto* job = FindJobById(jobs, job_id);
         return job && job->deleted;
+    }
+
+    /// Check if a job is paused (by ID)
+    bool IsJobPaused(const std::vector<sched::Job>& jobs, const std::string& job_id) {
+        auto* job = FindJobById(jobs, job_id);
+        return job && job->paused;
     }
 
     /// Get job title (by ID)
@@ -988,6 +1027,274 @@ TEST_F(SchedulerSyncBridgeE2ETest, LargeBatchSync_AllJobsConverge) {
     auto vehicle_jobs = GetAllVehicleJobs();
     EXPECT_EQ(cloud_jobs.size(), static_cast<size_t>(BATCH_SIZE));
     EXPECT_EQ(vehicle_jobs.size(), static_cast<size_t>(BATCH_SIZE));
+}
+
+/// Test: Complex scenario - simultaneous deletes, updates, and creates on both sides
+/// This tests the full sync protocol under realistic conditions where both cloud and
+/// vehicle are making changes independently.
+///
+/// Scenario:
+/// 1. Create 8 initial jobs (4 cloud, 4 vehicle) and sync
+/// 2. Go offline
+/// 3. On cloud: delete 2 jobs, modify 1, create 3 new
+/// 4. On vehicle: delete 2 different jobs, modify 1, create 3 new
+/// 5. Reconnect and verify convergence
+///
+/// Expected final state:
+/// - 4 original jobs deleted (tombstones)
+/// - 4 original jobs remaining (2 modified)
+/// - 6 new jobs (3 from each side)
+/// Total: 10 live jobs + 4 tombstones = 14 jobs in final state
+TEST_F(SchedulerSyncBridgeE2ETest, ComplexMixedOperations_ConvergesAfterReconnect) {
+    StartCloudSyncBridge();
+    StartVehicleSyncBridge();
+    EXPECT_TRUE(WaitFor([&]() { return vehicle_sync_bridge_->IsInitialized(); }, 10s));
+
+    // =========================================================================
+    // Phase 1: Create initial jobs and sync
+    // =========================================================================
+    LOG(INFO) << "=== Phase 1: Creating initial jobs ===";
+
+    // Create 4 jobs on cloud
+    std::string cloud_job_1 = CreateCloudJob("Cloud Initial 1");  // will be deleted by cloud
+    std::string cloud_job_2 = CreateCloudJob("Cloud Initial 2");  // will be deleted by cloud
+    std::string cloud_job_3 = CreateCloudJob("Cloud Initial 3");  // will be modified by cloud
+    std::string cloud_job_4 = CreateCloudJob("Cloud Initial 4");  // will survive unchanged
+
+    // Create 4 jobs on vehicle
+    std::string vehicle_job_1 = CreateVehicleJob("Vehicle Initial 1");  // will be deleted by vehicle
+    std::string vehicle_job_2 = CreateVehicleJob("Vehicle Initial 2");  // will be deleted by vehicle
+    std::string vehicle_job_3 = CreateVehicleJob("Vehicle Initial 3");  // will be modified by vehicle
+    std::string vehicle_job_4 = CreateVehicleJob("Vehicle Initial 4");  // will survive unchanged
+
+    ASSERT_FALSE(cloud_job_1.empty());
+    ASSERT_FALSE(cloud_job_2.empty());
+    ASSERT_FALSE(cloud_job_3.empty());
+    ASSERT_FALSE(cloud_job_4.empty());
+    ASSERT_FALSE(vehicle_job_1.empty());
+    ASSERT_FALSE(vehicle_job_2.empty());
+    ASSERT_FALSE(vehicle_job_3.empty());
+    ASSERT_FALSE(vehicle_job_4.empty());
+
+    // Wait for initial sync to complete
+    EXPECT_TRUE(WaitForConvergence(30s, "[Initial 8 jobs]"))
+        << "Initial 8 jobs should sync before going offline";
+
+    auto initial_cloud = GetAllCloudJobs();
+    auto initial_vehicle = GetAllVehicleJobs();
+    EXPECT_EQ(initial_cloud.size(), 8u) << "Cloud should have 8 jobs";
+    EXPECT_EQ(initial_vehicle.size(), 8u) << "Vehicle should have 8 jobs";
+
+    // =========================================================================
+    // Phase 2: Go offline and make changes on both sides
+    // =========================================================================
+    LOG(INFO) << "=== Phase 2: Going offline ===";
+    StopVehicleSyncBridge();
+    StopCloudSyncBridge();
+    std::this_thread::sleep_for(500ms);
+
+    // --- Cloud side changes ---
+    LOG(INFO) << "Cloud: Deleting 2 jobs, modifying 1, creating 3 new";
+
+    // Cloud deletes 2 jobs
+    EXPECT_TRUE(DeleteCloudJob(cloud_job_1)) << "Cloud delete job 1";
+    EXPECT_TRUE(DeleteCloudJob(cloud_job_2)) << "Cloud delete job 2";
+
+    // Cloud modifies 1 job
+    EXPECT_TRUE(UpdateCloudJob(cloud_job_3, "Cloud Initial 3 - CLOUD MODIFIED"));
+
+    // Cloud creates 3 new jobs
+    std::string cloud_new_1 = CreateCloudJob("Cloud New Offline 1");
+    std::string cloud_new_2 = CreateCloudJob("Cloud New Offline 2");
+    std::string cloud_new_3 = CreateCloudJob("Cloud New Offline 3");
+    ASSERT_FALSE(cloud_new_1.empty());
+    ASSERT_FALSE(cloud_new_2.empty());
+    ASSERT_FALSE(cloud_new_3.empty());
+
+    // --- Vehicle side changes ---
+    LOG(INFO) << "Vehicle: Deleting 2 jobs, modifying 1, creating 3 new";
+
+    // Vehicle deletes 2 DIFFERENT jobs (the ones created by vehicle)
+    EXPECT_TRUE(DeleteVehicleJob(vehicle_job_1)) << "Vehicle delete job 1";
+    EXPECT_TRUE(DeleteVehicleJob(vehicle_job_2)) << "Vehicle delete job 2";
+
+    // Vehicle modifies 1 job
+    EXPECT_TRUE(UpdateVehicleJob(vehicle_job_3, "Vehicle Initial 3 - VEHICLE MODIFIED"));
+
+    // Vehicle creates 3 new jobs
+    std::string vehicle_new_1 = CreateVehicleJob("Vehicle New Offline 1");
+    std::string vehicle_new_2 = CreateVehicleJob("Vehicle New Offline 2");
+    std::string vehicle_new_3 = CreateVehicleJob("Vehicle New Offline 3");
+    ASSERT_FALSE(vehicle_new_1.empty());
+    ASSERT_FALSE(vehicle_new_2.empty());
+    ASSERT_FALSE(vehicle_new_3.empty());
+
+    // Sanity check: verify sides haven't seen each other's changes yet
+    auto cloud_offline = GetAllCloudJobs();
+    auto vehicle_offline = GetAllVehicleJobs();
+    LOG(INFO) << "After offline changes: cloud has " << cloud_offline.size()
+              << " jobs, vehicle has " << vehicle_offline.size() << " jobs";
+
+    // Cloud should see: 2 deleted (tombstones), 6 live (4 original - 2 deleted + 3 new)
+    // But it doesn't see vehicle's changes yet
+    size_t cloud_live = std::count_if(cloud_offline.begin(), cloud_offline.end(),
+                                       [](const sched::Job& j) { return !j.deleted; });
+    // Vehicle should see its own state
+    size_t vehicle_live = std::count_if(vehicle_offline.begin(), vehicle_offline.end(),
+                                         [](const sched::Job& j) { return !j.deleted; });
+
+    LOG(INFO) << "Cloud offline: " << cloud_live << " live, " << (cloud_offline.size() - cloud_live) << " deleted";
+    LOG(INFO) << "Vehicle offline: " << vehicle_live << " live, " << (vehicle_offline.size() - vehicle_live) << " deleted";
+
+    // =========================================================================
+    // Phase 3: Reconnect and verify convergence
+    // =========================================================================
+    LOG(INFO) << "=== Phase 3: Reconnecting ===";
+    StartCloudSyncBridge();
+    StartVehicleSyncBridge();
+
+    // This is the key test: complex bidirectional sync should converge
+    EXPECT_TRUE(WaitForConvergence(45s, "[Complex Mixed Operations]"))
+        << "Complex bidirectional changes should converge";
+
+    // =========================================================================
+    // Phase 4: Verify final state
+    // =========================================================================
+    LOG(INFO) << "=== Phase 4: Verifying final state ===";
+
+    auto final_cloud = GetAllCloudJobs();
+    auto final_vehicle = GetAllVehicleJobs();
+
+    // Count totals
+    size_t final_cloud_total = final_cloud.size();
+    size_t final_vehicle_total = final_vehicle.size();
+    size_t final_cloud_deleted = std::count_if(final_cloud.begin(), final_cloud.end(),
+                                                [](const sched::Job& j) { return j.deleted; });
+    size_t final_vehicle_deleted = std::count_if(final_vehicle.begin(), final_vehicle.end(),
+                                                  [](const sched::Job& j) { return j.deleted; });
+
+    LOG(INFO) << "Final cloud: " << final_cloud_total << " total, "
+              << final_cloud_deleted << " deleted, "
+              << (final_cloud_total - final_cloud_deleted) << " live";
+    LOG(INFO) << "Final vehicle: " << final_vehicle_total << " total, "
+              << final_vehicle_deleted << " deleted, "
+              << (final_vehicle_total - final_vehicle_deleted) << " live";
+
+    // Verify counts match between sides
+    EXPECT_EQ(final_cloud_total, final_vehicle_total) << "Total job count should match";
+    EXPECT_EQ(final_cloud_deleted, final_vehicle_deleted) << "Deleted count should match";
+
+    // Expected: 4 deleted jobs (2 from cloud + 2 from vehicle)
+    EXPECT_EQ(final_cloud_deleted, 4u) << "Should have 4 tombstones";
+
+    // Expected live jobs: 4 original survivors + 6 new = 10
+    size_t expected_live = 10u;
+    EXPECT_EQ(final_cloud_total - final_cloud_deleted, expected_live) << "Should have 10 live jobs";
+
+    // Verify specific deletions propagated
+    EXPECT_TRUE(IsJobDeleted(final_cloud, cloud_job_1)) << "cloud_job_1 should be deleted";
+    EXPECT_TRUE(IsJobDeleted(final_cloud, cloud_job_2)) << "cloud_job_2 should be deleted";
+    EXPECT_TRUE(IsJobDeleted(final_vehicle, vehicle_job_1)) << "vehicle_job_1 should be deleted";
+    EXPECT_TRUE(IsJobDeleted(final_vehicle, vehicle_job_2)) << "vehicle_job_2 should be deleted";
+
+    // Verify survivors are not deleted
+    EXPECT_FALSE(IsJobDeleted(final_cloud, cloud_job_4)) << "cloud_job_4 should survive";
+    EXPECT_FALSE(IsJobDeleted(final_vehicle, vehicle_job_4)) << "vehicle_job_4 should survive";
+
+    // Verify new jobs exist on both sides
+    EXPECT_TRUE(FindJobById(final_cloud, cloud_new_1) != nullptr) << "cloud_new_1 on cloud";
+    EXPECT_TRUE(FindJobById(final_cloud, cloud_new_2) != nullptr) << "cloud_new_2 on cloud";
+    EXPECT_TRUE(FindJobById(final_cloud, cloud_new_3) != nullptr) << "cloud_new_3 on cloud";
+    EXPECT_TRUE(FindJobById(final_vehicle, cloud_new_1) != nullptr) << "cloud_new_1 on vehicle";
+    EXPECT_TRUE(FindJobById(final_vehicle, cloud_new_2) != nullptr) << "cloud_new_2 on vehicle";
+    EXPECT_TRUE(FindJobById(final_vehicle, cloud_new_3) != nullptr) << "cloud_new_3 on vehicle";
+
+    EXPECT_TRUE(FindJobById(final_cloud, vehicle_new_1) != nullptr) << "vehicle_new_1 on cloud";
+    EXPECT_TRUE(FindJobById(final_cloud, vehicle_new_2) != nullptr) << "vehicle_new_2 on cloud";
+    EXPECT_TRUE(FindJobById(final_cloud, vehicle_new_3) != nullptr) << "vehicle_new_3 on cloud";
+    EXPECT_TRUE(FindJobById(final_vehicle, vehicle_new_1) != nullptr) << "vehicle_new_1 on vehicle";
+    EXPECT_TRUE(FindJobById(final_vehicle, vehicle_new_2) != nullptr) << "vehicle_new_2 on vehicle";
+    EXPECT_TRUE(FindJobById(final_vehicle, vehicle_new_3) != nullptr) << "vehicle_new_3 on vehicle";
+
+    // Verify modified jobs have consistent titles (may be either version depending on authority)
+    std::string cloud_3_title_on_cloud = GetJobTitle(final_cloud, cloud_job_3);
+    std::string cloud_3_title_on_vehicle = GetJobTitle(final_vehicle, cloud_job_3);
+    EXPECT_EQ(cloud_3_title_on_cloud, cloud_3_title_on_vehicle)
+        << "cloud_job_3 should have same title on both sides";
+
+    std::string vehicle_3_title_on_cloud = GetJobTitle(final_cloud, vehicle_job_3);
+    std::string vehicle_3_title_on_vehicle = GetJobTitle(final_vehicle, vehicle_job_3);
+    EXPECT_EQ(vehicle_3_title_on_cloud, vehicle_3_title_on_vehicle)
+        << "vehicle_job_3 should have same title on both sides";
+
+    LOG(INFO) << "cloud_job_3 final title: " << cloud_3_title_on_cloud;
+    LOG(INFO) << "vehicle_job_3 final title: " << vehicle_3_title_on_cloud;
+
+    // =========================================================================
+    // Phase 5: Pause and delete operations while sync is established
+    // =========================================================================
+    LOG(INFO) << "=== Phase 5: Post-convergence pause and delete ===";
+
+    // Pause cloud_job_4 from cloud side
+    LOG(INFO) << "Pausing cloud_job_4 from cloud side";
+    ASSERT_TRUE(PauseCloudJob(cloud_job_4)) << "Should be able to pause cloud_job_4";
+
+    // Delete vehicle_job_4 from vehicle side
+    LOG(INFO) << "Deleting vehicle_job_4 from vehicle side";
+    ASSERT_TRUE(DeleteVehicleJob(vehicle_job_4)) << "Should be able to delete vehicle_job_4";
+
+    // Wait for convergence again
+    EXPECT_TRUE(WaitForConvergence(20s, "[Post-convergence pause/delete]"))
+        << "Pause and delete should sync to establish consistent state";
+
+    // =========================================================================
+    // Phase 6: Verify pause and delete propagated correctly
+    // =========================================================================
+    LOG(INFO) << "=== Phase 6: Verifying pause and delete propagated ===";
+
+    auto phase5_cloud = GetAllCloudJobs();
+    auto phase5_vehicle = GetAllVehicleJobs();
+
+    // Count state changes
+    size_t phase5_cloud_deleted = std::count_if(phase5_cloud.begin(), phase5_cloud.end(),
+                                                 [](const sched::Job& j) { return j.deleted; });
+    size_t phase5_vehicle_deleted = std::count_if(phase5_vehicle.begin(), phase5_vehicle.end(),
+                                                   [](const sched::Job& j) { return j.deleted; });
+    size_t phase5_cloud_paused = std::count_if(phase5_cloud.begin(), phase5_cloud.end(),
+                                                [](const sched::Job& j) { return j.paused && !j.deleted; });
+    size_t phase5_vehicle_paused = std::count_if(phase5_vehicle.begin(), phase5_vehicle.end(),
+                                                  [](const sched::Job& j) { return j.paused && !j.deleted; });
+
+    LOG(INFO) << "Phase 5 cloud: " << phase5_cloud_deleted << " deleted, " << phase5_cloud_paused << " paused";
+    LOG(INFO) << "Phase 5 vehicle: " << phase5_vehicle_deleted << " deleted, " << phase5_vehicle_paused << " paused";
+
+    // Verify counts match
+    EXPECT_EQ(phase5_cloud_deleted, phase5_vehicle_deleted)
+        << "Deleted count should match between cloud and vehicle";
+    EXPECT_EQ(phase5_cloud_paused, phase5_vehicle_paused)
+        << "Paused count should match between cloud and vehicle";
+
+    // Expected: 5 deleted (4 from earlier + vehicle_job_4)
+    EXPECT_EQ(phase5_cloud_deleted, 5u) << "Should now have 5 tombstones";
+
+    // Verify specific operations propagated
+    // cloud_job_4 should be paused (not deleted) on both sides
+    EXPECT_TRUE(IsJobPaused(phase5_cloud, cloud_job_4))
+        << "cloud_job_4 should be paused on cloud";
+    EXPECT_TRUE(IsJobPaused(phase5_vehicle, cloud_job_4))
+        << "cloud_job_4 should be paused on vehicle";
+    EXPECT_FALSE(IsJobDeleted(phase5_cloud, cloud_job_4))
+        << "cloud_job_4 should NOT be deleted on cloud";
+    EXPECT_FALSE(IsJobDeleted(phase5_vehicle, cloud_job_4))
+        << "cloud_job_4 should NOT be deleted on vehicle";
+
+    // vehicle_job_4 should be deleted on both sides
+    EXPECT_TRUE(IsJobDeleted(phase5_cloud, vehicle_job_4))
+        << "vehicle_job_4 should be deleted on cloud";
+    EXPECT_TRUE(IsJobDeleted(phase5_vehicle, vehicle_job_4))
+        << "vehicle_job_4 should be deleted on vehicle";
+
+    LOG(INFO) << "=== Complex mixed operations test PASSED ===";
 }
 
 /// Test: Health endpoints work correctly

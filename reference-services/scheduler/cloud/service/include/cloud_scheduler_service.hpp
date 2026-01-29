@@ -2,7 +2,7 @@
 
 #include "cloud-scheduler-service.grpc.pb.h"
 #include "scheduler-types.pb.h"
-#include "scheduler-sync-v2.pb.h"
+#include "scheduler-sync-v3.pb.h"
 
 // ifex-scheduler library (canonical job structure, hash, version vectors)
 #include "version_vector.hpp"
@@ -60,7 +60,8 @@ class CloudSchedulerService final
     , public sched::record_execution_service::Service
     , public sched::get_vehicle_sync_state_service::Service
     , public sched::update_vehicle_sync_state_service::Service
-    , public sched::get_pending_syncs_service::Service {
+    , public sched::get_pending_syncs_service::Service
+    , public sched::set_job_remote_version_service::Service {
 public:
     explicit CloudSchedulerService(const CloudSchedulerServiceConfig& config);
     ~CloudSchedulerService();
@@ -170,6 +171,11 @@ public:
         const sched::get_pending_syncs_request* request,
         sched::get_pending_syncs_response* response) override;
 
+    grpc::Status set_job_remote_version(
+        grpc::ServerContext* context,
+        const sched::set_job_remote_version_request* request,
+        sched::set_job_remote_version_response* response) override;
+
     // =========================================================================
     // Test Helpers
     // =========================================================================
@@ -198,7 +204,7 @@ private:
     static std::string EpochMsToIso8601(uint64_t epoch_ms);
 
     // =========================================================================
-    // Sync Protocol v2 Helpers (used by internal API)
+    // Sync Protocol v3.1 Helpers (used by internal API)
     // =========================================================================
 
     /// Compute content hash for a job
@@ -207,15 +213,15 @@ private:
     /// Compute state checksum for a vehicle
     uint64_t ComputeStateChecksum(const std::string& vehicle_id) const;
 
-    /// Convert job_info_t to sync v2 JobRecord
+    /// Convert job_info_t to sync v3 JobRecord
     void JobInfoToRecord(
         const scheduler_types::job_t& job,
         const ifex::scheduler::VersionVector& version,
-        swdv::scheduler_sync_v2::JobRecord* record);
+        swdv::scheduler_sync_v3::JobRecord* record);
 
-    /// Convert sync v2 JobRecord to job_info_t
+    /// Convert sync v3 JobRecord to job_info_t
     void RecordToJobInfo(
-        const swdv::scheduler_sync_v2::JobRecord& record,
+        const swdv::scheduler_sync_v3::JobRecord& record,
         scheduler_types::job_t* job);
 
     // =========================================================================
@@ -229,8 +235,10 @@ private:
     mutable std::mutex jobs_mutex_;
     std::map<std::string, std::map<std::string, scheduler_types::job_t>> jobs_;
 
-    // Sync state tracking: vehicle_id -> job_id -> sync_state
-    std::map<std::string, std::map<std::string, scheduler_types::sync_state_t>> job_sync_states_;
+    // Helper to compute sync_state from checksum comparison
+    scheduler_types::sync_state_t ComputeSyncState(
+        const scheduler_types::job_t& job,
+        const std::string& vehicle_id) const;
 
     // Execution history: vehicle_id -> job_id -> executions
     mutable std::mutex executions_mutex_;

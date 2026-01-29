@@ -27,70 +27,70 @@ static uint64_t NowMs() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-// Map sync v2 status to common job status
-static scheduler_types::job_status_t SyncV2ToJobStatus(sync_v2::JobStatus status) {
+// Map sync v3 status to common job status
+static scheduler_types::job_status_t SyncV3ToJobStatus(sync_v3::JobStatus status) {
     switch (status) {
-        case sync_v2::JOB_STATUS_PENDING: return scheduler_types::JOB_STATUS_PENDING;
-        case sync_v2::JOB_STATUS_RUNNING: return scheduler_types::JOB_STATUS_RUNNING;
-        case sync_v2::JOB_STATUS_COMPLETED: return scheduler_types::JOB_STATUS_COMPLETED;
-        case sync_v2::JOB_STATUS_FAILED: return scheduler_types::JOB_STATUS_FAILED;
-        case sync_v2::JOB_STATUS_CANCELLED: return scheduler_types::JOB_STATUS_CANCELLED;
+        case sync_v3::JOB_STATUS_PENDING: return scheduler_types::JOB_STATUS_PENDING;
+        case sync_v3::JOB_STATUS_RUNNING: return scheduler_types::JOB_STATUS_RUNNING;
+        case sync_v3::JOB_STATUS_COMPLETED: return scheduler_types::JOB_STATUS_COMPLETED;
+        case sync_v3::JOB_STATUS_FAILED: return scheduler_types::JOB_STATUS_FAILED;
+        case sync_v3::JOB_STATUS_CANCELLED: return scheduler_types::JOB_STATUS_CANCELLED;
         default: return scheduler_types::JOB_STATUS_PENDING;
     }
 }
 
-// Map common job status to sync v2 status
-static sync_v2::JobStatus JobStatusToSyncV2(scheduler_types::job_status_t status) {
+// Map common job status to sync v3 status
+static sync_v3::JobStatus JobStatusToSyncV3(scheduler_types::job_status_t status) {
     switch (status) {
-        case scheduler_types::JOB_STATUS_PENDING: return sync_v2::JOB_STATUS_PENDING;
-        case scheduler_types::JOB_STATUS_RUNNING: return sync_v2::JOB_STATUS_RUNNING;
-        case scheduler_types::JOB_STATUS_COMPLETED: return sync_v2::JOB_STATUS_COMPLETED;
-        case scheduler_types::JOB_STATUS_FAILED: return sync_v2::JOB_STATUS_FAILED;
-        case scheduler_types::JOB_STATUS_CANCELLED: return sync_v2::JOB_STATUS_CANCELLED;
-        default: return sync_v2::JOB_STATUS_PENDING;
+        case scheduler_types::JOB_STATUS_PENDING: return sync_v3::JOB_STATUS_PENDING;
+        case scheduler_types::JOB_STATUS_RUNNING: return sync_v3::JOB_STATUS_RUNNING;
+        case scheduler_types::JOB_STATUS_COMPLETED: return sync_v3::JOB_STATUS_COMPLETED;
+        case scheduler_types::JOB_STATUS_FAILED: return sync_v3::JOB_STATUS_FAILED;
+        case scheduler_types::JOB_STATUS_CANCELLED: return sync_v3::JOB_STATUS_CANCELLED;
+        default: return sync_v3::JOB_STATUS_PENDING;
     }
 }
 
-// Map sync v2 authority to scheduler authority
-static scheduler_types::job_authority_t SyncV2ToAuthority(sync_v2::JobAuthority auth) {
-    return (auth == sync_v2::AUTHORITY_CLOUD)
+// Map sync v3 authority to scheduler authority
+static scheduler_types::job_authority_t SyncV3ToAuthority(sync_v3::JobAuthority auth) {
+    return (auth == sync_v3::AUTHORITY_CLOUD)
         ? scheduler_types::AUTHORITY_CLOUD
         : scheduler_types::AUTHORITY_VEHICLE;
 }
 
-// Map scheduler authority to sync v2 authority
-static sync_v2::JobAuthority AuthorityToSyncV2(scheduler_types::job_authority_t auth) {
+// Map scheduler authority to sync v3 authority
+static sync_v3::JobAuthority AuthorityToSyncV3(scheduler_types::job_authority_t auth) {
     return (auth == scheduler_types::AUTHORITY_CLOUD)
-        ? sync_v2::AUTHORITY_CLOUD
-        : sync_v2::AUTHORITY_VEHICLE;
+        ? sync_v3::AUTHORITY_CLOUD
+        : sync_v3::AUTHORITY_VEHICLE;
 }
 
-// Map sync v2 wake policy to scheduler
-static scheduler_types::wake_policy_t SyncV2ToWakePolicy(sync_v2::WakePolicy policy) {
-    return (policy == sync_v2::WAKE_REQUIRED)
+// Map sync v3 wake policy to scheduler
+static scheduler_types::wake_policy_t SyncV3ToWakePolicy(sync_v3::WakePolicy policy) {
+    return (policy == sync_v3::WAKE_REQUIRED)
         ? scheduler_types::WAKE_REQUIRED
         : scheduler_types::WAKE_NO_WAKE;
 }
 
-// Map scheduler wake policy to sync v2
-static sync_v2::WakePolicy WakePolicyToSyncV2(scheduler_types::wake_policy_t policy) {
+// Map scheduler wake policy to sync v3
+static sync_v3::WakePolicy WakePolicyToSyncV3(scheduler_types::wake_policy_t policy) {
     return (policy == scheduler_types::WAKE_REQUIRED)
-        ? sync_v2::WAKE_REQUIRED
-        : sync_v2::WAKE_NO_WAKE;
+        ? sync_v3::WAKE_REQUIRED
+        : sync_v3::WAKE_NO_WAKE;
 }
 
-// Map sync v2 sleep policy to scheduler
-static scheduler_types::sleep_policy_t SyncV2ToSleepPolicy(sync_v2::SleepPolicy policy) {
-    return (policy == sync_v2::SLEEP_INHIBIT)
+// Map sync v3 sleep policy to scheduler
+static scheduler_types::sleep_policy_t SyncV3ToSleepPolicy(sync_v3::SleepPolicy policy) {
+    return (policy == sync_v3::SLEEP_INHIBIT)
         ? scheduler_types::SLEEP_INHIBIT
         : scheduler_types::SLEEP_NORMAL;
 }
 
-// Map scheduler sleep policy to sync v2
-static sync_v2::SleepPolicy SleepPolicyToSyncV2(scheduler_types::sleep_policy_t policy) {
+// Map scheduler sleep policy to sync v3
+static sync_v3::SleepPolicy SleepPolicyToSyncV3(scheduler_types::sleep_policy_t policy) {
     return (policy == scheduler_types::SLEEP_INHIBIT)
-        ? sync_v2::SLEEP_INHIBIT
-        : sync_v2::SLEEP_NORMAL;
+        ? sync_v3::SLEEP_INHIBIT
+        : sync_v3::SLEEP_NORMAL;
 }
 
 // =============================================================================
@@ -117,7 +117,7 @@ bool CloudSchedulerSyncBridge::Start() {
         return true;
     }
 
-    LOG(INFO) << "Starting CloudSchedulerSyncBridge"
+    LOG(INFO) << "Starting CloudSchedulerSyncBridge (v3.2 protocol)"
               << ", scheduler=" << config_.scheduler_address
               << ", transport=" << config_.transport_address
               << ", content_id=" << config_.content_id
@@ -175,6 +175,7 @@ void CloudSchedulerSyncBridge::Stop() {
     get_sync_state_stub_.reset();
     update_sync_state_stub_.reset();
     get_pending_syncs_stub_.reset();
+    set_remote_version_stub_.reset();
     send_stub_.reset();
     subscribe_stub_.reset();
 
@@ -201,6 +202,7 @@ bool CloudSchedulerSyncBridge::ConnectToServices() {
     get_sync_state_stub_ = sched_pb::get_vehicle_sync_state_service::NewStub(scheduler_channel_);
     update_sync_state_stub_ = sched_pb::update_vehicle_sync_state_service::NewStub(scheduler_channel_);
     get_pending_syncs_stub_ = sched_pb::get_pending_syncs_service::NewStub(scheduler_channel_);
+    set_remote_version_stub_ = sched_pb::set_job_remote_version_service::NewStub(scheduler_channel_);
 
     // Create transport stubs
     send_stub_ = transport_pb::send_to_vehicle_service::NewStub(transport_channel_);
@@ -228,7 +230,7 @@ void CloudSchedulerSyncBridge::StartMessageSubscription() {
             }
 
             transport_pb::on_vehicle_message_subscribe_request request;
-            request.set_content_id(config_.content_id);  // Scheduler sync content_id (e.g., 202)
+            request.set_content_id(config_.content_id);
 
             auto reader = subscribe_stub_->subscribe(subscription_context_.get(), request);
 
@@ -236,7 +238,7 @@ void CloudSchedulerSyncBridge::StartMessageSubscription() {
             while (reader->Read(&response) && subscription_running_) {
                 const auto& msg = response.message();
                 std::vector<uint8_t> payload(msg.payload().begin(), msg.payload().end());
-                HandleV2CSyncMessage(msg.vehicle_id(), payload);
+                HandleV2CEnvelope(msg.vehicle_id(), payload);
             }
 
             auto status = reader->Finish();
@@ -282,7 +284,7 @@ void CloudSchedulerSyncBridge::PollLoop() {
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
 
         sched_pb::get_pending_syncs_request request;
-        request.set_limit(100);  // Process up to 100 vehicles per poll cycle
+        request.set_limit(100);
 
         sched_pb::get_pending_syncs_response response;
         auto status = get_pending_syncs_stub_->get_pending_syncs(&context, request, &response);
@@ -294,7 +296,7 @@ void CloudSchedulerSyncBridge::PollLoop() {
             continue;
         }
 
-        // Send C2V to each vehicle with pending changes
+        // Send SyncMessage to each vehicle with pending changes (v3.2 dirty-first)
         for (const auto& vehicle_state : response.pending_vehicles()) {
             const std::string& vehicle_id = vehicle_state.vehicle_id();
 
@@ -302,7 +304,14 @@ void CloudSchedulerSyncBridge::PollLoop() {
                     << " cloud_checksum=" << std::hex << vehicle_state.cloud_checksum()
                     << " last_seen=" << vehicle_state.last_seen_v2c_checksum() << std::dec;
 
-            SendC2VMessage(vehicle_id);
+            // Get dirty jobs and send as SyncMessage (v3.2 dirty-first)
+            auto dirty_jobs = GetDirtyJobs(vehicle_id);
+            std::vector<sync_v3::JobRecord> jobs_to_send;
+            for (const auto& job : dirty_jobs) {
+                jobs_to_send.push_back(JobInfoToC2VRecord(job));
+            }
+
+            SendSyncMessage(vehicle_id, jobs_to_send, {});
         }
 
         if (response.pending_vehicles_size() > 0) {
@@ -323,33 +332,21 @@ void CloudSchedulerSyncBridge::RegisterServices(grpc::ServerBuilder& builder) {
 }
 
 // =============================================================================
-// V2C Message Processing
+// V2C Message Handling (v3.2 Protocol)
 // =============================================================================
 
-void CloudSchedulerSyncBridge::HandleV2CSyncMessage(
+void CloudSchedulerSyncBridge::HandleV2CEnvelope(
     const std::string& vehicle_id,
     const std::vector<uint8_t>& payload) {
 
     v2c_messages_received_++;
 
-    sync_v2::V2C_SyncMessage v2c_msg;
-    if (!v2c_msg.ParseFromArray(payload.data(), payload.size())) {
-        LOG(WARNING) << "Failed to parse V2C_SyncMessage from " << vehicle_id;
+    sync_v3::V2C_Envelope envelope;
+    if (!envelope.ParseFromArray(payload.data(), static_cast<int>(payload.size()))) {
+        LOG(WARNING) << "Failed to parse V2C_Envelope from " << vehicle_id;
         errors_++;
         return;
     }
-
-    ProcessV2CMessage(vehicle_id, v2c_msg);
-}
-
-void CloudSchedulerSyncBridge::ProcessV2CMessage(
-    const std::string& vehicle_id,
-    const sync_v2::V2C_SyncMessage& v2c_msg) {
-
-    LOG(INFO) << "Processing V2C message from " << vehicle_id
-              << ": jobs=" << v2c_msg.jobs_size()
-              << ", executions=" << v2c_msg.executions_size()
-              << ", checksum=" << v2c_msg.state_checksum();
 
     // Track vehicle
     {
@@ -357,115 +354,76 @@ void CloudSchedulerSyncBridge::ProcessV2CMessage(
         vehicles_seen_.insert(vehicle_id);
     }
 
-    // Get current sync state
-    auto sync_state = GetVehicleSyncState(vehicle_id);
+    switch (envelope.message_case()) {
+        // v3.2 messages (preferred)
+        case sync_v3::V2C_Envelope::kSync:
+            HandleSyncMessage(vehicle_id, envelope.sync());
+            break;
+        case sync_v3::V2C_Envelope::kGapDetect:
+            HandleGapDetect(vehicle_id, envelope.gap_detect());
+            break;
 
-    // Check quiescence: if cloud checksum matches last seen V2C checksum
-    // AND V2C checksum matches cloud checksum, no sync needed
-    if (IsQuiescent(sync_state, v2c_msg.state_checksum())) {
-        LOG(INFO) << "Quiescent for " << vehicle_id
-                  << " (cloud=" << sync_state.cloud_checksum()
-                  << ", v2c=" << v2c_msg.state_checksum() << ")";
-        quiescent_skipped_++;
-
-        // Update last seen checksum
-        UpdateVehicleSyncState(vehicle_id, v2c_msg.state_checksum());
-        return;
+        // Other messages
+        case sync_v3::V2C_Envelope::kExecutions:
+            HandleExecutions(vehicle_id, envelope.executions());
+            break;
+        case sync_v3::V2C_Envelope::kTriggerResponse:
+            HandleTriggerResponse(vehicle_id, envelope.trigger_response());
+            break;
+        case sync_v3::V2C_Envelope::MESSAGE_NOT_SET:
+            LOG(WARNING) << "Received empty V2C_Envelope from " << vehicle_id;
+            break;
     }
-
-    // Get current cloud jobs
-    auto cloud_jobs = GetCloudJobs(vehicle_id);
-
-    // Build map of cloud jobs by job_id for comparison
-    std::map<std::string, scheduler_types::job_t> cloud_job_map;
-    for (const auto& job : cloud_jobs) {
-        cloud_job_map[job.job_id()] = job;
-    }
-
-    // Process each job from V2C message
-    for (const auto& v2c_record : v2c_msg.jobs()) {
-        const auto& job_id = v2c_record.job_id();
-
-        // Convert to scheduler job format
-        auto v2c_job = V2CRecordToJobInfo(vehicle_id, v2c_record);
-
-        // Build version vectors
-        sched_lib::VersionVector v2c_version{
-            v2c_record.version().cloud_seq(),
-            v2c_record.version().vehicle_seq()
-        };
-
-        // Check if we have this job in cloud
-        auto it = cloud_job_map.find(job_id);
-        std::optional<sched_lib::VersionVector> local_version;
-        if (it != cloud_job_map.end()) {
-            local_version = sched_lib::VersionVector{
-                it->second.cloud_seq(),
-                it->second.vehicle_seq()
-            };
-        }
-
-        // Determine authority
-        sched_lib::JobAuthority authority = (v2c_record.authority() == sync_v2::AUTHORITY_CLOUD)
-            ? sched_lib::JobAuthority::CLOUD
-            : sched_lib::JobAuthority::VEHICLE;
-
-        // Use sync engine to determine action (we are cloud side)
-        auto result = sched_lib::SyncEngine::process_remote(
-            v2c_version, local_version, authority, true /* is_cloud_side */);
-
-        switch (result.action) {
-            case sched_lib::SyncResult::NO_ACTION:
-                // Versions equal - no data change needed, but confirm vehicle has it
-                // This updates job_sync_states_ to SYNCED in scheduler
-                v2c_job.set_cloud_seq(v2c_version.cloud_seq);
-                v2c_job.set_vehicle_seq(v2c_version.vehicle_seq);
-                UpsertJob(v2c_job);
-                break;
-
-            case sched_lib::SyncResult::ACCEPT_REMOTE:
-                // Accept vehicle's version
-                v2c_job.set_cloud_seq(v2c_version.cloud_seq);
-                v2c_job.set_vehicle_seq(v2c_version.vehicle_seq);
-                if (UpsertJob(v2c_job)) {
-                    jobs_upserted_++;
-                }
-                break;
-
-            case sched_lib::SyncResult::REJECT_REMOTE:
-                // Cloud is ahead - C2V will send our version
-                break;
-
-            case sched_lib::SyncResult::CONFLICT_RESOLVED:
-                conflicts_resolved_++;
-                if (result.winner == "vehicle") {
-                    // Vehicle wins - use merged version
-                    v2c_job.set_cloud_seq(result.resolved_version.cloud_seq);
-                    v2c_job.set_vehicle_seq(result.resolved_version.vehicle_seq);
-                    if (UpsertJob(v2c_job)) {
-                        jobs_upserted_++;
-                    }
-                }
-                // If cloud wins, C2V will send our version
-                break;
-        }
-    }
-
-    // Process executions (append-only, no conflicts)
-    for (const auto& execution : v2c_msg.executions()) {
-        // Find the job_id for this execution
-        if (RecordExecution(vehicle_id, execution.job_id(), execution)) {
-            executions_recorded_++;
-        }
-    }
-
-    // Update vehicle sync state
-    UpdateVehicleSyncState(vehicle_id, v2c_msg.state_checksum());
-
-    // Send C2V message with current cloud state
-    SendC2VMessage(vehicle_id);
 
     v2c_messages_processed_++;
+}
+
+void CloudSchedulerSyncBridge::HandleExecutions(
+    const std::string& vehicle_id,
+    const sync_v3::V2C_Executions& executions) {
+
+    LOG(INFO) << "Received V2C_Executions from " << vehicle_id
+              << ": " << executions.executions_size() << " executions";
+
+    std::vector<std::string> acked_ids;
+
+    for (const auto& exec : executions.executions()) {
+        if (RecordExecution(vehicle_id, exec.job_id(), exec)) {
+            executions_recorded_++;
+        }
+        acked_ids.push_back(exec.execution_id());
+    }
+
+    // Send acknowledgment
+    SendExecutionAck(vehicle_id, acked_ids);
+}
+
+void CloudSchedulerSyncBridge::HandleTriggerResponse(
+    const std::string& vehicle_id,
+    const sync_v3::V2C_TriggerResponse& response) {
+
+    LOG(INFO) << "Received V2C_TriggerResponse from " << vehicle_id
+              << ": job=" << response.job_id()
+              << ", accepted=" << (response.accepted() ? "true" : "false");
+
+    // Could store trigger result for API query, but for now just log
+    if (!response.accepted()) {
+        LOG(WARNING) << "Trigger rejected for job " << response.job_id()
+                     << ": " << response.error_message();
+    }
+}
+
+void CloudSchedulerSyncBridge::HandleSyncMessage(
+    const std::string& vehicle_id,
+    const sync_v3::SyncMessage& msg) {
+
+    LOG(INFO) << "Received V2C SyncMessage from " << vehicle_id
+              << ": jobs=" << msg.jobs_size()
+              << ", acked_jobs=" << msg.acked_jobs_size()
+              << ", checksum=" << std::hex << msg.state_checksum() << std::dec;
+
+    // Update last seen checksum
+    UpdateVehicleSyncState(vehicle_id, msg.state_checksum());
 
     // Update vehicle info
     {
@@ -473,8 +431,275 @@ void CloudSchedulerSyncBridge::ProcessV2CMessage(
         auto& info = vehicle_sync_info_[vehicle_id];
         info.set_vehicle_id(vehicle_id);
         info.set_last_v2c_timestamp_ms(NowMs());
-        info.set_last_seen_v2c_checksum(v2c_msg.state_checksum());
+        info.set_last_seen_v2c_checksum(msg.state_checksum());
     }
+
+    // 1. Process ACKs from vehicle - update remote_version for acked jobs
+    for (const auto& ack : msg.acked_jobs()) {
+        LOG(INFO) << "Processing ACK from vehicle: job=" << ack.job_id()
+                  << " acked_version={" << ack.cloud_seq() << "," << ack.vehicle_seq() << "}";
+        SetJobRemoteVersion(vehicle_id, ack.job_id(), ack.cloud_seq(), ack.vehicle_seq());
+    }
+
+    // 2. Apply received jobs, collect ACKs to send back
+    std::vector<sync_v3::JobVersionAck> acks_to_send;
+    for (const auto& job_record : msg.jobs()) {
+        auto job = V2CRecordToJobInfo(vehicle_id, job_record);
+        if (UpsertJob(job)) {
+            jobs_upserted_++;
+        }
+        // Vehicle sent this job - that confirms vehicle has this version
+        SetJobRemoteVersion(vehicle_id, job_record.job_id(),
+                            job_record.version().cloud_seq(),
+                            job_record.version().vehicle_seq());
+        // ACK the job we just received
+        sync_v3::JobVersionAck ack;
+        ack.set_job_id(job_record.job_id());
+        ack.set_cloud_seq(job_record.version().cloud_seq());
+        ack.set_vehicle_seq(job_record.version().vehicle_seq());
+        acks_to_send.push_back(ack);
+    }
+
+    // 3. Check quiescence
+    auto dirty_jobs = GetDirtyJobs(vehicle_id);
+    auto sync_state = GetVehicleSyncState(vehicle_id);
+    uint64_t cloud_checksum = sync_state.cloud_checksum();
+
+    if (cloud_checksum == msg.state_checksum() && dirty_jobs.empty()) {
+        // QUIESCENT - checksums match, send ACKs only if any
+        LOG(INFO) << "Quiescent (v3.2) for " << vehicle_id << " (checksum="
+                  << std::hex << msg.state_checksum() << std::dec << ")";
+        quiescent_skipped_++;
+
+        if (!acks_to_send.empty()) {
+            SendSyncMessage(vehicle_id, {}, acks_to_send);
+        }
+        return;
+    }
+
+    // 4. Not quiescent - collect dirty jobs to send
+    std::vector<sync_v3::JobRecord> jobs_to_send;
+    for (const auto& job : dirty_jobs) {
+        jobs_to_send.push_back(JobInfoToC2VRecord(job));
+    }
+
+    // 5. Continue sync - send dirty jobs + ACKs
+    if (!jobs_to_send.empty() || !acks_to_send.empty()) {
+        SendSyncMessage(vehicle_id, jobs_to_send, acks_to_send);
+    } else {
+        // No dirty but mismatch - trigger gap detection
+        LOG(INFO) << "Checksum mismatch but no dirty jobs for " << vehicle_id
+                  << ", triggering gap detection";
+        SendGapDetect(vehicle_id, GetAllJobIds(vehicle_id), {});
+    }
+}
+
+void CloudSchedulerSyncBridge::HandleGapDetect(
+    const std::string& vehicle_id,
+    const sync_v3::GapDetect& msg) {
+
+    LOG(INFO) << "Received V2C GapDetect from " << vehicle_id
+              << ": job_ids=" << msg.job_ids_size()
+              << ", request_job_ids=" << msg.request_job_ids_size();
+
+    auto our_ids = GetAllJobIds(vehicle_id);
+    std::set<std::string> our_set(our_ids.begin(), our_ids.end());
+    std::set<std::string> vehicle_set(msg.job_ids().begin(), msg.job_ids().end());
+
+    // Jobs we need from vehicle
+    std::vector<std::string> request_from_vehicle;
+    for (const auto& id : vehicle_set) {
+        if (our_set.find(id) == our_set.end()) {
+            request_from_vehicle.push_back(id);
+        }
+    }
+
+    // Jobs vehicle needs from us (missing IDs)
+    std::vector<sync_v3::JobRecord> jobs_to_send;
+    for (const auto& id : our_set) {
+        if (vehicle_set.find(id) == vehicle_set.end()) {
+            auto jobs = GetCloudJobs(vehicle_id);
+            for (const auto& job : jobs) {
+                if (job.job_id() == id) {
+                    jobs_to_send.push_back(JobInfoToC2VRecord(job));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fulfill specific requests from vehicle
+    for (const auto& id : msg.request_job_ids()) {
+        auto jobs = GetCloudJobs(vehicle_id);
+        for (const auto& job : jobs) {
+            if (job.job_id() == id) {
+                // Check if already in jobs_to_send
+                bool already_added = false;
+                for (const auto& j : jobs_to_send) {
+                    if (j.job_id() == id) {
+                        already_added = true;
+                        break;
+                    }
+                }
+                if (!already_added) {
+                    jobs_to_send.push_back(JobInfoToC2VRecord(job));
+                }
+                break;
+            }
+        }
+    }
+
+    LOG(INFO) << "Gap detection for " << vehicle_id
+              << ": request_from_vehicle=" << request_from_vehicle.size()
+              << ", jobs_to_send=" << jobs_to_send.size();
+
+    // If job_ids match but checksums differ, the issue is content mismatch.
+    // Fall back to sending ALL our jobs to force sync convergence.
+    if (request_from_vehicle.empty() && jobs_to_send.empty()) {
+        LOG(INFO) << "Gap detection: job_ids match but checksum differs - "
+                  << "sending all " << our_ids.size() << " jobs to force sync";
+        auto all_jobs = GetCloudJobs(vehicle_id);
+        for (const auto& job : all_jobs) {
+            jobs_to_send.push_back(JobInfoToC2VRecord(job));
+        }
+    }
+
+    // Send responses
+    if (!request_from_vehicle.empty()) {
+        SendGapDetect(vehicle_id, our_ids, request_from_vehicle);
+    }
+    if (!jobs_to_send.empty()) {
+        SendSyncMessage(vehicle_id, jobs_to_send, {});
+    }
+}
+
+// =============================================================================
+// C2V Message Sending (v3.2 Protocol)
+// =============================================================================
+
+void CloudSchedulerSyncBridge::SendC2VEnvelope(
+    const std::string& vehicle_id,
+    const sync_v3::C2V_Envelope& envelope) {
+
+    std::string serialized;
+    if (!envelope.SerializeToString(&serialized)) {
+        LOG(ERROR) << "Failed to serialize C2V_Envelope";
+        errors_++;
+        return;
+    }
+
+    // Send via transport
+    grpc::ClientContext context;
+    transport_pb::send_to_vehicle_request request;
+    transport_pb::send_to_vehicle_response response;
+
+    auto* send_req = request.mutable_request();
+    send_req->set_vehicle_id(vehicle_id);
+    send_req->set_content_id(config_.content_id);
+    send_req->set_payload(serialized);
+    send_req->set_persistence(transport_pb::persistence_t::VOLATILE);
+
+    auto status = send_stub_->send_to_vehicle(&context, request, &response);
+    if (!status.ok()) {
+        LOG(ERROR) << "Failed to send C2V to " << vehicle_id << ": " << status.error_message();
+        errors_++;
+        transport_connected_ = false;
+        return;
+    }
+
+    if (response.result().status() != transport_pb::publish_status_t::OK) {
+        LOG(ERROR) << "Send failed for " << vehicle_id
+                   << ": " << static_cast<int>(response.result().status());
+        errors_++;
+        return;
+    }
+
+    c2v_messages_sent_++;
+    transport_connected_ = true;
+}
+
+void CloudSchedulerSyncBridge::SendSyncMessage(
+    const std::string& vehicle_id,
+    const std::vector<sync_v3::JobRecord>& jobs,
+    const std::vector<sync_v3::JobVersionAck>& acked_jobs) {
+
+    auto sync_state = GetVehicleSyncState(vehicle_id);
+
+    sync_v3::C2V_Envelope envelope;
+    auto* sync_msg = envelope.mutable_sync();
+    sync_msg->set_vehicle_id(vehicle_id);
+
+    // Add jobs to send
+    for (const auto& job : jobs) {
+        *sync_msg->add_jobs() = job;
+    }
+
+    // Add acknowledgments for jobs we received
+    for (const auto& ack : acked_jobs) {
+        *sync_msg->add_acked_jobs() = ack;
+    }
+
+    sync_msg->set_state_checksum(sync_state.cloud_checksum());
+
+    SendC2VEnvelope(vehicle_id, envelope);
+
+    // Update vehicle info
+    {
+        std::lock_guard<std::mutex> lock(vehicle_info_mutex_);
+        auto& info = vehicle_sync_info_[vehicle_id];
+        info.set_last_c2v_timestamp_ms(NowMs());
+        info.set_cloud_checksum(sync_state.cloud_checksum());
+        info.set_job_count(jobs.size());
+    }
+
+    LOG(INFO) << "Sent C2V SyncMessage to " << vehicle_id
+              << ": " << jobs.size() << " jobs"
+              << ", " << acked_jobs.size() << " acks"
+              << ", checksum=" << std::hex << sync_msg->state_checksum() << std::dec;
+}
+
+void CloudSchedulerSyncBridge::SendGapDetect(
+    const std::string& vehicle_id,
+    const std::vector<std::string>& job_ids,
+    const std::vector<std::string>& request_job_ids) {
+
+    sync_v3::C2V_Envelope envelope;
+    auto* gap_detect = envelope.mutable_gap_detect();
+    gap_detect->set_vehicle_id(vehicle_id);
+
+    // Add all our job IDs
+    for (const auto& id : job_ids) {
+        gap_detect->add_job_ids(id);
+    }
+
+    // Add jobs we need from vehicle
+    for (const auto& id : request_job_ids) {
+        gap_detect->add_request_job_ids(id);
+    }
+
+    SendC2VEnvelope(vehicle_id, envelope);
+
+    LOG(INFO) << "Sent C2V GapDetect to " << vehicle_id
+              << ": " << gap_detect->job_ids_size() << " job_ids"
+              << ", " << gap_detect->request_job_ids_size() << " requests";
+}
+
+void CloudSchedulerSyncBridge::SendExecutionAck(
+    const std::string& vehicle_id,
+    const std::vector<std::string>& execution_ids) {
+
+    sync_v3::C2V_Envelope envelope;
+    auto* ack = envelope.mutable_execution_ack();
+    ack->set_vehicle_id(vehicle_id);
+
+    for (const auto& exec_id : execution_ids) {
+        ack->add_execution_ids(exec_id);
+    }
+
+    SendC2VEnvelope(vehicle_id, envelope);
+
+    LOG(INFO) << "Sent C2V_ExecutionAck to " << vehicle_id
+              << ": " << execution_ids.size() << " executions";
 }
 
 // =============================================================================
@@ -489,7 +714,7 @@ std::vector<scheduler_types::job_t> CloudSchedulerSyncBridge::GetCloudJobs(
     sched_pb::get_jobs_for_vehicle_response response;
 
     request.set_vehicle_id(vehicle_id);
-    request.set_include_deleted(true);  // Need tombstones for sync
+    request.set_include_deleted(true);
 
     auto status = get_jobs_stub_->get_jobs_for_vehicle(&context, request, &response);
     if (!status.ok()) {
@@ -522,7 +747,7 @@ bool CloudSchedulerSyncBridge::UpsertJob(const scheduler_types::job_t& job) {
 bool CloudSchedulerSyncBridge::RecordExecution(
     const std::string& vehicle_id,
     const std::string& job_id,
-    const sync_v2::ExecutionRecord& execution) {
+    const sync_v3::ExecutionRecord& execution) {
 
     grpc::ClientContext context;
     sched_pb::record_execution_request request;
@@ -535,7 +760,7 @@ bool CloudSchedulerSyncBridge::RecordExecution(
     exec->set_execution_id(execution.execution_id());
     exec->set_executed_at_ms(execution.executed_at_ms());
     exec->set_duration_ms(execution.duration_ms());
-    exec->set_status(SyncV2ToJobStatus(execution.status()));
+    exec->set_status(SyncV3ToJobStatus(execution.status()));
     exec->set_result_json(execution.result_json());
     exec->set_error_message(execution.error_message());
 
@@ -585,89 +810,19 @@ void CloudSchedulerSyncBridge::UpdateVehicleSyncState(
 }
 
 // =============================================================================
-// C2V Message Building
-// =============================================================================
-
-void CloudSchedulerSyncBridge::SendC2VMessage(const std::string& vehicle_id) {
-    // Get current cloud jobs
-    auto cloud_jobs = GetCloudJobs(vehicle_id);
-    auto sync_state = GetVehicleSyncState(vehicle_id);
-
-    // Build C2V message
-    sync_v2::C2V_SyncMessage c2v_msg;
-    c2v_msg.set_vehicle_id(vehicle_id);
-    c2v_msg.set_sync_timestamp_ms(NowMs());
-    c2v_msg.set_state_checksum(sync_state.cloud_checksum());
-    c2v_msg.set_last_seen_v2c_checksum(sync_state.last_seen_v2c_checksum());
-
-    // Add all jobs (including tombstones)
-    for (const auto& job : cloud_jobs) {
-        *c2v_msg.add_jobs() = JobInfoToC2VRecord(job);
-    }
-
-    // Serialize and send
-    std::string serialized;
-    if (!c2v_msg.SerializeToString(&serialized)) {
-        LOG(ERROR) << "Failed to serialize C2V message";
-        errors_++;
-        return;
-    }
-
-    // Send via transport
-    grpc::ClientContext context;
-    transport_pb::send_to_vehicle_request request;
-    transport_pb::send_to_vehicle_response response;
-
-    auto* send_req = request.mutable_request();
-    send_req->set_vehicle_id(vehicle_id);
-    send_req->set_content_id(config_.content_id);
-    send_req->set_payload(serialized);
-    send_req->set_persistence(transport_pb::persistence_t::VOLATILE);
-
-    auto status = send_stub_->send_to_vehicle(&context, request, &response);
-    if (!status.ok()) {
-        LOG(ERROR) << "Failed to send C2V to " << vehicle_id << ": " << status.error_message();
-        errors_++;
-        transport_connected_ = false;
-        return;
-    }
-
-    if (response.result().status() != transport_pb::publish_status_t::OK) {
-        LOG(ERROR) << "Send failed for " << vehicle_id
-                   << ": " << static_cast<int>(response.result().status());
-        errors_++;
-        return;
-    }
-
-    c2v_messages_sent_++;
-    transport_connected_ = true;
-
-    // Update vehicle info
-    {
-        std::lock_guard<std::mutex> lock(vehicle_info_mutex_);
-        auto& info = vehicle_sync_info_[vehicle_id];
-        info.set_last_c2v_timestamp_ms(NowMs());
-        info.set_cloud_checksum(sync_state.cloud_checksum());
-        info.set_job_count(cloud_jobs.size());
-    }
-
-    LOG(INFO) << "Sent C2V to " << vehicle_id << " with " << cloud_jobs.size() << " jobs";
-}
-
-// =============================================================================
 // Type Conversions
 // =============================================================================
 
 scheduler_types::job_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
     const std::string& vehicle_id,
-    const sync_v2::JobRecord& record) {
+    const sync_v3::JobRecord& record) {
 
     scheduler_types::job_t job;
     job.set_vehicle_id(vehicle_id);
     job.set_job_id(record.job_id());
-    job.set_authority(SyncV2ToAuthority(record.authority()));
-    job.set_cloud_seq(record.version().cloud_seq());
-    job.set_vehicle_seq(record.version().vehicle_seq());
+    job.set_authority(SyncV3ToAuthority(record.authority()));
+    job.mutable_local_version()->set_cloud_seq(record.version().cloud_seq());
+    job.mutable_local_version()->set_vehicle_seq(record.version().vehicle_seq());
     job.set_deleted(record.deleted());
     job.set_title(record.title());
     job.set_service(record.service());
@@ -677,10 +832,10 @@ scheduler_types::job_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
     job.set_recurrence_rule(record.recurrence_rule());
     job.set_end_time_ms(record.end_time_ms());
     job.set_paused(record.paused());
-    job.set_wake_policy(SyncV2ToWakePolicy(record.wake_policy()));
-    job.set_sleep_policy(SyncV2ToSleepPolicy(record.sleep_policy()));
+    job.set_wake_policy(SyncV3ToWakePolicy(record.wake_policy()));
+    job.set_sleep_policy(SyncV3ToSleepPolicy(record.sleep_policy()));
     job.set_wake_lead_time_s(record.wake_lead_time_s());
-    job.set_status(SyncV2ToJobStatus(record.status()));
+    job.set_status(SyncV3ToJobStatus(record.status()));
     job.set_next_run_time_ms(record.next_run_time_ms());
     job.set_last_executed_ms(record.last_executed_ms());
     job.set_created_at_ms(record.created_at_ms());
@@ -690,14 +845,14 @@ scheduler_types::job_t CloudSchedulerSyncBridge::V2CRecordToJobInfo(
     return job;
 }
 
-sync_v2::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
+sync_v3::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
     const scheduler_types::job_t& job) {
 
-    sync_v2::JobRecord record;
+    sync_v3::JobRecord record;
     record.set_job_id(job.job_id());
-    record.set_authority(AuthorityToSyncV2(job.authority()));
-    record.mutable_version()->set_cloud_seq(job.cloud_seq());
-    record.mutable_version()->set_vehicle_seq(job.vehicle_seq());
+    record.set_authority(AuthorityToSyncV3(job.authority()));
+    record.mutable_version()->set_cloud_seq(job.local_version().cloud_seq());
+    record.mutable_version()->set_vehicle_seq(job.local_version().vehicle_seq());
     record.set_deleted(job.deleted());
     record.set_title(job.title());
     record.set_service(job.service());
@@ -707,10 +862,10 @@ sync_v2::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
     record.set_recurrence_rule(job.recurrence_rule());
     record.set_end_time_ms(job.end_time_ms());
     record.set_paused(job.paused());
-    record.set_wake_policy(WakePolicyToSyncV2(job.wake_policy()));
-    record.set_sleep_policy(SleepPolicyToSyncV2(job.sleep_policy()));
+    record.set_wake_policy(WakePolicyToSyncV3(job.wake_policy()));
+    record.set_sleep_policy(SleepPolicyToSyncV3(job.sleep_policy()));
     record.set_wake_lead_time_s(job.wake_lead_time_s());
-    record.set_status(JobStatusToSyncV2(job.status()));
+    record.set_status(JobStatusToSyncV3(job.status()));
     record.set_next_run_time_ms(job.next_run_time_ms());
     record.set_last_executed_ms(job.last_executed_ms());
     record.set_created_at_ms(job.created_at_ms());
@@ -723,8 +878,6 @@ sync_v2::JobRecord CloudSchedulerSyncBridge::JobInfoToC2VRecord(
 uint64_t CloudSchedulerSyncBridge::ComputeStateChecksum(
     const std::vector<scheduler_types::job_t>& jobs) {
 
-    // Use the scheduler library for consistent checksum computation
-    // Must include ALL fields that are part of the hash (see job_hash.cpp)
     std::vector<sched_lib::Job> lib_jobs;
     for (const auto& job : jobs) {
         sched_lib::Job lib_job;
@@ -742,8 +895,8 @@ uint64_t CloudSchedulerSyncBridge::ComputeStateChecksum(
         lib_job.wake_lead_time_s = job.wake_lead_time_s();
         lib_job.status = static_cast<sched_lib::JobStatus>(job.status());
         lib_job.authority = static_cast<sched_lib::JobAuthority>(job.authority());
-        lib_job.version.cloud_seq = job.cloud_seq();
-        lib_job.version.vehicle_seq = job.vehicle_seq();
+        lib_job.local_version.cloud_seq = job.local_version().cloud_seq();
+        lib_job.local_version.vehicle_seq = job.local_version().vehicle_seq();
         lib_job.deleted = job.deleted();
         lib_jobs.push_back(lib_job);
     }
@@ -755,12 +908,83 @@ bool CloudSchedulerSyncBridge::IsQuiescent(
     const sched_pb::vehicle_sync_state_t& state,
     uint64_t v2c_checksum) {
 
-    // Quiescent if:
-    // 1. Cloud checksum matches V2C checksum (both have same state)
-    // 2. Last seen V2C checksum matches current V2C (no new changes from vehicle)
     return state.cloud_checksum() == v2c_checksum &&
            state.last_seen_v2c_checksum() == v2c_checksum;
 }
+
+// =============================================================================
+// v3.2 Dirty Tracking and Gap Detection
+// =============================================================================
+
+std::vector<scheduler_types::job_t> CloudSchedulerSyncBridge::GetDirtyJobs(
+    const std::string& vehicle_id) {
+    // A job is "dirty" if local_version != remote_version.
+    // Get all jobs and filter for those that need syncing.
+    auto all_jobs = GetCloudJobs(vehicle_id);
+    std::vector<scheduler_types::job_t> dirty;
+    dirty.reserve(all_jobs.size());
+
+    for (const auto& job : all_jobs) {
+        const auto& local = job.local_version();
+        const auto& remote = job.remote_version();
+
+        // Dirty if versions don't match
+        bool is_dirty = (local.cloud_seq() != remote.cloud_seq() ||
+                         local.vehicle_seq() != remote.vehicle_seq());
+
+        VLOG(2) << "  Job " << job.job_id()
+                << " local={" << local.cloud_seq() << "," << local.vehicle_seq() << "}"
+                << " remote={" << remote.cloud_seq() << "," << remote.vehicle_seq() << "}"
+                << " dirty=" << (is_dirty ? "YES" : "no");
+
+        if (is_dirty) {
+            dirty.push_back(job);
+        }
+    }
+
+    VLOG(1) << "GetDirtyJobs for " << vehicle_id << ": " << dirty.size()
+            << " dirty out of " << all_jobs.size() << " total";
+    return dirty;
+}
+
+std::vector<std::string> CloudSchedulerSyncBridge::GetAllJobIds(
+    const std::string& vehicle_id) {
+    auto jobs = GetCloudJobs(vehicle_id);
+    std::vector<std::string> ids;
+    ids.reserve(jobs.size());
+    for (const auto& job : jobs) {
+        ids.push_back(job.job_id());
+    }
+    return ids;
+}
+
+void CloudSchedulerSyncBridge::SetJobRemoteVersion(
+    const std::string& vehicle_id,
+    const std::string& job_id,
+    uint64_t cloud_seq,
+    uint64_t vehicle_seq) {
+
+    grpc::ClientContext context;
+    sched_pb::set_job_remote_version_request request;
+    sched_pb::set_job_remote_version_response response;
+
+    request.set_vehicle_id(vehicle_id);
+    request.set_job_id(job_id);
+    request.set_cloud_seq(cloud_seq);
+    request.set_vehicle_seq(vehicle_seq);
+
+    auto status = set_remote_version_stub_->set_job_remote_version(&context, request, &response);
+    if (!status.ok()) {
+        LOG(WARNING) << "Failed to set remote_version for " << vehicle_id << "/" << job_id
+                     << ": " << status.error_message();
+        return;
+    }
+
+    if (!response.success()) {
+        LOG(WARNING) << "set_job_remote_version failed for " << vehicle_id << "/" << job_id;
+    }
+}
+
 
 // =============================================================================
 // gRPC Service Methods (Bridge API)
@@ -856,7 +1080,13 @@ grpc::Status CloudSchedulerSyncBridge::force_sync(
     }
 
     try {
-        SendC2VMessage(vehicle_id);
+        // Send full SyncMessage with all jobs (v3.2)
+        auto cloud_jobs = GetCloudJobs(vehicle_id);
+        std::vector<sync_v3::JobRecord> jobs_to_send;
+        for (const auto& job : cloud_jobs) {
+            jobs_to_send.push_back(JobInfoToC2VRecord(job));
+        }
+        SendSyncMessage(vehicle_id, jobs_to_send, {});
         response->set_success(true);
     } catch (const std::exception& e) {
         response->set_success(false);
@@ -886,46 +1116,27 @@ grpc::Status CloudSchedulerSyncBridge::trigger_job(
         return grpc::Status::OK;
     }
 
-    // Build TriggerJobRequest
-    sync_v2::TriggerJobRequest trigger_req;
-    trigger_req.set_job_id(job_id);
-    trigger_req.set_requester_id("cloud-dashboard");
-    trigger_req.set_timestamp_ms(NowMs());
-    trigger_req.set_expires_at_ms(NowMs() + 30000);  // 30 second expiry
+    // Build C2V_TriggerJob
+    sync_v3::C2V_Envelope envelope;
+    auto* trigger = envelope.mutable_trigger_job();
+    trigger->set_vehicle_id(vehicle_id);
+    trigger->set_job_id(job_id);
 
-    // Serialize
-    std::string payload;
-    if (!trigger_req.SerializeToString(&payload)) {
-        response->set_sent(false);
-        response->set_error_message("Failed to serialize trigger request");
-        return grpc::Status::OK;
-    }
+    // Generate request ID for correlation
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dist;
+    std::stringstream ss;
+    ss << "req-" << std::hex << dist(gen);
+    trigger->set_request_id(ss.str());
 
-    // Send to vehicle via transport
-    grpc::ClientContext ctx;
-    transport_pb::send_to_vehicle_request send_req;
-    transport_pb::send_to_vehicle_response send_resp;
+    trigger->set_requester_id("cloud-dashboard");
+    trigger->set_timestamp_ms(NowMs());
+    trigger->set_expires_at_ms(NowMs() + 30000);  // 30 second expiry
 
-    auto* msg = send_req.mutable_request();
-    msg->set_vehicle_id(vehicle_id);
-    msg->set_content_id(config_.content_id);
-    msg->set_payload(payload);
-    msg->set_persistence(transport_pb::BEST_EFFORT);
+    SendC2VEnvelope(vehicle_id, envelope);
 
-    auto status = send_stub_->send_to_vehicle(&ctx, send_req, &send_resp);
-    if (!status.ok()) {
-        response->set_sent(false);
-        response->set_error_message("Transport error: " + status.error_message());
-        return grpc::Status::OK;
-    }
-
-    if (send_resp.result().status() != transport_pb::OK) {
-        response->set_sent(false);
-        response->set_error_message("Send failed");
-        return grpc::Status::OK;
-    }
-
-    LOG(INFO) << "Sent TriggerJobRequest to " << vehicle_id << " for job " << job_id;
+    LOG(INFO) << "Sent C2V_TriggerJob to " << vehicle_id << " for job " << job_id;
     response->set_sent(true);
     return grpc::Status::OK;
 }

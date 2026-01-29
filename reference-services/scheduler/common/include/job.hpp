@@ -75,12 +75,17 @@ struct Job {
     uint64_t created_at_ms = 0;
     uint64_t updated_at_ms = 0;
 
-    // Sync state
-    VersionVector version;
+    // Sync state - version tracking for bidirectional sync
+    VersionVector local_version;   // My current version of this job
+    VersionVector remote_version;  // Last known remote version (what I believe remote has confirmed)
     JobAuthority authority = JobAuthority::CLOUD;
     bool deleted = false;
     uint64_t deleted_at_ms = 0;
-    SyncState sync_state = SyncState::PENDING;  // Derived: local vs last confirmed remote
+    SyncState sync_state = SyncState::PENDING;  // Keep for backward compat (derived from is_dirty)
+
+    // Derived dirty flag: true if local version differs from last known remote version
+    // This enables precise tracking of what needs to be synced to the remote side.
+    bool is_dirty() const { return local_version != remote_version; }
 
     // Compute content hash (for change detection and quiescence)
     // Includes: job_id, title, service, method, parameters_json,

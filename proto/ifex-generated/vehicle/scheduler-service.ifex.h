@@ -122,12 +122,20 @@ namespaces:
     - name: authority
       datatype: job_authority_t
       description: Who wins conflicts (immutable after creation)
-    - name: cloud_seq
-      datatype: uint64
-      description: Cloud sequence number (version vector component)
-    - name: vehicle_seq
-      datatype: uint64
-      description: Vehicle sequence number (version vector component)
+    - name: local_version
+      datatype: job_version_t
+      description: 'My current version of this job. Contains cloud_seq and vehicle_seq.
+        Transmitted in sync messages.
+
+        '
+    - name: remote_version
+      datatype: job_version_t
+      description: 'Last known remote version (what I believe remote has confirmed).
+        Local tracking only - used to compute is_dirty(). NOT transmitted in sync
+        messages.
+
+        '
+      mandatory: false
     - name: deleted
       datatype: boolean
       description: Soft delete tombstone flag
@@ -521,6 +529,11 @@ namespaces:
       datatype: string
       description: Job identifier
       mandatory: true
+    - name: include_deleted
+      datatype: boolean
+      description: If true, return job even if soft-deleted (tombstone). Default false.
+      mandatory: false
+      default: false
     output:
     - name: success
       datatype: boolean
@@ -649,6 +662,33 @@ namespaces:
     - name: execution_count
       datatype: int32
       description: Number of executions matching the filter
+  - name: set_job_remote_version
+    description: 'Update the remote_version for a job. Called by sync bridge after
+      receiving a job from cloud to record what version cloud has. This affects is_dirty()
+      - job is dirty when local_version != remote_version.
+
+      '
+    input:
+    - name: job_id
+      datatype: string
+      description: Job identifier
+      mandatory: true
+    - name: cloud_seq
+      datatype: uint64
+      description: Cloud sequence number from incoming job
+      mandatory: true
+    - name: vehicle_seq
+      datatype: uint64
+      description: Vehicle sequence number from incoming job
+      mandatory: true
+    output:
+    - name: success
+      datatype: boolean
+      description: Whether update succeeded
+    - name: message
+      datatype: string
+      description: Error message if failed
+      mandatory: false
 )IFEX";
 
 }  // namespace ifex::schema

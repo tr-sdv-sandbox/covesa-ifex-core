@@ -26,24 +26,24 @@ struct SyncResult {
 
     Action action = NO_ACTION;
     VersionVector resolved_version;  // Version after resolution
-    std::string winner;              // "cloud" or "vehicle" (for conflict)
+    JobAuthority winner = JobAuthority::CLOUD;  // Who won the conflict
     std::string reason;              // Why this action was taken
 
     static SyncResult no_action() {
-        return {NO_ACTION, {}, "", "versions equal"};
+        return {NO_ACTION, {}, JobAuthority::CLOUD, "versions equal"};
     }
 
     static SyncResult accept(const VersionVector& version) {
-        return {ACCEPT_REMOTE, version, "", "remote dominates"};
+        return {ACCEPT_REMOTE, version, JobAuthority::CLOUD, "remote dominates"};
     }
 
     static SyncResult reject(const VersionVector& version) {
-        return {REJECT_REMOTE, version, "", "local dominates"};
+        return {REJECT_REMOTE, version, JobAuthority::CLOUD, "local dominates"};
     }
 
     static SyncResult conflict_resolved(
             const VersionVector& merged_version,
-            const std::string& winner,
+            JobAuthority winner,
             const std::string& reason) {
         return {CONFLICT_RESOLVED, merged_version, winner, reason};
     }
@@ -108,19 +108,13 @@ public:
         // Merge versions: component-wise maximum
         VersionVector merged = VersionVector::merge(local_version, remote_version);
 
-        // Determine winner based on authority
-        bool cloud_wins = (authority == JobAuthority::CLOUD);
-        bool we_are_cloud = is_cloud_side;
-
-        // Did we win?
-        bool we_win = (cloud_wins == we_are_cloud);
-
-        std::string winner = cloud_wins ? "cloud" : "vehicle";
+        // Winner is determined by authority
+        JobAuthority winner = authority;
         std::string reason = "authority=" + std::string(job_authority_to_string(authority));
 
         // After conflict resolution, increment our sequence to indicate
         // we processed the conflict
-        if (we_are_cloud) {
+        if (is_cloud_side) {
             merged.increment_cloud();
         } else {
             merged.increment_vehicle();

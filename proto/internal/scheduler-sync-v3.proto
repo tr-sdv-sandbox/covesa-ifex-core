@@ -1,0 +1,231 @@
+// Scheduler Sync Protocol v3.2
+//
+// Bandwidth-efficient bidirectional synchronization protocol between vehicle
+// (onboard) and cloud (offboard) scheduler components.
+//
+// Key features:
+// - Dirty-first sync: Exchange only modified jobs first (fast path)
+// - Gap detection: Exchange job_id lists when dirty exchange doesn't converge
+// - Bidirectional requests: Both sides can request specific jobs
+// - Independent execution stream: Immediate execution reporting with acknowledgment
+// - ACKs integrated into SyncMessage for efficient version tracking
+//
+// Changes from v3.1:
+// - Consolidated V2C_Hello, V2C_JobData, C2V_SyncDelta into SyncMessage
+// - Added GapDetect for data loss recovery
+// - Added JobVersionAck for per-job acknowledgment
+// - ACKs integrated into SyncMessage.acked_jobs
+//
+// See reference-specs/protocols/scheduler-sync-protocol-v3.md for full specification.
+
+syntax = "proto3";
+
+package swdv.scheduler_sync_v3;
+
+option cc_enable_arenas = true;
+
+// ============================================================================
+// Envelope Messages (for type-safe discrimination)
+// ============================================================================
+
+// Vehicle -> Cloud envelope (v3.2)
+message V2C_Envelope {
+    oneof message {
+        // v3.2 messages (preferred)
+        SyncMessage sync = 10;               // Normal sync (jobs + acks + checksum)
+        GapDetect gap_detect = 11;           // Gap detection (recovery only)
+        V2C_Executions executions = 4;       // Execution reports (unchanged)
+        V2C_TriggerResponse trigger_response = 5;  // Trigger response (unchanged)
+
+        // v3.1 messages (deprecated - for backward compatibility during migration)
+        V2C_Hello hello = 1;
+        V2C_JobData job_data = 3;
+    }
+}
+
+// Cloud -> Vehicle envelope (v3.2)
+message C2V_Envelope {
+    oneof message {
+        // v3.2 messages (preferred)
+        SyncMessage sync = 10;               // Normal sync (jobs + acks + checksum)
+        GapDetect gap_detect = 11;           // Gap detection (recovery only)
+        C2V_ExecutionAck execution_ack = 3;  // Acknowledge executions (unchanged)
+        C2V_TriggerJob trigger_job = 4;      // Request immediate execution (unchanged)
+
+        // v3.1 messages (deprecated - for backward compatibility during migration)
+        C2V_SyncDelta sync_delta = 2;
+    }
+}
+
+// ============================================================================
+// v3.2 Shared Sync Messages (used in both directions)
+// ============================================================================
+
+// Version acknowledgment for a single job
+// Used in SyncMessage.acked_jobs to confirm receipt of a job
+message JobVersionAck {
+    string job_id = 1;
+    uint64 cloud_seq = 2;
+    uint64 vehicle_seq = 3;
+}
+
+// Primary sync message - handles 99% of sync traffic
+// Combines: job sending, job acknowledgment, state announcement
+message SyncMessage {
+    string vehicle_id = 1;
+    repeated JobRecord jobs = 2;           // Dirty jobs I'm sending to you
+    repeated JobVersionAck acked_jobs = 3; // Jobs I received from you (ACK)
+    uint64 state_checksum = 4;             // My current state (xxHash64)
+}
+
+// Gap detection - used only for data loss recovery
+// Triggered when checksums differ but no dirty jobs exist
+message GapDetect {
+    string vehicle_id = 1;
+    repeated string job_ids = 2;           // All my job IDs
+    repeated string request_job_ids = 3;   // Jobs I need from you
+}
+
+// ============================================================================
+// Vehicle -> Cloud Messages
+// ============================================================================
+
+// Initial handshake / state announcement
+// Sent on connect and after applying any changes
+message V2C_Hello {
+    string vehicle_id = 1;
+    string bridge_instance_id = 2;       // Detect bridge restarts
+    uint64 state_checksum = 3;           // xxHash64 of all jobs
+    uint64 last_seen_c2v_checksum = 4;   // Last cloud checksum we processed
+}
+
+// Full job data with bidirectional sync support
+// Sent in response to C2V_SyncDelta
+message V2C_JobData {
+    string vehicle_id = 1;
+    repeated JobRecord jobs = 2;         // Jobs to send to cloud
+    uint64 state_checksum = 3;           // Current state after sending
+    repeated string job_ids = 4;         // All job IDs vehicle has (for gap detection)
+    repeated string request_job_ids = 5; // Jobs vehicle needs from cloud
+}
+
+// Execution results (independent stream)
+message V2C_Executions {
+    string vehicle_id = 1;
+    repeated ExecutionRecord executions = 2;
+}
+
+// Response to trigger request
+message V2C_TriggerResponse {
+    string vehicle_id = 1;
+    string job_id = 2;
+    string request_id = 3;               // Correlation ID from C2V_TriggerJob
+    bool accepted = 4;
+    string error_message = 5;            // If !accepted
+    uint64 timestamp_ms = 6;
+}
+
+// ============================================================================
+// Cloud -> Vehicle Messages
+// ============================================================================
+
+// Sync delta with bidirectional sync support
+// Sent in response to V2C_Hello or V2C_JobData
+message C2V_SyncDelta {
+    string vehicle_id = 1;
+    repeated string request_job_ids = 2; // Jobs cloud needs from vehicle
+    repeated JobRecord jobs = 3;         // Jobs vehicle needs from cloud
+    uint64 state_checksum = 4;           // Cloud's current state
+    uint64 last_seen_v2c_checksum = 5;   // Last vehicle checksum cloud saw
+    repeated string job_ids = 6;         // All job IDs cloud has (for gap detection)
+}
+
+// Acknowledge received executions (allows vehicle to stop retrying)
+message C2V_ExecutionAck {
+    string vehicle_id = 1;
+    repeated string execution_ids = 2;   // Executions cloud has stored
+}
+
+// Request immediate job execution (imperative command, not state sync)
+message C2V_TriggerJob {
+    string vehicle_id = 1;
+    string job_id = 2;
+    string request_id = 3;               // For correlation with response
+    string requester_id = 4;             // Who requested (for audit)
+    uint64 timestamp_ms = 5;
+    uint64 expires_at_ms = 6;            // Request expires after this (0 = no expiry)
+}
+
+// ============================================================================
+// Shared Types
+// ============================================================================
+
+message JobVersion {
+    uint64 cloud_seq = 1;
+    uint64 vehicle_seq = 2;
+}
+
+message JobRecord {
+    // Identity
+    string job_id = 1;
+    JobAuthority authority = 2;
+    JobVersion version = 3;
+
+    // Content (included in hash)
+    bool deleted = 5;
+    string title = 10;
+    string service = 11;
+    string method = 12;
+    string parameters_json = 13;
+    uint64 scheduled_time_ms = 14;
+    string recurrence_rule = 15;
+    uint64 end_time_ms = 16;
+    bool paused = 17;
+    WakePolicy wake_policy = 18;
+    SleepPolicy sleep_policy = 19;
+    uint32 wake_lead_time_s = 20;
+
+    // Execution state (vehicle-authoritative, NOT in hash)
+    JobStatus status = 25;
+    uint64 next_run_time_ms = 26;
+    uint64 last_executed_ms = 27;
+
+    // Metadata (NOT in hash)
+    uint64 created_at_ms = 30;
+    uint64 updated_at_ms = 31;
+    uint64 deleted_at_ms = 6;
+    string created_by = 32;
+}
+
+message ExecutionRecord {
+    string execution_id = 1;             // Globally unique (for dedup)
+    string job_id = 2;
+    uint64 executed_at_ms = 3;
+    uint64 duration_ms = 4;
+    JobStatus status = 5;                // COMPLETED or FAILED
+    string result_json = 6;
+    string error_message = 7;
+}
+
+enum JobAuthority {
+    AUTHORITY_CLOUD = 0;
+    AUTHORITY_VEHICLE = 1;
+}
+
+enum JobStatus {
+    JOB_STATUS_PENDING = 0;
+    JOB_STATUS_RUNNING = 1;
+    JOB_STATUS_COMPLETED = 2;
+    JOB_STATUS_FAILED = 3;
+    JOB_STATUS_CANCELLED = 4;
+}
+
+enum WakePolicy {
+    WAKE_NO_WAKE = 0;
+    WAKE_REQUIRED = 1;
+}
+
+enum SleepPolicy {
+    SLEEP_NORMAL = 0;
+    SLEEP_INHIBIT = 1;
+}

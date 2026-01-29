@@ -357,6 +357,11 @@ namespaces:
           - name: job_id
             datatype: string
             mandatory: true
+          - name: include_deleted
+            datatype: boolean
+            description: If true, return job even if soft-deleted (tombstone). Default false.
+            mandatory: false
+            default: false
         output:
           - name: result
             datatype: get_job_response_t
@@ -537,3 +542,25 @@ namespaces:
         output:
           - name: pending_vehicles
             datatype: vehicle_sync_state_t[]
+
+      - name: set_job_remote_version
+        description: >
+          Update remote_version for a job. Called by sync bridge after
+          receiving a job from vehicle to record what version vehicle has.
+          This affects sync_state: job is synced when local_version == remote_version.
+        input:
+          - name: vehicle_id
+            datatype: string
+            mandatory: true
+          - name: job_id
+            datatype: string
+            mandatory: true
+          - name: cloud_seq
+            datatype: uint64
+            mandatory: true
+          - name: vehicle_seq
+            datatype: uint64
+            mandatory: true
+        output:
+          - name: success
+            datatype: boolean

@@ -138,6 +138,7 @@ service list_jobs_hash_service {
 // Retrieve a specific job by ID
 message get_job_request {
   string job_id = 1;
+  bool include_deleted = 2;
 }
 
 message get_job_response {
@@ -258,6 +259,24 @@ message list_executions_hash_response {
 
 service list_executions_hash_service {
   rpc list_executions_hash(list_executions_hash_request) returns (list_executions_hash_response);
+}
+
+// Method: set_job_remote_version
+// Update the remote_version for a job. Called by sync bridge after receiving a job from cloud to record what version cloud has. This affects is_dirty() - job is dirty when local_version != remote_version.
+
+message set_job_remote_version_request {
+  string job_id = 1;
+  uint64 cloud_seq = 2;
+  uint64 vehicle_seq = 3;
+}
+
+message set_job_remote_version_response {
+  bool success = 1;
+  string message = 2;
+}
+
+service set_job_remote_version_service {
+  rpc set_job_remote_version(set_job_remote_version_request) returns (set_job_remote_version_response);
 }
 
 

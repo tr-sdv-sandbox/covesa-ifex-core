@@ -885,6 +885,34 @@
         let lastCalendarHash = null;
         let hashPollInterval = null;
 
+        // Format Date as local datetime-local input value (YYYY-MM-DDTHH:MM)
+        function toDatetimeLocalValue(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            const hh = String(date.getHours()).padStart(2, '0');
+            const mm = String(date.getMinutes()).padStart(2, '0');
+            return `${y}-${m}-${d}T${hh}:${mm}`;
+        }
+
+        // Format time for display (UTC/ISO string or ms -> local time string)
+        function formatLocalTime(timeValue) {
+            if (!timeValue) return '-';
+            let date;
+            if (typeof timeValue === 'number') {
+                date = new Date(timeValue);
+            } else if (typeof timeValue === 'string') {
+                date = new Date(timeValue);
+            } else {
+                return '-';
+            }
+            if (isNaN(date.getTime())) return '-';
+            return date.toLocaleString('en-US', {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            });
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             checkHealth();
@@ -1080,12 +1108,20 @@
             document.getElementById('week-label').textContent =
                 `${currentWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-            // Index jobs by date-hour
+            // Helper to get local date as YYYY-MM-DD
+            function toLocalDateStr(date) {
+                const y = date.getFullYear();
+                const m = String(date.getMonth() + 1).padStart(2, '0');
+                const d = String(date.getDate()).padStart(2, '0');
+                return `${y}-${m}-${d}`;
+            }
+
+            // Index jobs by LOCAL date-hour (for display)
             const jobIndex = {};
             calendarJobs.forEach((job, idx) => {
                 if (job.scheduled_time_ms) {
                     const d = new Date(job.scheduled_time_ms);
-                    const key = `${d.toISOString().split('T')[0]}-${d.getHours()}`;
+                    const key = `${toLocalDateStr(d)}-${d.getHours()}`;
                     if (!jobIndex[key]) jobIndex[key] = [];
                     jobIndex[key].push({ ...job, index: idx });
                 }
@@ -1103,13 +1139,13 @@
                 html += `<div class="week-header">${days[i]}<br>${d.getDate()}</div>`;
             }
 
-            // Hour rows (6 AM to 10 PM)
-            for (let hour = 6; hour <= 22; hour++) {
-                html += `<div class="hour-label">${hour}:00</div>`;
+            // Hour rows (full 24 hours)
+            for (let hour = 0; hour < 24; hour++) {
+                html += `<div class="hour-label">${String(hour).padStart(2, '0')}:00</div>`;
                 for (let day = 0; day < 7; day++) {
                     const d = new Date(currentWeekStart);
                     d.setDate(d.getDate() + day);
-                    const dateStr = d.toISOString().split('T')[0];
+                    const dateStr = toLocalDateStr(d);
                     const key = `${dateStr}-${hour}`;
                     const slotJobs = jobIndex[key] || [];
 
@@ -1132,7 +1168,7 @@
             if (!currentVehicle) return;
             const dt = new Date(dateStr + 'T' + String(hour).padStart(2, '0') + ':00:00');
             document.getElementById('new-job-vehicle').value = currentVehicle;
-            document.getElementById('new-job-time').value = dt.toISOString().slice(0, 16);
+            document.getElementById('new-job-time').value = toDatetimeLocalValue(dt);
             openModal('create-job-modal');
         }
 
@@ -1147,8 +1183,8 @@
                     <dt>Vehicle</dt><dd>${job.vehicle_id}</dd>
                     <dt>Service</dt><dd>${job.service}</dd>
                     <dt>Method</dt><dd>${job.method}</dd>
-                    <dt>Scheduled</dt><dd>${job.scheduled_time || '-'}</dd>
-                    <dt>Next Run</dt><dd>${job.next_run_time || '-'}</dd>
+                    <dt>Scheduled</dt><dd>${formatLocalTime(job.scheduled_time_ms || job.scheduled_time)}</dd>
+                    <dt>Next Run</dt><dd>${formatLocalTime(job.next_run_time_ms || job.next_run_time)}</dd>
                     <dt>Recurrence</dt><dd>${job.recurrence_rule || 'One-time'}</dd>
                     <dt>Status</dt><dd><span class="badge badge-${job.status}">${job.status}</span></dd>
                     <dt>Sync State</dt><dd><span class="badge badge-${job.sync_state}">${job.sync_state}</span></dd>
@@ -1168,7 +1204,7 @@
                     container.innerHTML = data.executions.map(e => `
                         <div class="execution-item">
                             <span class="badge badge-${e.status}">${e.status}</span>
-                            <span class="execution-time">${e.executed_at || '-'}</span>
+                            <span class="execution-time">${formatLocalTime(e.executed_at_ms || e.executed_at)}</span>
                             ${e.error_message ? `<span class="execution-error">${e.error_message}</span>` : ''}
                         </div>
                     `).join('');
@@ -1286,10 +1322,11 @@
             if (currentVehicle) {
                 document.getElementById('new-job-vehicle').value = currentVehicle;
             }
-            // Set default time to next hour
+            // Set default time to 15 minutes in future, rounded to nearest 5 minutes
             const now = new Date();
-            now.setHours(now.getHours() + 1, 0, 0, 0);
-            document.getElementById('new-job-time').value = now.toISOString().slice(0, 16);
+            now.setMinutes(now.getMinutes() + 15);
+            now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5, 0, 0);
+            document.getElementById('new-job-time').value = toDatetimeLocalValue(now);
             openModal('create-job-modal');
         }
 
@@ -1311,7 +1348,7 @@
                             <td>${job.vehicle_id}</td>
                             <td>${job.title}</td>
                             <td>${job.service} / ${job.method}</td>
-                            <td>${job.scheduled_time || '-'}</td>
+                            <td>${formatLocalTime(job.scheduled_time_ms || job.scheduled_time)}</td>
                             <td><span class="badge badge-${job.status}">${job.status}</span></td>
                             <td><span class="badge badge-${job.sync_state}">${job.sync_state}</span></td>
                             <td>
@@ -1703,10 +1740,11 @@
             document.getElementById('new-job-method').value = selectedMethod.name;
             document.getElementById('new-job-params').value = params;
 
-            // Set default time to next hour
+            // Set default time to 15 minutes in future, rounded to nearest 5 minutes
             const now = new Date();
-            now.setHours(now.getHours() + 1, 0, 0, 0);
-            document.getElementById('new-job-time').value = now.toISOString().slice(0, 16);
+            now.setMinutes(now.getMinutes() + 15);
+            now.setMinutes(Math.ceil(now.getMinutes() / 5) * 5, 0, 0);
+            document.getElementById('new-job-time').value = toDatetimeLocalValue(now);
 
             showTab('calendar');
             openModal('create-job-modal');

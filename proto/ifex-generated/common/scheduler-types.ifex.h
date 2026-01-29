@@ -126,12 +126,20 @@ namespaces:
     - name: authority
       datatype: job_authority_t
       description: Who wins conflicts (immutable after creation)
-    - name: cloud_seq
-      datatype: uint64
-      description: Cloud sequence number (version vector component)
-    - name: vehicle_seq
-      datatype: uint64
-      description: Vehicle sequence number (version vector component)
+    - name: local_version
+      datatype: job_version_t
+      description: 'My current version of this job. Contains cloud_seq and vehicle_seq.
+        Transmitted in sync messages.
+
+        '
+    - name: remote_version
+      datatype: job_version_t
+      description: 'Last known remote version (what I believe remote has confirmed).
+        Local tracking only - used to compute is_dirty(). NOT transmitted in sync
+        messages.
+
+        '
+      mandatory: false
     - name: deleted
       datatype: boolean
       description: Soft delete tombstone flag

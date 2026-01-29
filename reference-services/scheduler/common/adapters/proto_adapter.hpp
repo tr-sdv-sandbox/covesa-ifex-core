@@ -1,13 +1,13 @@
 // Proto Adapter - Convert between Job and protobuf wire format
 //
 // This header provides conversion functions between the canonical Job
-// structure and the scheduler_sync_v2.proto JobRecord message.
+// structure and the scheduler_sync_v3.proto JobRecord message.
 //
 // IMPORTANT: This file requires the proto-generated headers to be included
 // first. It is intentionally header-only to avoid library dependency issues.
 //
 // Usage:
-//   #include "scheduler_sync_v2.pb.h"  // Proto-generated
+//   #include "scheduler_sync_v3.pb.h"  // Proto-generated
 //   #include "proto_adapter.hpp"       // This file
 //
 //   Job job = from_proto(job_record);
@@ -18,7 +18,7 @@
 #include "../include/job.hpp"
 
 // Forward declare proto types (user must include the actual headers)
-namespace swdv::scheduler_sync_v2 {
+namespace swdv::scheduler_sync_v3 {
     class JobRecord;
     enum JobStatus : int;
     enum WakePolicy : int;
@@ -102,8 +102,8 @@ Job from_proto(const ProtoJobRecord& record) {
     job.created_at_ms = record.created_at_ms();
     job.updated_at_ms = record.updated_at_ms();
 
-    job.version.cloud_seq = record.version().cloud_seq();
-    job.version.vehicle_seq = record.version().vehicle_seq();
+    job.local_version.cloud_seq = record.version().cloud_seq();
+    job.local_version.vehicle_seq = record.version().vehicle_seq();
     job.authority = job_authority_from_proto(static_cast<int>(record.authority()));
 
     job.deleted = record.deleted();
@@ -148,8 +148,8 @@ void to_proto(const Job& job, ProtoJobRecord* record) {
     record->set_updated_at_ms(job.updated_at_ms);
 
     auto* version = record->mutable_version();
-    version->set_cloud_seq(job.version.cloud_seq);
-    version->set_vehicle_seq(job.version.vehicle_seq);
+    version->set_cloud_seq(job.local_version.cloud_seq);
+    version->set_vehicle_seq(job.local_version.vehicle_seq);
 
     record->set_authority(
         static_cast<typename std::remove_reference<decltype(record->authority())>::type>(

@@ -30,9 +30,9 @@ uint64_t compute_job_content_hash(const Job& job);
 // Used for quiescence detection - when cloud and vehicle checksums match,
 // no sync traffic is needed.
 //
-// Jobs MUST be sorted by job_id for deterministic results.
+// Jobs are sorted by job_id internally for deterministic results.
 // Deleted jobs (tombstones) are included in checksum.
-uint64_t compute_state_checksum(const std::vector<Job>& jobs);
+uint64_t compute_state_checksum(std::vector<Job> jobs);
 
 // Hash mixing function (FNV-1a style with golden ratio)
 // Used internally but exposed for testing

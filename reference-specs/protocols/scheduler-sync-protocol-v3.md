@@ -2,7 +2,7 @@
 
 ## Status: DRAFT
 
-**Version:** 3.1
+**Version:** 3.2
 **Date:** 2026-01-28
 **Authors:** Claude + Human
 
@@ -12,31 +12,41 @@
 
 This specification defines a bandwidth-efficient bidirectional synchronization protocol for scheduled jobs between cloud (offboard) and vehicle (onboard) systems.
 
-**Key improvements over v2:**
-- Hash-first sync: Exchange checksums/hashes before full data
-- Envelope messages: Type-safe message discrimination via protobuf oneof
-- Independent execution stream: Immediate execution reporting with optional acknowledgment
-- Optimized reconnect: Minimize data when state unchanged
+**Key improvements over v3.1:**
+- Dirty-first sync: Exchange only dirty jobs first (fast path)
+- Gap detection: Exchange job_id lists only when needed (recovery path)
+- Eliminated hash manifest: No longer needed for normal sync
+- Symmetric protocol: Both sides use identical logic
 
 ### 1.2 Design Goals
 
 | Goal | Approach |
 |------|----------|
-| Bandwidth efficiency | Hash-first comparison, only transfer diffs |
+| Bandwidth efficiency | Send only dirty jobs, gap detection on demand |
 | Offline support | Both sides operate independently |
 | Automatic resolution | Authority-based conflict resolution |
 | Clock independence | Logical clocks (version vectors) |
 | Low latency executions | Independent stream, immediate send |
-| Simple reconnect | Single checksum comparison first |
+| Simple reconnect | Checksum comparison, dirty exchange |
+| Data loss recovery | Job ID list exchange for gap detection |
 | Type safety | Envelope messages with explicit type discrimination |
 
 ### 1.3 Bandwidth Comparison
 
-| Scenario | v2 (full sync) | v3 (hash-first) |
-|----------|----------------|-----------------|
-| 100 jobs, 5 differ | ~30 KB | ~6 KB |
-| 10,000 jobs, 50 differ | ~3 MB | ~500 KB |
-| Reconnect, no changes | ~30 KB | ~100 bytes |
+| Scenario | v2 (full sync) | v3.1 (hash-first) | v3.2 (dirty-first) |
+|----------|----------------|-------------------|-------------------|
+| 100 jobs, 5 changed | ~30 KB | ~6 KB | ~1.5 KB |
+| 10,000 jobs, 50 changed | ~3 MB | ~500 KB | ~15 KB |
+| Reconnect, no changes | ~30 KB | ~100 bytes | ~100 bytes |
+| Data loss recovery | ~3 MB | ~500 KB | ~500 KB |
+
+### 1.4 Protocol Philosophy
+
+**Two-phase sync:**
+1. **Phase 1 (Fast Path):** Exchange dirty jobs only. Handles 99% of cases.
+2. **Phase 2 (Recovery Path):** Exchange job ID lists for gap detection. Only used when dirty exchange doesn't converge (data loss scenario).
+
+Both phases can happen simultaneously from both sides - the protocol is symmetric.
 
 ## 2. Message Types
 
@@ -44,23 +54,27 @@ This specification defines a bandwidth-efficient bidirectional synchronization p
 
 All messages use **content_id = 202**. Messages are wrapped in envelope types (`V2C_Envelope` or `C2V_Envelope`) with explicit type discrimination via protobuf `oneof`.
 
-**Vehicle → Cloud (V2C):**
+**Shared messages (same payload, direction determined by envelope):**
 
 | Message | Purpose | When sent |
 |---------|---------|-----------|
-| `V2C_Hello` | Announce state checksum | On connect, after applying changes |
-| `V2C_HashManifest` | Send all job hashes | When cloud requests |
-| `V2C_JobData` | Send full job records | When cloud requests specific jobs |
-| `V2C_Executions` | Report execution results | Immediately when jobs complete |
+| `SyncMessage` | Dirty jobs + acks + checksum | Normal sync (99% of traffic) |
+| `GapDetect` | Job ID lists + requests | Data loss recovery only |
 
-**Cloud → Vehicle (C2V):**
+**Direction-specific messages:**
 
-| Message | Purpose | When sent |
-|---------|---------|-----------|
-| `C2V_RequestHashes` | Request hash manifest | When vehicle checksum unknown |
-| `C2V_SyncDelta` | Send jobs + request jobs | After comparing hashes |
-| `C2V_ExecutionAck` | Acknowledge received executions | After storing executions |
-| `C2V_TriggerJob` | Request immediate job execution | User-initiated trigger |
+| Message | Direction | Purpose |
+|---------|-----------|---------|
+| `Executions` | V2C only | Report execution results |
+| `ExecutionAck` | C2V only | Acknowledge received executions |
+| `TriggerJob` | C2V only | Request immediate job execution |
+| `TriggerResponse` | V2C only | Response to trigger request |
+
+**Removed from v3.1:**
+- `V2C_HashManifest` - No longer needed
+- `C2V_RequestHashes` - No longer needed
+- `V2C_Hello`, `V2C_JobData`, `C2V_SyncDelta` - Consolidated into `SyncMessage`
+- `V2C_JobAck`, `C2V_JobAck` - Integrated into `SyncMessage.acked_jobs`
 
 ### 2.2 Protocol Buffers
 
@@ -71,117 +85,95 @@ package swdv.scheduler_sync_v3;
 option cc_enable_arenas = true;
 
 // ============================================================================
-// Envelope Messages (for type-safe discrimination)
+// Envelope Messages (direction discrimination)
 // ============================================================================
 
 // Vehicle → Cloud envelope
 message V2C_Envelope {
     oneof message {
-        V2C_Hello hello = 1;
-        V2C_HashManifest hash_manifest = 2;
-        V2C_JobData job_data = 3;
-        V2C_Executions executions = 4;
-        V2C_TriggerResponse trigger_response = 5;
+        SyncMessage sync = 1;            // Normal sync (jobs + acks + checksum)
+        GapDetect gap_detect = 2;        // Gap detection (recovery only)
+        Executions executions = 3;       // Execution reports
+        TriggerResponse trigger_response = 4;
     }
 }
 
 // Cloud → Vehicle envelope
 message C2V_Envelope {
     oneof message {
-        C2V_RequestHashes request_hashes = 1;
-        C2V_SyncDelta sync_delta = 2;
-        C2V_ExecutionAck execution_ack = 3;
-        C2V_TriggerJob trigger_job = 4;
+        SyncMessage sync = 1;            // Normal sync (jobs + acks + checksum)
+        GapDetect gap_detect = 2;        // Gap detection (recovery only)
+        ExecutionAck execution_ack = 3;  // Acknowledge executions
+        TriggerJob trigger_job = 4;      // Request immediate execution
     }
 }
 
 // ============================================================================
-// Vehicle → Cloud Messages
+// Shared Sync Messages (used in both directions)
 // ============================================================================
 
-// Initial handshake / state announcement
-// Sent on connect and after applying any changes
-message V2C_Hello {
+// Primary sync message - handles 99% of sync traffic
+// Combines: job sending, job acknowledgment, state announcement
+message SyncMessage {
     string vehicle_id = 1;
-    string bridge_instance_id = 2;       // Detect bridge restarts
-    uint64 state_checksum = 3;           // xxHash64 of all jobs
-    uint64 last_seen_c2v_checksum = 4;   // Last cloud checksum we processed
+    repeated JobRecord jobs = 2;           // Dirty jobs I'm sending to you
+    repeated JobVersionAck acked_jobs = 3; // Jobs I received from you (ACK)
+    uint64 state_checksum = 4;             // My current state (xxHash64)
 }
 
-// Job hash manifest (sent when cloud requests)
-message V2C_HashManifest {
+// Gap detection - used only for data loss recovery
+// Triggered when checksums differ but no dirty jobs exist
+message GapDetect {
     string vehicle_id = 1;
-    repeated JobHashEntry job_hashes = 2;
-    uint64 state_checksum = 3;
+    repeated string job_ids = 2;           // All my job IDs
+    repeated string request_job_ids = 3;   // Jobs I need from you
 }
 
-// Full job data (sent when cloud requests specific jobs)
-message V2C_JobData {
-    string vehicle_id = 1;
-    repeated JobRecord jobs = 2;
-    uint64 state_checksum = 3;
-}
+// ============================================================================
+// Direction-Specific Messages
+// ============================================================================
 
-// Execution results (independent stream)
-message V2C_Executions {
+// V2C only: Execution results (independent stream)
+message Executions {
     string vehicle_id = 1;
     repeated ExecutionRecord executions = 2;
 }
 
-// Response to trigger request
-message V2C_TriggerResponse {
+// C2V only: Acknowledge received executions
+message ExecutionAck {
+    string vehicle_id = 1;
+    repeated string execution_ids = 2;     // Executions stored
+}
+
+// C2V only: Request immediate job execution (imperative command)
+message TriggerJob {
     string vehicle_id = 1;
     string job_id = 2;
-    string request_id = 3;               // Correlation ID from C2V_TriggerJob
-    bool accepted = 4;
-    string error_message = 5;            // If !accepted
-    uint64 timestamp_ms = 6;
-}
-
-// ============================================================================
-// Cloud → Vehicle Messages
-// ============================================================================
-
-// Request hash manifest (when vehicle checksum is unknown/changed)
-message C2V_RequestHashes {
-    string vehicle_id = 1;
-    uint64 cloud_state_checksum = 2;     // Inform vehicle of cloud state
-}
-
-// Sync delta - request specific jobs and/or send jobs
-message C2V_SyncDelta {
-    string vehicle_id = 1;
-    repeated string request_job_ids = 2; // Jobs cloud needs from vehicle
-    repeated JobRecord jobs = 3;         // Jobs vehicle needs from cloud
-    uint64 state_checksum = 4;
-    uint64 last_seen_v2c_checksum = 5;
-}
-
-// Acknowledge received executions (allows vehicle to stop retrying)
-message C2V_ExecutionAck {
-    string vehicle_id = 1;
-    repeated string execution_ids = 2;   // Executions cloud has stored
-}
-
-// Request immediate job execution (imperative command, not state sync)
-message C2V_TriggerJob {
-    string vehicle_id = 1;
-    string job_id = 2;
-    string request_id = 3;               // For correlation with response
-    string requester_id = 4;             // Who requested (for audit)
+    string request_id = 3;                 // For correlation with response
+    string requester_id = 4;               // Who requested (for audit)
     uint64 timestamp_ms = 5;
-    uint64 expires_at_ms = 6;            // Request expires after this (0 = no expiry)
+    uint64 expires_at_ms = 6;              // 0 = no expiry
+}
+
+// V2C only: Response to trigger request
+message TriggerResponse {
+    string vehicle_id = 1;
+    string job_id = 2;
+    string request_id = 3;                 // Correlation ID from TriggerJob
+    bool accepted = 4;
+    string error_message = 5;              // If !accepted
+    uint64 timestamp_ms = 6;
 }
 
 // ============================================================================
 // Shared Types
 // ============================================================================
 
-message JobHashEntry {
+// Version acknowledgment for a single job
+message JobVersionAck {
     string job_id = 1;
-    uint64 content_hash = 2;             // xxHash64 of job content
-    JobVersion version = 3;              // For quick dominance check
-    bool deleted = 4;                    // Tombstone flag
+    uint64 cloud_seq = 2;
+    uint64 vehicle_seq = 3;
 }
 
 message JobVersion {
@@ -222,11 +214,11 @@ message JobRecord {
 }
 
 message ExecutionRecord {
-    string execution_id = 1;             // Globally unique (for dedup)
+    string execution_id = 1;               // Globally unique (for dedup)
     string job_id = 2;
     uint64 executed_at_ms = 3;
     uint64 duration_ms = 4;
-    JobStatus status = 5;                // COMPLETED or FAILED
+    JobStatus status = 5;                  // COMPLETED or FAILED
     string result_json = 6;
     string error_message = 7;
 }
@@ -257,293 +249,468 @@ enum SleepPolicy {
 
 ## 3. Sync Flows
 
-### 3.1 Reconnect - Vehicle Unchanged, Cloud Has Changes
+### 3.1 Fast Path - Dirty Exchange Only
 
-Most common case: vehicle reconnects, only cloud has new jobs.
+Most common case: Both sides have some dirty jobs, exchange converges in one round.
 
 ```
 VEHICLE                                           CLOUD
    │                                                │
+   │ dirty: [job-A]                                 │ dirty: [job-X]
    │ state=0xAAAA                                   │ state=0xBBBB
-   │                                                │ last_seen_v2c=0xAAAA
    │                                                │
-   │─── V2C_Envelope{hello} ───────────────────────►│
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: []                                    │
+   │    acked_jobs: []                              │
    │    state_checksum: 0xAAAA                      │
    │                                                │
-   │                      0xAAAA == last_seen_v2c ✓ │
-   │                      Vehicle unchanged!        │
-   │                      Just send our changes     │
+   │                      Mismatch, has dirty jobs  │
+   │                      Send dirty (fast path)    │
    │                                                │
-   │◄─── C2V_Envelope{sync_delta} ─────────────────│
-   │     request_job_ids: []                        │
-   │     jobs: [job-X, job-Y]  ← new cloud jobs     │
+   │◄─── C2V SyncMessage ──────────────────────────│
+   │     jobs: [job-X@{1,0}]    ← dirty             │
+   │     acked_jobs: []                             │
    │     state_checksum: 0xBBBB                     │
    │                                                │
-   │ Apply jobs                                     │
-   │ new state=0xBBBB                               │
-   │                                                │
-   │─── V2C_Envelope{hello} ───────────────────────►│
-   │    state_checksum: 0xBBBB                      │
-   │    last_seen_c2v: 0xBBBB                       │
-   │                                                │
-   │                      Checksums match!          │
-   │                      QUIESCENT                 │
-   │                                                │
-   ═══════════════ NO TRAFFIC UNTIL CHANGE ═════════
-```
-
-**Bandwidth:** ~200 bytes total (just checksums + delta jobs)
-
-### 3.2 Reconnect - Both Sides Changed
-
-Vehicle and cloud both modified jobs while disconnected.
-
-```
-VEHICLE                                           CLOUD
-   │                                                │
-   │ state=0xCCCC (changed offline)                 │ state=0xBBBB
-   │                                                │ last_seen_v2c=0xAAAA
-   │                                                │
-   │─── V2C_Envelope{hello} ───────────────────────►│
-   │    state_checksum: 0xCCCC                      │
-   │                                                │
-   │                      0xCCCC != last_seen_v2c   │
-   │                      Vehicle changed!          │
-   │                      Need hash manifest        │
-   │                                                │
-   │◄─── C2V_Envelope{request_hashes} ─────────────│
-   │     cloud_state_checksum: 0xBBBB               │
-   │                                                │
-   │─── V2C_Envelope{hash_manifest} ───────────────►│
-   │    job_hashes: [                               │
-   │      {A, 0x111, v:{3,4}},                      │
-   │      {B, 0x222, v:{2,5}},  ← vehicle modified  │
-   │      {C, 0x333, v:{1,1}},                      │
-   │      ... 100 entries                           │
-   │    ]                                           │
-   │    state_checksum: 0xCCCC                      │
-   │                                                │
-   │                      Compare each hash:        │
-   │                      A: same                   │
-   │                      B: differs (veh)          │
-   │                      C: same                   │
-   │                      X: missing (cloud has)    │
-   │                                                │
-   │◄─── C2V_Envelope{sync_delta} ─────────────────│
-   │     request_job_ids: ["B"]  ← need from veh    │
-   │     jobs: [job-X]           ← veh needs        │
-   │     state_checksum: 0xDDDD                     │
-   │                                                │
    │ Apply job-X                                    │
+   │ Send dirty job-A + ACK job-X                   │
    │                                                │
-   │─── V2C_Envelope{job_data} ────────────────────►│
-   │    jobs: [job-B]                               │
-   │    state_checksum: 0xEEEE                      │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: [job-A@{0,1}]     ← dirty             │
+   │    acked_jobs: [job-X@{1,0}]  ← ACK            │
+   │    state_checksum: 0xCCCC                      │
    │                                                │
-   │                      Apply job-B               │
-   │                      Cloud state now 0xEEEE   │
+   │                      Update remote_version     │
+   │                      for job-X (from ACK)      │
+   │                      Apply job-A               │
    │                                                │
-   │◄─── C2V_Envelope{sync_delta} ─────────────────│
-   │     request_job_ids: []                        │
+   │◄─── C2V SyncMessage ──────────────────────────│
    │     jobs: []                                   │
-   │     state_checksum: 0xEEEE                     │
-   │     last_seen_v2c: 0xEEEE                      │
+   │     acked_jobs: [job-A@{0,1}]  ← ACK           │
+   │     state_checksum: 0xCCCC                     │
    │                                                │
-   │                      Checksums match!          │
+   │ Update remote_version                          │
+   │ for job-A (from ACK)                           │
+   │ Checksums match!                               │
    │                                                │
    ═══════════════════ QUIESCENT ═══════════════════
 ```
 
-### 3.3 Reconnect - No Changes (Quiescent)
+**Key insight:** `SyncMessage.acked_jobs` allows each side to update `remote_version` when the other side confirms receipt. Quiescence is achieved when all `local_version == remote_version` (no dirty jobs).
 
-Vehicle reconnects, neither side changed.
+### 3.2 Quiescent - No Traffic
+
+Once quiescent, **no sync traffic flows**. Both sides are silent until:
+- A local change occurs (job created/modified/deleted)
+- Reconnection after disconnect
 
 ```
 VEHICLE                                           CLOUD
    │                                                │
+   │ dirty: []                                      │ dirty: []
    │ state=0xAAAA                                   │ state=0xAAAA
-   │                                                │ last_seen_v2c=0xAAAA
    │                                                │
-   │─── V2C_Envelope{hello} ───────────────────────►│
-   │    state_checksum: 0xAAAA                      │
-   │    last_seen_c2v: 0xAAAA                       │
-   │                                                │
-   │                      0xAAAA == last_seen_v2c ✓ │
-   │                      0xAAAA == our state ✓     │
-   │                      Already in sync!          │
-   │                                                │
-   │◄─── C2V_Envelope{sync_delta} ─────────────────│
-   │     request_job_ids: []                        │
-   │     jobs: []                                   │
-   │     state_checksum: 0xAAAA                     │
-   │     last_seen_v2c: 0xAAAA                      │
+   │              (silence - no traffic)            │
    │                                                │
    ═══════════════════ QUIESCENT ═══════════════════
 ```
 
-**Bandwidth:** ~100 bytes (just checksums)
+**Bandwidth:** 0 bytes (steady state)
 
-### 3.4 Execution Reporting (With Acknowledgment)
+### 3.3 Reconnection - State Verification
 
-Executions are sent immediately. Cloud acknowledges to stop retries.
+On reconnect, vehicle sends initial SyncMessage to verify state agreement.
+
+```
+VEHICLE                                           CLOUD
+   │                                                │
+   │ (reconnect)                                    │
+   │                                                │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: []                                    │
+   │    acked_jobs: []                              │
+   │    state_checksum: 0xAAAA                      │
+   │                                                │
+   │                      Checksums match!          │
+   │                                                │
+   │◄─── C2V SyncMessage ──────────────────────────│
+   │     jobs: []                                   │
+   │     acked_jobs: []                             │
+   │     state_checksum: 0xAAAA                     │
+   │                                                │
+   ═══════════════════ QUIESCENT ═══════════════════
+```
+
+**Bandwidth:** ~100 bytes (one-time on reconnect)
+
+### 3.4 Recovery Path - Gap Detection
+
+When dirty exchange doesn't converge (data loss scenario).
+
+```
+VEHICLE                                           CLOUD
+   │                                                │
+   │ has: [A, B, C]                                 │ has: [A, B]
+   │ dirty: []  (all synced before)                 │ dirty: []
+   │ state=0xCCCC                                   │ state=0xBBBB (lost C)
+   │                                                │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: []                                    │
+   │    acked_jobs: []                              │
+   │    state_checksum: 0xCCCC                      │
+   │                                                │
+   │                      Mismatch, but no dirty!   │
+   │                      Need gap detection        │
+   │                      Send job_ids list         │
+   │                                                │
+   │◄─── C2V GapDetect ────────────────────────────│
+   │     job_ids: [A, B]                            │
+   │     request_job_ids: []                        │
+   │                                                │
+   │ Compare: I have [A,B,C], cloud has [A,B]       │
+   │ Cloud missing: C                               │
+   │ I'm missing: nothing                           │
+   │                                                │
+   │─── V2C GapDetect ─────────────────────────────►│
+   │    job_ids: [A, B, C]                          │
+   │    request_job_ids: []                         │
+   │                                                │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: [C]               ← gap fill          │
+   │    acked_jobs: []                              │
+   │    state_checksum: 0xCCCC                      │
+   │                                                │
+   │                      Apply C                   │
+   │                      ACK C                     │
+   │                                                │
+   │◄─── C2V SyncMessage ──────────────────────────│
+   │     jobs: []                                   │
+   │     acked_jobs: [C@version]  ← ACK             │
+   │     state_checksum: 0xCCCC                     │
+   │                                                │
+   ═══════════════════ QUIESCENT ═══════════════════
+```
+
+### 3.5 Symmetric Gap Detection - Both Sides Missing
+
+Both sides lost data.
+
+```
+VEHICLE                                           CLOUD
+   │                                                │
+   │ has: [B, C]  (lost A)                          │ has: [A, B]  (lost C)
+   │ dirty: []                                      │ dirty: []
+   │                                                │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: []                                    │
+   │    acked_jobs: []                              │
+   │    state_checksum: 0xVVVV                      │
+   │                                                │
+   │                      Mismatch, no dirty        │
+   │                                                │
+   │◄─── C2V GapDetect ────────────────────────────│
+   │     job_ids: [A, B]                            │
+   │     request_job_ids: []                        │
+   │                                                │
+   │ Compare lists:                                 │
+   │   Cloud has A, I don't → request A            │
+   │   I have C, cloud doesn't → send C            │
+   │                                                │
+   │─── V2C GapDetect ─────────────────────────────►│
+   │    job_ids: [B, C]                             │
+   │    request_job_ids: [A]    ← request gap      │
+   │                                                │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: [C]                                   │
+   │    acked_jobs: []                              │
+   │    state_checksum: 0xVVV2                      │
+   │                                                │
+   │                      Apply C                   │
+   │                      Vehicle wants A           │
+   │                      Send A + ACK C            │
+   │                                                │
+   │◄─── C2V SyncMessage ──────────────────────────│
+   │     jobs: [A]              ← requested         │
+   │     acked_jobs: [C@version]  ← ACK             │
+   │     state_checksum: 0xFINAL                    │
+   │                                                │
+   │ Apply A                                        │
+   │ ACK A                                          │
+   │                                                │
+   │─── V2C SyncMessage ───────────────────────────►│
+   │    jobs: []                                    │
+   │    acked_jobs: [A@version]  ← ACK              │
+   │    state_checksum: 0xFINAL                     │
+   │                                                │
+   ═══════════════════ QUIESCENT ═══════════════════
+```
+
+### 3.6 Execution Reporting (With Acknowledgment)
+
+Unchanged from v3.1.
 
 ```
 VEHICLE                                           CLOUD
    │                                                │
    │ Job X completes                                │
    │                                                │
-   │─── V2C_Envelope{executions} ──────────────────►│
-   │    executions: [{                              │
-   │      execution_id: "exec-123",                 │
-   │      job_id: "job-X",                          │
-   │      status: COMPLETED,                        │
-   │      duration_ms: 1500,                        │
-   │      result_json: "{...}"                      │
-   │    }]                                          │
+   │─── V2C_Executions ───────────────────────────►│
+   │    executions: [{execution_id, job_id, ...}]   │
    │                                                │
-   │                      Store execution           │
-   │                      (dedup by execution_id)   │
+   │                      Store (dedup by exec_id)  │
    │                                                │
-   │◄─── C2V_Envelope{execution_ack} ──────────────│
+   │◄─── C2V_ExecutionAck ────────────────────────│
    │     execution_ids: ["exec-123"]                │
    │                                                │
    │ Remove from retry queue                        │
    │                                                │
 ```
 
-**Key properties:**
-- Sent immediately when job completes
-- Cloud deduplicates by `execution_id`
-- Independent of job sync state
-- Vehicle queues for retry until acknowledged
-- Can batch multiple executions in one message
-- Acknowledgment is optional (vehicle times out after N retries)
+### 3.7 Job Trigger (Imperative Command)
 
-### 3.5 Job Trigger (Imperative Command)
-
-Trigger is the only imperative command - everything else is state sync.
+Unchanged from v3.1.
 
 ```
 VEHICLE                                           CLOUD
    │                                                │
    │                      User clicks "Run Now"     │
    │                                                │
-   │◄─── C2V_Envelope{trigger_job} ────────────────│
+   │◄─── C2V_TriggerJob ─────────────────────────│
    │     job_id: "job-X"                            │
    │     request_id: "req-456"                      │
-   │     requester_id: "dashboard-user"             │
    │                                                │
    │ Execute job immediately                        │
    │                                                │
-   │─── V2C_Envelope{trigger_response} ────────────►│
+   │─── V2C_TriggerResponse ─────────────────────►│
    │    job_id: "job-X"                             │
    │    request_id: "req-456"                       │
    │    accepted: true                              │
    │                                                │
-   │ ... job runs ...                               │
-   │                                                │
-   │─── V2C_Envelope{executions} ──────────────────►│
-   │    executions: [{...}]                         │
-   │                                                │
 ```
 
-## 4. Cloud Decision Logic
+## 4. Per-Job Dirty Tracking
 
-### 4.1 On Receiving V2C_Hello
+### 4.1 State
+
+Each job tracks whether it needs to be synced to the remote side.
+
+```cpp
+struct Job {
+    VersionVector local_version;   // My current version (transmitted in JobRecord as "version")
+    VersionVector remote_version;  // Last known remote version (LOCAL ONLY - what I believe remote has)
+
+    bool is_dirty() const { return local_version != remote_version; }
+};
+```
+
+**Note:** `remote_version` is **local state only** - it is NOT transmitted in `JobRecord`. When sending, `local_version` is serialized as the wire `version`. When receiving, the wire `version` represents what the remote believes is its current state.
+
+### 4.2 Update Rules
+
+| Event | local_version | remote_version | is_dirty() |
+|-------|---------------|----------------|------------|
+| Local create | `{1,0}` or `{0,1}` | `{0,0}` | true |
+| Local modify | increment our side | unchanged | true |
+| Accept remote | incoming version | incoming version | false |
+| Reject remote (we dominate) | unchanged | incoming version | true (remote needs ours) |
+| Conflict, we win | merged + increment | incoming version | true (remote needs merged) |
+| Conflict, they win | merged + increment | merged version | false |
+
+**Key insight:** `remote_version` is always set to what the remote sent us (incoming version), because
+that's what we KNOW they have. When we receive a job with version V, the sender has version V.
+
+**Quiescence:** The system is quiescent when `local_version == remote_version` for ALL jobs.
+This is a detected state, not an event. The sync process naturally converges to quiescence
+through job exchanges - no explicit "mark all synced" operation is needed.
+
+### 4.3 Why This Works
+
+**Normal sync:** Jobs modified locally have `remote_version != local_version`, so they're dirty and get sent.
+
+**Data loss recovery:** If remote loses data, previously-synced jobs are not dirty (`remote_version == local_version`). But the checksum mismatch with no dirty jobs triggers gap detection, where job ID lists reveal the missing jobs.
+
+## 5. Sync Decision Logic
+
+### 5.1 Cloud: On Receiving V2C SyncMessage
 
 ```python
-def handle_v2c_hello(msg):
+def handle_v2c_sync_message(msg):
+    # 1. Process ACKs from vehicle
+    for ack in msg.acked_jobs:
+        set_job_remote_version(msg.vehicle_id, ack.job_id, ack.cloud_seq, ack.vehicle_seq)
+
+    # 2. Apply received jobs
+    acked_jobs = []
+    for job in msg.jobs:
+        apply_job(msg.vehicle_id, job)  # Sets remote_version = job.version internally
+        acked_jobs.append((job.job_id, job.version))
+
+    # 3. Check state
     vehicle_checksum = msg.state_checksum
-    known_checksum = get_last_seen_v2c_checksum(msg.vehicle_id)
-    our_checksum = get_cloud_state_checksum(msg.vehicle_id)
+    cloud_checksum = compute_cloud_checksum(msg.vehicle_id)
+    dirty_jobs = get_dirty_jobs(msg.vehicle_id)
 
-    if vehicle_checksum == known_checksum:
-        # We know vehicle's state - just send our changes
-        if vehicle_checksum == our_checksum:
-            # Already in sync - send empty delta (confirm quiescent)
-            send_c2v_envelope(sync_delta=C2V_SyncDelta(
-                request_job_ids=[],
-                jobs=[],
-                state_checksum=our_checksum
-            ))
-        else:
-            # Vehicle unchanged, but we have changes
-            changed_jobs = get_jobs_changed_since(known_checksum)
-            send_c2v_envelope(sync_delta=C2V_SyncDelta(
-                request_job_ids=[],
-                jobs=changed_jobs,
-                state_checksum=our_checksum
-            ))
+    if vehicle_checksum == cloud_checksum and not dirty_jobs:
+        # QUIESCENT - checksums match, send ACKs only if any
+        send_sync_message(
+            jobs=[],
+            acked_jobs=acked_jobs,
+            state_checksum=cloud_checksum
+        )
+        return
+
+    if dirty_jobs or acked_jobs:
+        # Fast path - send dirty jobs + ACKs
+        send_sync_message(
+            jobs=dirty_jobs,
+            acked_jobs=acked_jobs,
+            state_checksum=cloud_checksum
+        )
     else:
-        # Vehicle changed - we need their hash manifest
-        send_c2v_envelope(request_hashes=C2V_RequestHashes(
-            cloud_state_checksum=our_checksum
-        ))
+        # No dirty but mismatch - need gap detection
+        all_job_ids = get_all_job_ids(msg.vehicle_id)
+        send_gap_detect(
+            job_ids=all_job_ids,
+            request_job_ids=[]
+        )
 ```
 
-### 4.2 On Receiving V2C_HashManifest
+### 5.2 Cloud: On Receiving V2C GapDetect
 
 ```python
-def handle_v2c_hash_manifest(msg):
-    request_jobs = []
-    send_jobs = []
+def handle_v2c_gap_detect(msg):
+    # Compare job ID lists
+    our_job_ids = set(get_all_job_ids(msg.vehicle_id))
+    vehicle_job_ids = set(msg.job_ids)
 
-    vehicle_hashes = {h.job_id: h for h in msg.job_hashes}
-    cloud_jobs = get_all_jobs(msg.vehicle_id)
+    # Jobs we need from vehicle
+    jobs_to_request = []
+    for job_id in vehicle_job_ids:
+        if job_id not in our_job_ids:
+            jobs_to_request.append(job_id)
 
-    # Check each cloud job
-    for job in cloud_jobs:
-        if job.job_id in vehicle_hashes:
-            vh = vehicle_hashes[job.job_id]
-            if vh.content_hash != job.content_hash:
-                # Content differs - compare versions
-                if vehicle_dominates(vh.version, job.version):
-                    request_jobs.append(job.job_id)
-                elif cloud_dominates(job.version, vh.version):
-                    send_jobs.append(job)
-                else:
-                    # Conflict - resolve by authority
-                    winner = resolve_conflict(job, vh)
-                    if winner == 'vehicle':
-                        request_jobs.append(job.job_id)
-                    else:
-                        send_jobs.append(job)
-        else:
-            # Cloud has job vehicle doesn't
-            send_jobs.append(job)
+    # Jobs vehicle needs from us (send via SyncMessage)
+    jobs_to_send = []
+    for job_id in our_job_ids:
+        if job_id not in vehicle_job_ids:
+            job = get_job(msg.vehicle_id, job_id)
+            if job:
+                jobs_to_send.append(job)
 
-    # Check for jobs vehicle has that cloud doesn't
-    for job_id in vehicle_hashes:
-        if job_id not in cloud_jobs:
-            request_jobs.append(job_id)
+    # Send requested jobs from vehicle
+    for job_id in msg.request_job_ids:
+        job = get_job(msg.vehicle_id, job_id)
+        if job:
+            jobs_to_send.append(job)
 
-    send_c2v_envelope(sync_delta=C2V_SyncDelta(
-        request_job_ids=request_jobs,
-        jobs=send_jobs,
-        state_checksum=compute_checksum()
-    ))
+    # Send gap detection response if we need anything
+    if jobs_to_request:
+        send_gap_detect(
+            job_ids=list(our_job_ids),
+            request_job_ids=jobs_to_request
+        )
+
+    # Send jobs via SyncMessage
+    if jobs_to_send:
+        send_sync_message(
+            jobs=jobs_to_send,
+            acked_jobs=[],
+            state_checksum=compute_cloud_checksum(msg.vehicle_id)
+        )
 ```
 
-### 4.3 On Receiving V2C_Executions
+### 5.3 Vehicle: On Receiving C2V SyncMessage
 
 ```python
-def handle_v2c_executions(msg):
-    acked_ids = []
-    for exec in msg.executions:
-        # Deduplicate by execution_id
-        if not execution_exists(exec.execution_id):
-            store_execution(msg.vehicle_id, exec)
-        acked_ids.append(exec.execution_id)
+def handle_c2v_sync_message(msg):
+    # 1. Process ACKs from cloud
+    for ack in msg.acked_jobs:
+        set_job_remote_version(ack.job_id, ack.cloud_seq, ack.vehicle_seq)
 
-    # Acknowledge all (including duplicates - idempotent)
-    send_c2v_envelope(execution_ack=C2V_ExecutionAck(
-        execution_ids=acked_ids
-    ))
+    # 2. Apply received jobs
+    acked_jobs = []
+    for job in msg.jobs:
+        apply_job(job)  # Sets remote_version = job.version internally
+        acked_jobs.append((job.job_id, job.version))
+
+    # 3. Check state
+    cloud_checksum = msg.state_checksum
+    our_checksum = compute_checksum()
+    dirty_jobs = get_dirty_jobs()
+
+    if our_checksum == cloud_checksum and not dirty_jobs:
+        # QUIESCENT - send ACKs only if any
+        if acked_jobs:
+            send_sync_message(
+                jobs=[],
+                acked_jobs=acked_jobs,
+                state_checksum=our_checksum
+            )
+        return
+
+    if dirty_jobs or acked_jobs:
+        # Fast path - send dirty jobs + ACKs
+        send_sync_message(
+            jobs=dirty_jobs,
+            acked_jobs=acked_jobs,
+            state_checksum=our_checksum
+        )
+    else:
+        # No dirty but mismatch - need gap detection
+        all_job_ids = get_all_job_ids()
+        send_gap_detect(
+            job_ids=all_job_ids,
+            request_job_ids=[]
+        )
 ```
 
-## 5. Version Vectors & Conflict Resolution
+### 5.4 Vehicle: On Receiving C2V GapDetect
 
-### 5.1 Dominance
+```python
+def handle_c2v_gap_detect(msg):
+    # Compare job ID lists
+    our_job_ids = set(get_all_job_ids())
+    cloud_job_ids = set(msg.job_ids)
+
+    # Jobs we need from cloud
+    jobs_to_request = []
+    for job_id in cloud_job_ids:
+        if job_id not in our_job_ids:
+            jobs_to_request.append(job_id)
+
+    # Jobs cloud needs from us (send via SyncMessage)
+    jobs_to_send = []
+    for job_id in our_job_ids:
+        if job_id not in cloud_job_ids:
+            job = get_job(job_id)
+            if job:
+                jobs_to_send.append(job)
+
+    # Send requested jobs from cloud
+    for job_id in msg.request_job_ids:
+        job = get_job(job_id)
+        if job:
+            jobs_to_send.append(job)
+
+    # Send gap detection response if we need anything
+    if jobs_to_request:
+        send_gap_detect(
+            job_ids=list(our_job_ids),
+            request_job_ids=jobs_to_request
+        )
+
+    # Send jobs via SyncMessage
+    if jobs_to_send:
+        send_sync_message(
+            jobs=jobs_to_send,
+            acked_jobs=[],
+            state_checksum=compute_checksum()
+        )
+```
+
+## 6. Version Vectors & Conflict Resolution
+
+### 6.1 Dominance
 
 Version A **dominates** B if:
 ```
@@ -552,17 +719,27 @@ A.vehicle_seq >= B.vehicle_seq AND
 (A.cloud_seq > B.cloud_seq OR A.vehicle_seq > B.vehicle_seq)
 ```
 
-### 5.2 Conflict Resolution
+### 6.2 Conflict Resolution
 
 When neither dominates:
 1. Check job's `authority` field
 2. `AUTHORITY_CLOUD` → cloud content wins
 3. `AUTHORITY_VEHICLE` → vehicle content wins
-4. Merged version: `{max(cloud_seq)+1, max(vehicle_seq)}` (cloud resolving)
+4. Merged version: `{max(cloud_seq), max(vehicle_seq)}` then increment resolver's side
 
-## 6. Checksum Computation
+### 6.3 Partial Ordering
 
-### 6.1 State Checksum
+Version vectors are a **partial order**, not a total order:
+
+```
+{cloud: 0, vehicle: 2} vs {cloud: 10, vehicle: 0}
+```
+
+Neither dominates → **CONFLICT** → resolved by authority.
+
+## 7. Checksum Computation
+
+### 7.1 State Checksum
 
 **Algorithm:** xxHash64
 
@@ -574,82 +751,52 @@ When neither dominates:
 
 **Excluded:** status, next_run_time_ms, created_at_ms, updated_at_ms, deleted_at_ms
 
-### 6.2 Job Content Hash
-
-Same fields as state checksum, but for a single job.
-
-## 7. Tombstone Deletion
+## 8. Tombstone Deletion
 
 - Tombstones are `JobRecord{deleted=true}`
-- Included in hash manifest with `deleted=true`
+- Included in job ID list and dirty tracking
 - GC after confirmed + retention period (7 days)
 
-## 8. Execution Records
+## 9. Vehicle State Machine
 
-### 8.1 Properties
-
-- **Append-only:** Immutable facts, never modified
-- **Independent:** Not part of job sync, own message type in envelope
-- **Immediate:** Sent as soon as job completes
-- **Deduplicated:** Cloud stores by `execution_id`
-- **Acknowledged:** Cloud sends `C2V_ExecutionAck` to stop retries
-
-### 8.2 Vehicle Behavior
-
-```python
-def on_job_completed(job, result):
-    execution = ExecutionRecord(
-        execution_id=generate_uuid(),
-        job_id=job.job_id,
-        executed_at_ms=now_ms(),
-        duration_ms=result.duration,
-        status=result.status,
-        result_json=result.output,
-        error_message=result.error
-    )
-
-    # Send immediately
-    send_v2c_envelope(executions=V2C_Executions(
-        executions=[execution]
-    ))
-
-    # Queue for retry until acknowledged
-    pending_executions[execution.execution_id] = execution
-
-def on_execution_ack(msg):
-    for exec_id in msg.execution_ids:
-        pending_executions.pop(exec_id, None)
-
-def retry_pending_executions():
-    """Called periodically (e.g., every 30s)"""
-    if pending_executions:
-        send_v2c_envelope(executions=V2C_Executions(
-            executions=list(pending_executions.values())
-        ))
+```
+                    ┌──────────────────────────────────────┐
+                    │                                      │
+                    ▼                                      │
+            ┌───────────────┐                              │
+    ───────►│  SEND_SYNC    │                              │
+   connect  └───────┬───────┘                              │
+                    │                                      │
+                    │ send V2C SyncMessage                 │
+                    ▼                                      │
+            ┌───────────────┐                              │
+            │ WAIT_RESPONSE │                              │
+            └───────┬───────┘                              │
+                    │                                      │
+        ┌───────────┴───────────┐                          │
+        │                       │                          │
+        ▼                       ▼                          │
+   SyncMessage             SyncMessage/GapDetect           │
+   (checksums match)       (checksums differ)              │
+        │                       │                          │
+        ▼                       ▼                          │
+┌───────────────┐       ┌───────────────┐                  │
+│  QUIESCENT    │       │ PROCESS_MSG   │                  │
+└───────┬───────┘       └───────┬───────┘                  │
+        │                       │                          │
+        │ local change          │ apply jobs, process ACKs │
+        │                       │ collect dirty + gaps     │
+        │                       ▼                          │
+        │               ┌───────────────┐                  │
+        │               │  SEND_SYNC    │──────────────────┘
+        │               └───────────────┘
+        │                       │
+        └───────────────────────┘
 ```
 
-### 8.3 Cloud Behavior
+## 10. Implementation Notes
 
-```python
-def handle_v2c_executions(msg):
-    acked_ids = []
-    for exec in msg.executions:
-        # Deduplicate by execution_id - idempotent
-        if not execution_exists(exec.execution_id):
-            store_execution(msg.vehicle_id, exec)
-        acked_ids.append(exec.execution_id)
-
-    # Always acknowledge (idempotent)
-    send_c2v_envelope(execution_ack=C2V_ExecutionAck(
-        execution_ids=acked_ids
-    ))
-```
-
-## 9. Implementation Notes
-
-### 9.1 Message Handling
-
-All messages use envelope types with protobuf `oneof` for type-safe discrimination:
+### 10.1 Message Handling
 
 ```cpp
 void handle_v2c_message(const bytes& payload) {
@@ -660,14 +807,11 @@ void handle_v2c_message(const bytes& payload) {
     }
 
     switch (envelope.message_case()) {
-        case V2C_Envelope::kHello:
-            handle_hello(envelope.hello());
+        case V2C_Envelope::kSync:
+            handle_sync_message(envelope.sync());
             break;
-        case V2C_Envelope::kHashManifest:
-            handle_hash_manifest(envelope.hash_manifest());
-            break;
-        case V2C_Envelope::kJobData:
-            handle_job_data(envelope.job_data());
+        case V2C_Envelope::kGapDetect:
+            handle_gap_detect(envelope.gap_detect());
             break;
         case V2C_Envelope::kExecutions:
             handle_executions(envelope.executions());
@@ -689,11 +833,11 @@ void handle_c2v_message(const bytes& payload) {
     }
 
     switch (envelope.message_case()) {
-        case C2V_Envelope::kRequestHashes:
-            handle_request_hashes(envelope.request_hashes());
+        case C2V_Envelope::kSync:
+            handle_sync_message(envelope.sync());
             break;
-        case C2V_Envelope::kSyncDelta:
-            handle_sync_delta(envelope.sync_delta());
+        case C2V_Envelope::kGapDetect:
+            handle_gap_detect(envelope.gap_detect());
             break;
         case C2V_Envelope::kExecutionAck:
             handle_execution_ack(envelope.execution_ack());
@@ -708,127 +852,99 @@ void handle_c2v_message(const bytes& payload) {
 }
 ```
 
-### 9.2 Vehicle State Machine
-
-```
-                    ┌──────────────────────────────────────┐
-                    │                                      │
-                    ▼                                      │
-            ┌───────────────┐                              │
-    ───────►│   SEND_HELLO  │                              │
-   connect  └───────┬───────┘                              │
-                    │                                      │
-                    │ send V2C_Envelope{hello}             │
-                    ▼                                      │
-            ┌───────────────┐                              │
-            │ WAIT_RESPONSE │                              │
-            └───────┬───────┘                              │
-                    │                                      │
-        ┌───────────┼───────────┐                          │
-        │           │           │                          │
-        ▼           ▼           ▼                          │
-   request_     sync_delta  sync_delta                     │
-   hashes       (has jobs)  (empty)                        │
-        │           │           │                          │
-        ▼           │           ▼                          │
-┌───────────────┐   │   ┌───────────────┐                  │
-│ SEND_MANIFEST │   │   │  QUIESCENT    │◄─────────────────┤
-└───────┬───────┘   │   └───────┬───────┘                  │
-        │           │           │                          │
-        │           │           │ local change             │
-        │           ▼           │                          │
-        │   ┌───────────────┐   │                          │
-        │   │ APPLY_CHANGES │───┘                          │
-        │   └───────┬───────┘                              │
-        │           │                                      │
-        │           │ if request_job_ids not empty         │
-        │           ▼                                      │
-        │   ┌───────────────┐                              │
-        └──►│ SEND_JOBDATA  │──────────────────────────────┘
-            └───────────────┘
-```
-
-### 9.3 Execution Retry State Machine
-
-```
-                ┌────────────────────────────────────┐
-                │                                    │
-                ▼                                    │
-        ┌───────────────┐                            │
-        │    PENDING    │ ◄─── job completes         │
-        └───────┬───────┘                            │
-                │                                    │
-                │ send V2C_Envelope{executions}      │
-                ▼                                    │
-        ┌───────────────┐                            │
-        │ AWAIT_ACK     │────── timeout ─────────────┘
-        └───────┬───────┘       (retry)
-                │
-                │ C2V_ExecutionAck received
-                ▼
-        ┌───────────────┐
-        │    DONE       │
-        └───────────────┘
-```
-
-## 10. Migration from v2
-
-### 10.1 Compatibility
-
-v3 is NOT backward compatible with v2. Both sides must upgrade.
-
-### 10.2 Migration Steps
-
-1. Deploy cloud with v3 support (accept both v2 and v3)
-2. Deploy vehicles with v3
-3. Vehicles send `V2C_Envelope{hello}` (v3 format)
-4. Cloud responds with v3 messages
-5. After all vehicles upgraded, remove v2 support
-
-### 10.3 Version Detection
-
-Cloud can detect v2 vs v3 by message format:
-- v2: Raw `V2C_SyncMessage` (no envelope wrapper)
-- v3: `V2C_Envelope` with `oneof` discriminator
+### 10.2 Dirty Job Collection
 
 ```cpp
-bool is_v3_message(const bytes& payload) {
-    V2C_Envelope envelope;
-    return envelope.ParseFromString(payload) &&
-           envelope.message_case() != V2C_Envelope::MESSAGE_NOT_SET;
+std::vector<Job> get_dirty_jobs() {
+    std::vector<Job> dirty;
+    for (const auto& [job_id, job] : jobs_) {
+        if (job.is_dirty()) {
+            dirty.push_back(job);
+        }
+    }
+    return dirty;
 }
 ```
 
+### 10.3 Gap Detection
+
+```cpp
+void process_gap_detection(
+    const std::vector<std::string>& remote_job_ids,
+    std::vector<std::string>& request_from_remote,
+    std::vector<Job>& send_to_remote) {
+
+    std::set<std::string> remote_set(remote_job_ids.begin(), remote_job_ids.end());
+    std::set<std::string> local_set;
+    for (const auto& [job_id, _] : jobs_) {
+        local_set.insert(job_id);
+    }
+
+    // Jobs remote has that we don't
+    for (const auto& job_id : remote_set) {
+        if (local_set.find(job_id) == local_set.end()) {
+            request_from_remote.push_back(job_id);
+        }
+    }
+
+    // Jobs we have that remote doesn't
+    for (const auto& job_id : local_set) {
+        if (remote_set.find(job_id) == remote_set.end()) {
+            send_to_remote.push_back(jobs_[job_id]);
+        }
+    }
+}
+```
+
+## 11. Migration from v3.1
+
+### 11.1 Breaking Changes
+
+**Removed messages:**
+- `V2C_HashManifest` - eliminated
+- `C2V_RequestHashes` - eliminated
+- `V2C_Hello` - consolidated into `SyncMessage`
+- `V2C_JobData` - consolidated into `SyncMessage`
+- `C2V_SyncDelta` - consolidated into `SyncMessage`
+- `V2C_JobAck` / `C2V_JobAck` - integrated into `SyncMessage.acked_jobs`
+
+**New messages:**
+- `SyncMessage` - shared type for jobs + acks + checksum (99% of traffic)
+- `GapDetect` - shared type for data loss recovery (job_id lists only, no checksum)
+
+**Key semantic changes:**
+- ACKs are integrated into `SyncMessage.acked_jobs`, not separate messages
+- Gap detection is separate from normal sync (`GapDetect` vs `SyncMessage`)
+- `GapDetect` has no `state_checksum` since we already know states differ
+- Quiescence is a detected state, not an event that triggers actions
+
+### 11.2 Migration Path
+
+v3.2 is NOT backward compatible with v3.1. Both sides must upgrade simultaneously.
+
 ---
 
-## Appendix A: Comparison with Discovery Sync
-
-| Aspect | Discovery Sync | Scheduler Sync v3 |
-|--------|----------------|-------------------|
-| Data type | Static schemas | Dynamic jobs |
-| Hash level | Schema content | Job content |
-| Conflict | N/A (immutable) | Version vectors + authority |
-| Direction | Mostly V2C | Bidirectional |
-| First message | Hash list | Single checksum |
-| Request granularity | By hash | By job_id |
-| Message wrapper | None | Envelope with oneof |
-
-## Appendix B: Test Scenarios
+## Appendix A: Test Scenarios
 
 | Scenario | Messages | Bandwidth |
 |----------|----------|-----------|
-| Reconnect, no change | Hello → SyncDelta(empty) | ~100 B |
-| Reconnect, cloud +5 jobs | Hello → SyncDelta(5 jobs) | ~2 KB |
-| Reconnect, both +5 jobs | Hello → RequestHashes → Manifest → SyncDelta → JobData | ~8 KB |
-| 10K jobs, 50 differ | Hello → RequestHashes → Manifest → SyncDelta → JobData | ~500 KB |
+| Quiescent (no changes) | SyncMessage(empty) → SyncMessage(empty) | ~100 B |
+| Cloud +5 dirty jobs | SyncMessage → SyncMessage(5 jobs) → SyncMessage(5 acks) | ~2.5 KB |
+| Both +5 dirty jobs | SyncMessage → SyncMessage(5 jobs) → SyncMessage(5 jobs+acks) → SyncMessage(acks) | ~5 KB |
+| Data loss (gap detection) | SyncMessage → GapDetect(job_ids) → GapDetect + SyncMessage(gaps) → SyncMessage(acks) | ~3.5 KB |
 | Execution report | Executions → ExecutionAck | ~250 B |
-| Trigger job | TriggerJob → TriggerResponse → Executions | ~400 B |
 
-## Appendix C: Changes from v3.0 to v3.1
+## Appendix B: Changes from v3.1 to v3.2
 
-| Change | v3.0 | v3.1 |
+| Change | v3.1 | v3.2 |
 |--------|------|------|
-| Message discrimination | Try-parse each type | Envelope with oneof |
-| Execution ack | None (fire-and-forget) | `C2V_ExecutionAck` |
-| Trigger command | Not specified | `C2V_TriggerJob`, `V2C_TriggerResponse` |
-| Type safety | Runtime parsing | Compile-time oneof |
+| Sync approach | Hash-first | Dirty-first |
+| Hash manifest | Required for changes | Eliminated |
+| Job ID list | Not used | Gap detection only (`GapDetect`) |
+| Request direction | Cloud → Vehicle only | Bidirectional |
+| Version tracking | Implicit at quiescence | Explicit via `SyncMessage.acked_jobs` |
+| Quiescence | Event that marks all synced | Detected state (no action) |
+| Message structure | Separate `V2C_Hello`, `V2C_JobData`, etc. | Unified `SyncMessage` + `GapDetect` |
+| ACK messages | Separate `V2C_JobAck`, `C2V_JobAck` | Integrated into `SyncMessage.acked_jobs` |
+| Round trips (normal) | 3-4 | 2-3 |
+| Round trips (data loss) | 3-4 | 3-4 |

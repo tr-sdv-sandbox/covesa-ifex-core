@@ -9,7 +9,7 @@ communication protocols between IFEX components.
 
 | File | Purpose |
 |------|---------|
-| `scheduler-sync-v2.proto` | Bidirectional sync protocol between vehicle and cloud scheduler |
+| `scheduler-sync-v3.proto` | Bidirectional sync protocol v3.1 (hash-first, envelope messages) |
 
 ## Design Principles
 

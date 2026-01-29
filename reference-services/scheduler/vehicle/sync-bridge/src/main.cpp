@@ -95,12 +95,12 @@ int main(int argc, char* argv[]) {
 
             if (elapsed >= FLAGS_stats_interval_s) {
                 auto stats = bridge.GetStats();
-                LOG(INFO) << "=== Scheduler Sync Stats ===";
+                LOG(INFO) << "=== Scheduler Sync Stats (v3.2) ===";
                 LOG(INFO) << "  Active jobs tracked: " << stats.active_jobs_tracked;
                 LOG(INFO) << "  Events sent: " << stats.events_sent;
-                LOG(INFO) << "  Full syncs: " << stats.full_syncs_sent;
-                LOG(INFO) << "  Delta syncs: " << stats.delta_syncs_sent;
-                LOG(INFO) << "  Execution results: " << stats.execution_results_sent;
+                LOG(INFO) << "  Hellos sent: " << stats.hellos_sent;
+                LOG(INFO) << "  Job data sent: " << stats.job_data_sent;
+                LOG(INFO) << "  Executions sent: " << stats.executions_sent;
                 LOG(INFO) << "  Heartbeats: " << stats.heartbeats_sent;
                 LOG(INFO) << "  Bytes sent: " << stats.bytes_sent;
                 LOG(INFO) << "  Current sequence: " << stats.current_sequence;

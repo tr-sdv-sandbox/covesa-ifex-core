@@ -126,8 +126,8 @@ def job_to_dict(job):
         'paused': job.paused,
         'deleted': job.deleted,
         'authority': AUTHORITY_NAMES.get(job.authority, 'cloud'),
-        'cloud_seq': job.cloud_seq,
-        'vehicle_seq': job.vehicle_seq,
+        'cloud_seq': job.local_version.cloud_seq,
+        'vehicle_seq': job.local_version.vehicle_seq,
         'sync_state': SYNC_STATE_NAMES.get(job.sync_state, 'pending'),
         'sync_state_code': job.sync_state,
     }

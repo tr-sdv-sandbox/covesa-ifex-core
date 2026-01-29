@@ -88,9 +88,9 @@ static scheduler::Job ToLibraryJob(const Job& internal_job) {
     }
 
     // Sync state
-    lib_job.version.cloud_seq = internal_job.version.cloud_seq;
-    lib_job.version.vehicle_seq = internal_job.version.vehicle_seq;
-    lib_job.authority = (internal_job.authority == swdv::scheduler_sync_v2::AUTHORITY_CLOUD)
+    lib_job.local_version.cloud_seq = internal_job.version.cloud_seq;
+    lib_job.local_version.vehicle_seq = internal_job.version.vehicle_seq;
+    lib_job.authority = (internal_job.authority == swdv::scheduler_sync_v3::AUTHORITY_CLOUD)
         ? scheduler::JobAuthority::CLOUD
         : scheduler::JobAuthority::VEHICLE;
     lib_job.deleted = internal_job.deleted;
@@ -137,10 +137,12 @@ void Job::ToProto(swdv::scheduler_types::job_t* proto) const {
     proto->set_sleep_policy(sleep_policy);
     proto->set_wake_lead_time_s(wake_lead_time_s);
 
-    // Sync v2 fields
+    // Sync v3.2 fields
     proto->set_authority(static_cast<swdv::scheduler_types::job_authority_t>(authority));
-    proto->set_cloud_seq(version.cloud_seq);
-    proto->set_vehicle_seq(version.vehicle_seq);
+    proto->mutable_local_version()->set_cloud_seq(version.cloud_seq);
+    proto->mutable_local_version()->set_vehicle_seq(version.vehicle_seq);
+    proto->mutable_remote_version()->set_cloud_seq(remote_version.cloud_seq);
+    proto->mutable_remote_version()->set_vehicle_seq(remote_version.vehicle_seq);
     proto->set_deleted(deleted);
 
     VLOG(1) << "Job::ToProto: job=" << id
@@ -194,7 +196,7 @@ std::unique_ptr<Job> Job::FromProto(const swdv::ifex_scheduler::job_create_t& pr
     // Set authority if explicitly provided (non-zero means AUTHORITY_VEHICLE since CLOUD=0)
     // So we check if authority field was explicitly set to CLOUD by looking at cloud_seq
     if (proto.cloud_seq() > 0) {
-        job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(proto.authority());
+        job->authority = static_cast<swdv::scheduler_sync_v3::JobAuthority>(proto.authority());
     }
     // Handle soft delete (tombstone) from sync bridge
     if (proto.deleted()) {
@@ -246,11 +248,12 @@ json Job::ToJson() const {
 
     j["paused"] = paused;
 
-    // Sync v2 fields
+    // Sync v3.2 fields
     j["version_cloud_seq"] = version.cloud_seq;
     j["version_vehicle_seq"] = version.vehicle_seq;
+    j["remote_version_cloud_seq"] = remote_version.cloud_seq;
+    j["remote_version_vehicle_seq"] = remote_version.vehicle_seq;
     j["authority"] = static_cast<int>(authority);
-    j["needs_sync"] = needs_sync;
     j["deleted"] = deleted;
     if (deleted_at.has_value()) {
         j["deleted_at_ms"] = TimePointToMs(deleted_at.value());
@@ -324,12 +327,13 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
 
     job->paused = j.value("paused", false);
 
-    // Sync v2 fields (with defaults for backward compatibility)
+    // Sync v3.2 fields (with defaults for backward compatibility)
     job->version.cloud_seq = j.value("version_cloud_seq", 0ULL);
     job->version.vehicle_seq = j.value("version_vehicle_seq", 0ULL);
-    job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(
-        j.value("authority", static_cast<int>(swdv::scheduler_sync_v2::AUTHORITY_VEHICLE)));
-    job->needs_sync = j.value("needs_sync", false);
+    job->remote_version.cloud_seq = j.value("remote_version_cloud_seq", 0ULL);
+    job->remote_version.vehicle_seq = j.value("remote_version_vehicle_seq", 0ULL);
+    job->authority = static_cast<swdv::scheduler_sync_v3::JobAuthority>(
+        j.value("authority", static_cast<int>(swdv::scheduler_sync_v3::AUTHORITY_VEHICLE)));
     job->deleted = j.value("deleted", false);
     if (j.contains("deleted_at_ms")) {
         job->deleted_at = MsToTimePoint(j.at("deleted_at_ms").get<uint64_t>());
@@ -340,7 +344,7 @@ std::unique_ptr<Job> Job::FromJson(const json& j) {
     return job;
 }
 
-void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
+void Job::ToSyncProto(swdv::scheduler_sync_v3::JobRecord* proto) const {
     proto->set_job_id(id);
     proto->set_authority(authority);
 
@@ -369,19 +373,19 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
     // Execution state (map scheduler status to sync status)
     switch (status) {
         case swdv::scheduler_types::JOB_STATUS_PENDING:
-            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_PENDING);
+            proto->set_status(swdv::scheduler_sync_v3::JOB_STATUS_PENDING);
             break;
         case swdv::scheduler_types::JOB_STATUS_RUNNING:
-            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_RUNNING);
+            proto->set_status(swdv::scheduler_sync_v3::JOB_STATUS_RUNNING);
             break;
         case swdv::scheduler_types::JOB_STATUS_COMPLETED:
-            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED);
+            proto->set_status(swdv::scheduler_sync_v3::JOB_STATUS_COMPLETED);
             break;
         case swdv::scheduler_types::JOB_STATUS_FAILED:
-            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_FAILED);
+            proto->set_status(swdv::scheduler_sync_v3::JOB_STATUS_FAILED);
             break;
         case swdv::scheduler_types::JOB_STATUS_CANCELLED:
-            proto->set_status(swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED);
+            proto->set_status(swdv::scheduler_sync_v3::JOB_STATUS_CANCELLED);
             break;
     }
 
@@ -394,11 +398,11 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
 
     // Power management
     proto->set_wake_policy(wake_policy == swdv::scheduler_types::WAKE_REQUIRED
-        ? swdv::scheduler_sync_v2::WAKE_REQUIRED
-        : swdv::scheduler_sync_v2::WAKE_NO_WAKE);
+        ? swdv::scheduler_sync_v3::WAKE_REQUIRED
+        : swdv::scheduler_sync_v3::WAKE_NO_WAKE);
     proto->set_sleep_policy(sleep_policy == swdv::scheduler_types::SLEEP_INHIBIT
-        ? swdv::scheduler_sync_v2::SLEEP_INHIBIT
-        : swdv::scheduler_sync_v2::SLEEP_NORMAL);
+        ? swdv::scheduler_sync_v3::SLEEP_INHIBIT
+        : swdv::scheduler_sync_v3::SLEEP_NORMAL);
     proto->set_wake_lead_time_s(wake_lead_time_s);
 
     // Metadata
@@ -406,7 +410,7 @@ void Job::ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const {
     proto->set_updated_at_ms(TimePointToMs(updated_at));
 }
 
-std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord& proto) {
+std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v3::JobRecord& proto) {
     auto job = std::make_unique<Job>();
 
     job->id = proto.job_id();
@@ -442,19 +446,19 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
 
     // Execution state (map sync status to scheduler status)
     switch (proto.status()) {
-        case swdv::scheduler_sync_v2::JOB_STATUS_PENDING:
+        case swdv::scheduler_sync_v3::JOB_STATUS_PENDING:
             job->status = swdv::scheduler_types::JOB_STATUS_PENDING;
             break;
-        case swdv::scheduler_sync_v2::JOB_STATUS_RUNNING:
+        case swdv::scheduler_sync_v3::JOB_STATUS_RUNNING:
             job->status = swdv::scheduler_types::JOB_STATUS_RUNNING;
             break;
-        case swdv::scheduler_sync_v2::JOB_STATUS_COMPLETED:
+        case swdv::scheduler_sync_v3::JOB_STATUS_COMPLETED:
             job->status = swdv::scheduler_types::JOB_STATUS_COMPLETED;
             break;
-        case swdv::scheduler_sync_v2::JOB_STATUS_FAILED:
+        case swdv::scheduler_sync_v3::JOB_STATUS_FAILED:
             job->status = swdv::scheduler_types::JOB_STATUS_FAILED;
             break;
-        case swdv::scheduler_sync_v2::JOB_STATUS_CANCELLED:
+        case swdv::scheduler_sync_v3::JOB_STATUS_CANCELLED:
             job->status = swdv::scheduler_types::JOB_STATUS_CANCELLED;
             break;
     }
@@ -467,10 +471,10 @@ std::unique_ptr<Job> Job::FromSyncProto(const swdv::scheduler_sync_v2::JobRecord
     }
 
     // Power management
-    job->wake_policy = (proto.wake_policy() == swdv::scheduler_sync_v2::WAKE_REQUIRED)
+    job->wake_policy = (proto.wake_policy() == swdv::scheduler_sync_v3::WAKE_REQUIRED)
         ? swdv::scheduler_types::WAKE_REQUIRED
         : swdv::scheduler_types::WAKE_NO_WAKE;
-    job->sleep_policy = (proto.sleep_policy() == swdv::scheduler_sync_v2::SLEEP_INHIBIT)
+    job->sleep_policy = (proto.sleep_policy() == swdv::scheduler_sync_v3::SLEEP_INHIBIT)
         ? swdv::scheduler_types::SLEEP_INHIBIT
         : swdv::scheduler_types::SLEEP_NORMAL;
     job->wake_lead_time_s = proto.wake_lead_time_s();
@@ -659,7 +663,7 @@ grpc::Status SchedulerServer::create_job(grpc::ServerContext* context,
         // If version is already set (from sync bridge), keep it
         if (job->version.cloud_seq == 0 && job->version.vehicle_seq == 0) {
             job->version.vehicle_seq = 1;  // New local job
-            job->authority = swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
+            job->authority = swdv::scheduler_sync_v3::AUTHORITY_VEHICLE;
         }
 
         // Calculate next run time if recurring
@@ -756,13 +760,7 @@ grpc::Status SchedulerServer::list_jobs_hash(grpc::ServerContext* context,
             matching_jobs.push_back(ToLibraryJob(*job));
         }
 
-        // Sort by job_id for deterministic hash (required by compute_state_checksum)
-        std::sort(matching_jobs.begin(), matching_jobs.end(),
-                  [](const scheduler::Job& a, const scheduler::Job& b) {
-                      return a.job_id < b.job_id;
-                  });
-
-        // Compute checksum using library function
+        // Compute checksum using library function (sorts internally)
         uint64_t state_hash = scheduler::compute_state_checksum(matching_jobs);
 
         response->set_state_hash(state_hash);
@@ -782,19 +780,26 @@ grpc::Status SchedulerServer::list_jobs_hash(grpc::ServerContext* context,
 grpc::Status SchedulerServer::get_job(grpc::ServerContext* context,
                                       const swdv::ifex_scheduler::get_job_request* request,
                                       swdv::ifex_scheduler::get_job_response* response) {
-    LOG(INFO) << "GET JOB REQUEST: " << request->job_id();
+    VLOG(1) << "GET JOB REQUEST: " << request->job_id()
+            << " include_deleted=" << request->include_deleted();
 
     try {
         std::lock_guard<std::mutex> lock(jobs_mutex_);
 
         auto it = jobs_.find(request->job_id());
-        if (it != jobs_.end() && !it->second->deleted) {
-            // Job exists and is not a tombstone
-            auto* proto_job = response->mutable_job();
-            it->second->ToProto(proto_job);
-            response->set_success(true);
+        if (it != jobs_.end()) {
+            // Check if job is deleted and caller doesn't want tombstones
+            if (it->second->deleted && !request->include_deleted()) {
+                response->set_success(false);
+                response->set_message("Job not found");
+            } else {
+                // Return job (including tombstones if include_deleted=true)
+                auto* proto_job = response->mutable_job();
+                it->second->ToProto(proto_job);
+                response->set_success(true);
+            }
         } else {
-            // Job not found or is a tombstone (deleted)
+            // Job not found
             response->set_success(false);
             response->set_message("Job not found");
         }
@@ -861,7 +866,7 @@ grpc::Status SchedulerServer::update_job(grpc::ServerContext* context,
             if (updates.cloud_seq() > 0 || updates.vehicle_seq() > 0) {
                 job->version.cloud_seq = updates.cloud_seq();
                 job->version.vehicle_seq = updates.vehicle_seq();
-                job->authority = static_cast<swdv::scheduler_sync_v2::JobAuthority>(updates.authority());
+                job->authority = static_cast<swdv::scheduler_sync_v3::JobAuthority>(updates.authority());
             }
 
             // Handle soft delete from sync bridge (tombstone)
@@ -984,9 +989,11 @@ grpc::Status SchedulerServer::pause_job(grpc::ServerContext* context,
 
             job->paused = true;
             job->updated_at = std::chrono::system_clock::now();
+            job->version.vehicle_seq++;  // Increment version for sync
             did_pause = true;
 
-            LOG(INFO) << "Paused job " << request->job_id();
+            LOG(INFO) << "Paused job " << request->job_id()
+                      << " (v={" << job->version.cloud_seq << "," << job->version.vehicle_seq << "})";
         }
 
         // Persist immediately
@@ -1034,9 +1041,11 @@ grpc::Status SchedulerServer::resume_job(grpc::ServerContext* context,
 
             job->paused = false;
             job->updated_at = std::chrono::system_clock::now();
+            job->version.vehicle_seq++;  // Increment version for sync
             did_resume = true;
 
-            LOG(INFO) << "Resumed job " << request->job_id();
+            LOG(INFO) << "Resumed job " << request->job_id()
+                      << " (v={" << job->version.cloud_seq << "," << job->version.vehicle_seq << "})";
         }
 
         // Persist immediately
@@ -1283,12 +1292,12 @@ void SchedulerServer::ExecuteJob(Job* job) {
                 }
             } else {
                 // One-time job completed: create tombstone for sync protocol
-                // Per scheduler-sync-protocol-v2.md section 4.3:
+                // Per scheduler-sync-protocol-v3.md section 4.3:
                 // "Tombstones are JobRecord{deleted=true} with version vectors"
                 job->deleted = true;
                 job->deleted_at = std::chrono::system_clock::now();
                 job->version.vehicle_seq++;  // Increment vehicle version (vehicle-side change)
-                job->needs_sync = true;
+                // Note: is_dirty() now returns true since version != remote_version
                 LOG(INFO) << "One-time job " << job->id << " completed, created tombstone (v={"
                           << job->version.cloud_seq << "," << job->version.vehicle_seq << "})";
             }
@@ -1583,6 +1592,47 @@ grpc::Status SchedulerServer::list_executions_hash(
         LOG(ERROR) << "Failed to compute executions hash: " << e.what();
         response->set_state_hash(0);
         response->set_execution_count(0);
+        return grpc::Status::OK;
+    }
+}
+
+// =============================================================================
+// Sync Protocol: Set Remote Version
+// =============================================================================
+
+grpc::Status SchedulerServer::set_job_remote_version(
+    grpc::ServerContext* context,
+    const swdv::ifex_scheduler::set_job_remote_version_request* request,
+    swdv::ifex_scheduler::set_job_remote_version_response* response) {
+
+    VLOG(1) << "SET_JOB_REMOTE_VERSION: job_id=" << request->job_id()
+            << " version={" << request->cloud_seq() << "," << request->vehicle_seq() << "}";
+
+    try {
+        std::lock_guard<std::mutex> lock(jobs_mutex_);
+
+        auto it = jobs_.find(request->job_id());
+        if (it == jobs_.end()) {
+            response->set_success(false);
+            response->set_message("Job not found: " + request->job_id());
+            return grpc::Status::OK;
+        }
+
+        // Update the remote_version to track what cloud has
+        it->second->remote_version.cloud_seq = request->cloud_seq();
+        it->second->remote_version.vehicle_seq = request->vehicle_seq();
+
+        VLOG(1) << "Job " << request->job_id() << " remote_version set to {"
+                << request->cloud_seq() << "," << request->vehicle_seq() << "}"
+                << " is_dirty=" << it->second->is_dirty();
+
+        response->set_success(true);
+        return grpc::Status::OK;
+
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to set job remote version: " << e.what();
+        response->set_success(false);
+        response->set_message(e.what());
         return grpc::Status::OK;
     }
 }

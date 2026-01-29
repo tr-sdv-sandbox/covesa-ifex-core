@@ -143,7 +143,7 @@ TEST(SyncEngineTest, ConflictCloudAuthorityCloudWins) {
     auto result = SyncEngine::process_remote(remote, local, JobAuthority::CLOUD, true);
 
     EXPECT_EQ(result.action, SyncResult::CONFLICT_RESOLVED);
-    EXPECT_EQ(result.winner, "cloud");
+    EXPECT_EQ(result.winner, JobAuthority::CLOUD);
 }
 
 TEST(SyncEngineTest, ConflictVehicleAuthorityVehicleWins) {
@@ -154,7 +154,7 @@ TEST(SyncEngineTest, ConflictVehicleAuthorityVehicleWins) {
     auto result = SyncEngine::process_remote(remote, local, JobAuthority::VEHICLE, false);
 
     EXPECT_EQ(result.action, SyncResult::CONFLICT_RESOLVED);
-    EXPECT_EQ(result.winner, "vehicle");
+    EXPECT_EQ(result.winner, JobAuthority::VEHICLE);
 }
 
 TEST(SyncEngineTest, PrepareForLocalChange) {

@@ -18,7 +18,7 @@
 #include "scheduler-service.grpc.pb.h"
 #include "scheduler-types.pb.h"
 #include "dispatcher-service.grpc.pb.h"
-#include "scheduler-sync-v2.pb.h"
+#include "scheduler-sync-v3.pb.h"
 #include <ifex/discovery.hpp>
 #include "version_vector.hpp"
 
@@ -58,16 +58,17 @@ struct Job {
     // User intent: paused jobs should not be scheduled
     bool paused = false;
 
-    // --- Sync Protocol v2 fields ---
-    // Version vector for conflict detection (see docs/scheduler-sync-protocol-v2.md)
-    sync::VersionVector version;
+    // --- Sync Protocol v3.2 fields ---
+    // Version vector for conflict detection (see reference-specs/protocols/scheduler-sync-protocol-v3.md)
+    sync::VersionVector version;         // My current version (local_version)
+    sync::VersionVector remote_version;  // Last known version that remote has confirmed
 
     // Who created this job - determines conflict winner (immutable after creation)
-    swdv::scheduler_sync_v2::JobAuthority authority =
-        swdv::scheduler_sync_v2::AUTHORITY_VEHICLE;
+    swdv::scheduler_sync_v3::JobAuthority authority =
+        swdv::scheduler_sync_v3::AUTHORITY_VEHICLE;
 
-    // Local tracking: job needs to be synced
-    bool needs_sync = false;
+    // Derived dirty flag: true if local version differs from known remote version
+    bool is_dirty() const { return version != remote_version; }
 
     // Soft delete flag (tombstone for sync)
     bool deleted = false;
@@ -76,24 +77,24 @@ struct Job {
     // Convert to protobuf message
     void ToProto(swdv::scheduler_types::job_t* proto) const;
 
-    // Convert to sync v2 JobRecord
-    void ToSyncProto(swdv::scheduler_sync_v2::JobRecord* proto) const;
+    // Convert to sync v3 JobRecord
+    void ToSyncProto(swdv::scheduler_sync_v3::JobRecord* proto) const;
 
     // Create from protobuf message
     static std::unique_ptr<Job> FromProto(const swdv::ifex_scheduler::job_create_t& proto);
 
-    // Create from sync v2 JobRecord (for receiving from cloud)
-    static std::unique_ptr<Job> FromSyncProto(const swdv::scheduler_sync_v2::JobRecord& proto);
+    // Create from sync v3 JobRecord (for receiving from cloud)
+    static std::unique_ptr<Job> FromSyncProto(const swdv::scheduler_sync_v3::JobRecord& proto);
 
     // JSON serialization for persistence
     json ToJson() const;
     static std::unique_ptr<Job> FromJson(const json& j);
 
     // Increment version for local change (call before any modification)
+    // This automatically makes is_dirty() return true since version != remote_version
     void IncrementVersion() {
         version.increment_vehicle();
         updated_at = std::chrono::system_clock::now();
-        needs_sync = true;
     }
 };
 
@@ -107,7 +108,8 @@ class SchedulerServer final : public swdv::ifex_scheduler::create_job_service::S
                               public swdv::ifex_scheduler::resume_job_service::Service,
                               public swdv::ifex_scheduler::trigger_job_service::Service,
                               public swdv::ifex_scheduler::list_executions_service::Service,
-                              public swdv::ifex_scheduler::list_executions_hash_service::Service {
+                              public swdv::ifex_scheduler::list_executions_hash_service::Service,
+                              public swdv::ifex_scheduler::set_job_remote_version_service::Service {
 public:
     struct Config {
         std::string discovery_endpoint;
@@ -163,6 +165,11 @@ public:
     grpc::Status list_executions_hash(grpc::ServerContext* context,
                                      const swdv::ifex_scheduler::list_executions_hash_request* request,
                                      swdv::ifex_scheduler::list_executions_hash_response* response) override;
+
+    // Sync protocol: update remote_version for dirty tracking
+    grpc::Status set_job_remote_version(grpc::ServerContext* context,
+                                        const swdv::ifex_scheduler::set_job_remote_version_request* request,
+                                        swdv::ifex_scheduler::set_job_remote_version_response* response) override;
 
     // Service lifecycle
     void StartExecutor();

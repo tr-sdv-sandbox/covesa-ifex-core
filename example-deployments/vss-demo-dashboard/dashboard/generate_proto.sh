@@ -34,6 +34,7 @@ echo "Copying proto files..."
 mkdir -p "$PROTOS_DIR/common"
 cp "$IFEX_PROTO_DIR/cloud/cloud-backend-transport-service.proto" "$PROTOS_DIR/"
 cp "$IFEX_PROTO_DIR/cloud/cloud-scheduler-service.proto" "$PROTOS_DIR/"
+cp "$IFEX_PROTO_DIR/cloud/cloud-scheduler-sync-bridge.proto" "$PROTOS_DIR/"
 cp "$IFEX_PROTO_DIR/cloud/cloud-discovery-service.proto" "$PROTOS_DIR/"
 cp "$IFEX_PROTO_DIR/common/scheduler-types.proto" "$PROTOS_DIR/common/"
 cp "$INTERNAL_PROTO_DIR/dispatcher-rpc-envelope.proto" "$PROTOS_DIR/"
@@ -60,6 +61,12 @@ python3 -m grpc_tools.protoc \
     --python_out="$OUTPUT_DIR" \
     --grpc_python_out="$OUTPUT_DIR" \
     "$PROTOS_DIR/cloud-scheduler-service.proto"
+
+python3 -m grpc_tools.protoc \
+    -I"$PROTOS_DIR" \
+    --python_out="$OUTPUT_DIR" \
+    --grpc_python_out="$OUTPUT_DIR" \
+    "$PROTOS_DIR/cloud-scheduler-sync-bridge.proto"
 
 python3 -m grpc_tools.protoc \
     -I"$PROTOS_DIR" \

@@ -128,12 +128,20 @@ namespaces:
     - name: authority
       datatype: job_authority_t
       description: Who wins conflicts (immutable after creation)
-    - name: cloud_seq
-      datatype: uint64
-      description: Cloud sequence number (version vector component)
-    - name: vehicle_seq
-      datatype: uint64
-      description: Vehicle sequence number (version vector component)
+    - name: local_version
+      datatype: job_version_t
+      description: 'My current version of this job. Contains cloud_seq and vehicle_seq.
+        Transmitted in sync messages.
+
+        '
+    - name: remote_version
+      datatype: job_version_t
+      description: 'Last known remote version (what I believe remote has confirmed).
+        Local tracking only - used to compute is_dirty(). NOT transmitted in sync
+        messages.
+
+        '
+      mandatory: false
     - name: deleted
       datatype: boolean
       description: Soft delete tombstone flag
@@ -563,6 +571,11 @@ namespaces:
     - name: job_id
       datatype: string
       mandatory: true
+    - name: include_deleted
+      datatype: boolean
+      description: If true, return job even if soft-deleted (tombstone). Default false.
+      mandatory: false
+      default: false
     output:
     - name: result
       datatype: get_job_response_t
@@ -739,6 +752,28 @@ namespaces:
     output:
     - name: pending_vehicles
       datatype: vehicle_sync_state_t[]
+  - name: set_job_remote_version
+    description: 'Update remote_version for a job. Called by sync bridge after receiving
+      a job from vehicle to record what version vehicle has. This affects sync_state:
+      job is synced when local_version == remote_version.
+
+      '
+    input:
+    - name: vehicle_id
+      datatype: string
+      mandatory: true
+    - name: job_id
+      datatype: string
+      mandatory: true
+    - name: cloud_seq
+      datatype: uint64
+      mandatory: true
+    - name: vehicle_seq
+      datatype: uint64
+      mandatory: true
+    output:
+    - name: success
+      datatype: boolean
 )IFEX";
 
 }  // namespace ifex::schema

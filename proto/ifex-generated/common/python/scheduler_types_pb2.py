@@ -13,27 +13,27 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15scheduler-types.proto\x12\x14swdv.scheduler_types\"7\n\rjob_version_t\x12\x11\n\tcloud_seq\x18\x01 \x01(\x04\x12\x13\n\x0bvehicle_seq\x18\x02 \x01(\x04\"\xb2\x05\n\x05job_t\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x38\n\tauthority\x18\x02 \x01(\x0e\x32%.swdv.scheduler_types.job_authority_t\x12\x11\n\tcloud_seq\x18\x03 \x01(\x04\x12\x13\n\x0bvehicle_seq\x18\x04 \x01(\x04\x12\x0f\n\x07\x64\x65leted\x18\x05 \x01(\x08\x12\r\n\x05title\x18\x06 \x01(\t\x12\x0f\n\x07service\x18\x07 \x01(\t\x12\x0e\n\x06method\x18\x08 \x01(\t\x12\x17\n\x0fparameters_json\x18\t \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\n \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x0b \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x0c \x01(\x04\x12\x0e\n\x06paused\x18\r \x01(\x08\x12\x38\n\x0bwake_policy\x18\x0e \x01(\x0e\x32#.swdv.scheduler_types.wake_policy_t\x12:\n\x0csleep_policy\x18\x0f \x01(\x0e\x32$.swdv.scheduler_types.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\x10 \x01(\r\x12\x32\n\x06status\x18\x11 \x01(\x0e\x32\".swdv.scheduler_types.job_status_t\x12\x18\n\x10next_run_time_ms\x18\x12 \x01(\x04\x12\x18\n\x10last_executed_ms\x18\x13 \x01(\x04\x12\x12\n\nvehicle_id\x18\x14 \x01(\t\x12\x15\n\rcreated_at_ms\x18\x15 \x01(\x04\x12\x15\n\rupdated_at_ms\x18\x16 \x01(\x04\x12\x12\n\ncreated_by\x18\x17 \x01(\t\x12\x36\n\nsync_state\x18\x18 \x01(\x0e\x32\".swdv.scheduler_types.sync_state_t\"\xc7\x01\n\x12\x65xecution_record_t\x12\x14\n\x0c\x65xecution_id\x18\x01 \x01(\t\x12\x0e\n\x06job_id\x18\x02 \x01(\t\x12\x16\n\x0e\x65xecuted_at_ms\x18\x03 \x01(\x04\x12\x13\n\x0b\x64uration_ms\x18\x04 \x01(\r\x12\x32\n\x06status\x18\x05 \x01(\x0e\x32\".swdv.scheduler_types.job_status_t\x12\x13\n\x0bresult_json\x18\x06 \x01(\t\x12\x15\n\rerror_message\x18\x07 \x01(\t*=\n\x0fjob_authority_t\x12\x13\n\x0f\x41UTHORITY_CLOUD\x10\x00\x12\x15\n\x11\x41UTHORITY_VEHICLE\x10\x01*\x89\x01\n\x0cjob_status_t\x12\x16\n\x12JOB_STATUS_PENDING\x10\x00\x12\x16\n\x12JOB_STATUS_RUNNING\x10\x01\x12\x18\n\x14JOB_STATUS_COMPLETED\x10\x02\x12\x15\n\x11JOB_STATUS_FAILED\x10\x03\x12\x18\n\x14JOB_STATUS_CANCELLED\x10\x04*1\n\x0csync_state_t\x12\x10\n\x0cSYNC_PENDING\x10\x00\x12\x0f\n\x0bSYNC_SYNCED\x10\x01*4\n\rwake_policy_t\x12\x10\n\x0cWAKE_NO_WAKE\x10\x00\x12\x11\n\rWAKE_REQUIRED\x10\x01*5\n\x0esleep_policy_t\x12\x10\n\x0cSLEEP_NORMAL\x10\x00\x12\x11\n\rSLEEP_INHIBIT\x10\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15scheduler-types.proto\x12\x14swdv.scheduler_types\"7\n\rjob_version_t\x12\x11\n\tcloud_seq\x18\x01 \x01(\x04\x12\x13\n\x0bvehicle_seq\x18\x02 \x01(\x04\"\x83\x06\n\x05job_t\x12\x0e\n\x06job_id\x18\x01 \x01(\t\x12\x38\n\tauthority\x18\x02 \x01(\x0e\x32%.swdv.scheduler_types.job_authority_t\x12:\n\rlocal_version\x18\x03 \x01(\x0b\x32#.swdv.scheduler_types.job_version_t\x12;\n\x0eremote_version\x18\x04 \x01(\x0b\x32#.swdv.scheduler_types.job_version_t\x12\x0f\n\x07\x64\x65leted\x18\x05 \x01(\x08\x12\r\n\x05title\x18\x06 \x01(\t\x12\x0f\n\x07service\x18\x07 \x01(\t\x12\x0e\n\x06method\x18\x08 \x01(\t\x12\x17\n\x0fparameters_json\x18\t \x01(\t\x12\x19\n\x11scheduled_time_ms\x18\n \x01(\x04\x12\x17\n\x0frecurrence_rule\x18\x0b \x01(\t\x12\x13\n\x0b\x65nd_time_ms\x18\x0c \x01(\x04\x12\x0e\n\x06paused\x18\r \x01(\x08\x12\x38\n\x0bwake_policy\x18\x0e \x01(\x0e\x32#.swdv.scheduler_types.wake_policy_t\x12:\n\x0csleep_policy\x18\x0f \x01(\x0e\x32$.swdv.scheduler_types.sleep_policy_t\x12\x18\n\x10wake_lead_time_s\x18\x10 \x01(\r\x12\x32\n\x06status\x18\x11 \x01(\x0e\x32\".swdv.scheduler_types.job_status_t\x12\x18\n\x10next_run_time_ms\x18\x12 \x01(\x04\x12\x18\n\x10last_executed_ms\x18\x13 \x01(\x04\x12\x12\n\nvehicle_id\x18\x14 \x01(\t\x12\x15\n\rcreated_at_ms\x18\x15 \x01(\x04\x12\x15\n\rupdated_at_ms\x18\x16 \x01(\x04\x12\x12\n\ncreated_by\x18\x17 \x01(\t\x12\x36\n\nsync_state\x18\x18 \x01(\x0e\x32\".swdv.scheduler_types.sync_state_t\"\xc7\x01\n\x12\x65xecution_record_t\x12\x14\n\x0c\x65xecution_id\x18\x01 \x01(\t\x12\x0e\n\x06job_id\x18\x02 \x01(\t\x12\x16\n\x0e\x65xecuted_at_ms\x18\x03 \x01(\x04\x12\x13\n\x0b\x64uration_ms\x18\x04 \x01(\r\x12\x32\n\x06status\x18\x05 \x01(\x0e\x32\".swdv.scheduler_types.job_status_t\x12\x13\n\x0bresult_json\x18\x06 \x01(\t\x12\x15\n\rerror_message\x18\x07 \x01(\t*=\n\x0fjob_authority_t\x12\x13\n\x0f\x41UTHORITY_CLOUD\x10\x00\x12\x15\n\x11\x41UTHORITY_VEHICLE\x10\x01*\x89\x01\n\x0cjob_status_t\x12\x16\n\x12JOB_STATUS_PENDING\x10\x00\x12\x16\n\x12JOB_STATUS_RUNNING\x10\x01\x12\x18\n\x14JOB_STATUS_COMPLETED\x10\x02\x12\x15\n\x11JOB_STATUS_FAILED\x10\x03\x12\x18\n\x14JOB_STATUS_CANCELLED\x10\x04*1\n\x0csync_state_t\x12\x10\n\x0cSYNC_PENDING\x10\x00\x12\x0f\n\x0bSYNC_SYNCED\x10\x01*4\n\rwake_policy_t\x12\x10\n\x0cWAKE_NO_WAKE\x10\x00\x12\x11\n\rWAKE_REQUIRED\x10\x01*5\n\x0esleep_policy_t\x12\x10\n\x0cSLEEP_NORMAL\x10\x00\x12\x11\n\rSLEEP_INHIBIT\x10\x01\x62\x06proto3')
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'scheduler_types_pb2', globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
-  _JOB_AUTHORITY_T._serialized_start=999
-  _JOB_AUTHORITY_T._serialized_end=1060
-  _JOB_STATUS_T._serialized_start=1063
-  _JOB_STATUS_T._serialized_end=1200
-  _SYNC_STATE_T._serialized_start=1202
-  _SYNC_STATE_T._serialized_end=1251
-  _WAKE_POLICY_T._serialized_start=1253
-  _WAKE_POLICY_T._serialized_end=1305
-  _SLEEP_POLICY_T._serialized_start=1307
-  _SLEEP_POLICY_T._serialized_end=1360
+  _JOB_AUTHORITY_T._serialized_start=1080
+  _JOB_AUTHORITY_T._serialized_end=1141
+  _JOB_STATUS_T._serialized_start=1144
+  _JOB_STATUS_T._serialized_end=1281
+  _SYNC_STATE_T._serialized_start=1283
+  _SYNC_STATE_T._serialized_end=1332
+  _WAKE_POLICY_T._serialized_start=1334
+  _WAKE_POLICY_T._serialized_end=1386
+  _SLEEP_POLICY_T._serialized_start=1388
+  _SLEEP_POLICY_T._serialized_end=1441
   _JOB_VERSION_T._serialized_start=47
   _JOB_VERSION_T._serialized_end=102
   _JOB_T._serialized_start=105
-  _JOB_T._serialized_end=795
-  _EXECUTION_RECORD_T._serialized_start=798
-  _EXECUTION_RECORD_T._serialized_end=997
+  _JOB_T._serialized_end=876
+  _EXECUTION_RECORD_T._serialized_start=879
+  _EXECUTION_RECORD_T._serialized_end=1078
 # @@protoc_insertion_point(module_scope)
