@@ -2,7 +2,7 @@
 
 **Status**: Proposed
 **Date**: 2026-02-13
-**Authors**: IFEX Platform Team
+**Authors**: svante karlsson & håkan nilson
 
 ---
 
