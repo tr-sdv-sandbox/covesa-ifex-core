@@ -1,0 +1,388 @@
+---
+name: cloud_backend_transport_service
+major_version: 1
+minor_version: 0
+description: >
+  Cloud-side backend transport service — the counterpart to the vehicle-side
+  backend_transport_service. Provides fleet-scale message routing between
+  cloud services and vehicles.
+
+  This spec defines the gRPC API that cloud services consume. In production,
+  this service internally produces to and consumes from Kafka — it is a typed
+  facade, not an independent message store. Cloud services that need higher
+  throughput may consume/produce Kafka directly using the same message format
+  (see kafka-message-format.md).
+
+  The MQTT broker is NOT accessible to cloud services. Only the Kafka-MQTT
+  bridge component interacts with MQTT. This spec does not define the bridge.
+
+  Message semantics (sequences, acks, persistence, queue feedback) are identical
+  whether accessed via this gRPC API or via Kafka directly. The spec defines
+  semantics once; access path is an implementation choice.
+
+  Partitioning enables horizontal scaling. Each instance is bound to a partition
+  and only handles vehicles assigned to it. Simple deployments use partition_id=0,
+  total_partitions=1.
+
+  Reference implementations (C++, Rust) back this API with direct MQTT for
+  E2E testing. They do not use Kafka.
+
+namespaces:
+  - name: cloud_transport
+    description: Cloud-side backend transport operations
+
+    enumerations:
+      - name: persistence_t
+        datatype: uint8
+        description: >
+          Message persistence level. All levels preserve FIFO ordering within
+          a (vehicle_id, content_id) pair.
+        options:
+          - name: BEST_EFFORT
+            value: 0
+            description: >
+              Queued for ordering, but pruned if stale. No retry on send failure.
+          - name: VOLATILE
+            value: 1
+            description: >
+              Retry until delivered. Kept in memory, lost on shutdown.
+          - name: DURABLE
+            value: 2
+            description: >
+              Retry until delivered. Persisted on graceful shutdown.
+
+      - name: publish_status_t
+        datatype: uint8
+        description: Result of send operation
+        options:
+          - name: OK
+            value: 0
+            description: Message accepted into queue
+          - name: QUEUE_FULL
+            value: 1
+            description: Queue at capacity, message rejected
+          - name: MESSAGE_TOO_LONG
+            value: 2
+            description: Payload exceeds maximum size
+          - name: INVALID_REQUEST
+            value: 3
+            description: Invalid vehicle_id or parameters
+          - name: VEHICLE_UNKNOWN
+            value: 4
+            description: Vehicle has never been seen
+          - name: WRONG_PARTITION
+            value: 5
+            description: Vehicle belongs to a different partition
+
+      - name: queue_level_t
+        datatype: uint8
+        description: Queue fill level for adaptive throttling
+        options:
+          - name: EMPTY
+            value: 0
+          - name: LOW
+            value: 1
+          - name: NORMAL
+            value: 2
+          - name: HIGH
+            value: 3
+            description: Consider throttling
+          - name: CRITICAL
+            value: 4
+            description: Throttle non-essential
+          - name: FULL
+            value: 5
+
+      - name: vehicle_status_t
+        datatype: uint8
+        description: Vehicle connection status
+        options:
+          - name: UNKNOWN
+            value: 0
+            description: Vehicle has never been seen
+          - name: ONLINE
+            value: 1
+            description: Vehicle is connected
+          - name: OFFLINE
+            value: 2
+            description: Vehicle disconnected (LWT or timeout)
+
+    structs:
+      - name: transport_metadata_t
+        description: >
+          Optional transport-provided metadata. All fields optional.
+          New fields can be added without breaking existing consumers.
+        members:
+          - name: originator
+            datatype: string
+            description: Source identifier (e.g., backend_transport, mock_bridge)
+            mandatory: false
+          - name: message_id
+            datatype: uint64
+            description: Transport-layer message ID
+            mandatory: false
+          - name: received_at_ms
+            datatype: int64
+            description: Timestamp when message was received by ingestion layer
+            mandatory: false
+          - name: source_topic
+            datatype: string
+            description: Original MQTT/Kafka topic (for debugging)
+            mandatory: false
+
+      - name: send_request_t
+        description: Request to send message to a vehicle
+        members:
+          - name: vehicle_id
+            datatype: string
+            description: Target vehicle identifier
+          - name: content_id
+            datatype: uint32
+            description: Content ID for the message
+          - name: payload
+            datatype: bytes
+            description: Binary payload (opaque — caller handles encoding)
+          - name: persistence
+            datatype: persistence_t
+            default: 0
+
+      - name: send_response_t
+        description: Result of send operation (returned immediately, non-blocking)
+        members:
+          - name: sequence
+            datatype: uint64
+            description: >
+              Per-(vehicle_id, content_id) sequence number. Monotonically increasing.
+              Use to correlate with on_ack events; gaps indicate failures.
+          - name: status
+            datatype: publish_status_t
+          - name: queue_level
+            datatype: queue_level_t
+            description: Current queue level for adaptive throttling
+
+      - name: vehicle_message_t
+        description: >
+          Message received from a vehicle. This is the same structure whether
+          received via gRPC on_vehicle_message or consumed directly from Kafka.
+        members:
+          - name: vehicle_id
+            datatype: string
+            description: Source vehicle identifier
+          - name: payload
+            datatype: bytes
+            description: Binary payload
+          - name: sequence
+            datatype: uint64
+            description: Vehicle's outbound sequence number (for gap detection)
+          - name: timestamp_ms
+            datatype: int64
+            description: Message timestamp (ms since epoch)
+          - name: metadata
+            datatype: transport_metadata_t
+            description: Optional transport-provided metadata
+            mandatory: false
+
+      - name: delivery_ack_t
+        description: Delivery confirmation for a message sent to vehicle
+        members:
+          - name: vehicle_id
+            datatype: string
+            description: Vehicle that received the message
+          - name: sequence
+            datatype: uint64
+            description: Sequence number that was delivered
+
+      - name: vehicle_status_event_t
+        description: Vehicle online/offline status change
+        members:
+          - name: vehicle_id
+            datatype: string
+          - name: status
+            datatype: vehicle_status_t
+          - name: timestamp_ms
+            datatype: int64
+          - name: last_seen_ms
+            datatype: int64
+            description: Last message timestamp from this vehicle
+            mandatory: false
+
+      - name: queue_status_t
+        description: Per-vehicle outbound queue status
+        members:
+          - name: vehicle_id
+            datatype: string
+            description: Vehicle this queue is for
+          - name: level
+            datatype: queue_level_t
+          - name: queue_size
+            datatype: uint32
+          - name: queue_capacity
+            datatype: uint32
+
+      - name: channel_info_t
+        description: Channel binding info for this instance
+        members:
+          - name: partition_id
+            datatype: uint32
+            description: Partition this instance is bound to (0 for non-partitioned)
+          - name: total_partitions
+            datatype: uint32
+            description: Total number of partitions (1 for non-partitioned)
+
+      - name: transport_stats_t
+        description: Transport statistics (for this partition)
+        members:
+          - name: messages_sent
+            datatype: uint64
+          - name: messages_failed
+            datatype: uint64
+          - name: bytes_sent
+            datatype: uint64
+          - name: messages_received
+            datatype: uint64
+          - name: bytes_received
+            datatype: uint64
+          - name: vehicles_online
+            datatype: uint32
+            description: Number of currently online vehicles in this partition
+          - name: vehicles_total
+            datatype: uint32
+            description: Total known vehicles in this partition
+
+      - name: vehicle_info_t
+        description: Information about a known vehicle
+        members:
+          - name: vehicle_id
+            datatype: string
+          - name: status
+            datatype: vehicle_status_t
+          - name: last_seen_ms
+            datatype: int64
+            description: Last message timestamp from this vehicle
+
+      - name: list_vehicles_response_t
+        description: List of known vehicles
+        members:
+          - name: vehicles
+            datatype: vehicle_info_t[]
+            description: Array of vehicle info
+
+      - name: message_subscription_filter_t
+        description: >
+          Filter for on_vehicle_message subscription. Specifies which content_id
+          to receive messages for. The underlying transport subscription (MQTT
+          in reference impl, Kafka consumer group in production) is created on
+          demand when the first subscriber connects for a content_id.
+        members:
+          - name: content_id
+            datatype: uint32
+            description: Content ID to subscribe to
+
+    methods:
+      - name: send_to_vehicle
+        description: >
+          Queue message for delivery to a specific vehicle. Non-blocking.
+          Vehicle must belong to this partition (returns WRONG_PARTITION otherwise).
+          Messages are queued if vehicle is offline (per persistence level).
+          Use on_ack to track delivery confirmation.
+
+          In production, this produces to a Kafka topic. The Kafka-MQTT bridge
+          consumes and forwards to the vehicle via MQTT. In the reference
+          implementation, this publishes directly to MQTT.
+        input:
+          - name: request
+            datatype: send_request_t
+            mandatory: true
+        output:
+          - name: result
+            datatype: send_response_t
+
+      - name: get_vehicle_status
+        description: Query current status of a vehicle
+        input:
+          - name: vehicle_id
+            datatype: string
+            mandatory: true
+        output:
+          - name: status
+            datatype: vehicle_status_t
+          - name: last_seen_ms
+            datatype: int64
+
+      - name: get_channel_info
+        description: >
+          Get channel binding info for this instance.
+          Returns partition assignment.
+        output:
+          - name: info
+            datatype: channel_info_t
+
+      - name: get_queue_status
+        description: Get outbound queue status for a specific vehicle
+        input:
+          - name: vehicle_id
+            datatype: string
+            mandatory: true
+        output:
+          - name: status
+            datatype: queue_status_t
+
+      - name: get_stats
+        description: Get transport statistics for this partition
+        output:
+          - name: stats
+            datatype: transport_stats_t
+
+      - name: list_vehicles
+        description: List all known vehicles with their status (this partition only)
+        output:
+          - name: result
+            datatype: list_vehicles_response_t
+
+      - name: healthy
+        description: Check if transport is ready
+        output:
+          - name: is_healthy
+            datatype: boolean
+
+    events:
+      - name: on_vehicle_message
+        description: >
+          Message received from a vehicle. Subscriber specifies content_id filter;
+          all messages on this stream are for that content_id.
+          Only delivers messages for vehicles in this partition.
+          Sequence numbers are per-vehicle; gaps indicate dropped messages.
+
+          The message structure (vehicle_message_t) is identical to what a direct
+          Kafka consumer would receive on the v2c.{content_id} topic.
+        input:
+          - name: filter
+            datatype: message_subscription_filter_t
+            description: Content ID to subscribe to
+          - name: message
+            datatype: vehicle_message_t
+
+      - name: on_ack
+        description: >
+          Delivery confirmation for messages sent to vehicles.
+          Only successful deliveries generate acks.
+          Gaps in per-vehicle sequence numbers indicate failed deliveries.
+        input:
+          - name: ack
+            datatype: delivery_ack_t
+
+      - name: on_vehicle_status
+        description: >
+          Vehicle online/offline status change.
+          Triggered by MQTT LWT (reference impl) or Kafka status topic (production).
+          Only reports vehicles in this partition.
+        input:
+          - name: event
+            datatype: vehicle_status_event_t
+
+      - name: on_queue_status_changed
+        description: >
+          Per-vehicle queue level changed. Subscribe for adaptive throttling.
+        input:
+          - name: status
+            datatype: queue_status_t
