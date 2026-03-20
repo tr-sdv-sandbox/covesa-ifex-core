@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package swdv.cloud_vehicle_sync_envelope;
+
+option cc_enable_arenas = true;
+
+message VersionVector {
+    uint64 cloud_seq = 1;
+    uint64 truck_seq = 2;
+}
+
+enum RecordOperation {
+    RECORD_OPERATION_CREATE = 0;
+    RECORD_OPERATION_UPDATE = 1;
+    RECORD_OPERATION_DELETE = 2;
+}
+
+enum ConflictClass {
+    CONFLICT_CLASS_CONCURRENT_UPDATE = 0;
+    CONFLICT_CLASS_NON_OWNER_MUTATION = 1;
+    CONFLICT_CLASS_STALE_REPLAY = 2;
+}
+
+message RecordLocator {
+    bytes record_id = 1;
+    string namespace_name = 2;
+    string origin_node_id = 3;
+}
+
+message CheckpointToken {
+    uint64 sequence_number = 1;
+    RecordLocator last_record = 2;
+    VersionVector last_version = 3;
+}
+
+message RecordEnvelope {
+    RecordLocator locator = 1;
+    VersionVector version_vector = 2;
+    RecordOperation operation = 3;
+    bytes payload = 4;
+    uint32 schema_version = 5;
+    string idempotency_key = 6;
+    string correlation_id = 7;
+    uint64 payload_checksum = 8;
+    uint64 wall_clock_ms = 9;
+    uint64 created_at_ms = 10;
+    uint64 updated_at_ms = 11;
+    uint64 tombstone_at_ms = 12;
+    string tombstone_reason = 13;
+}
+
+message VersionAck {
+    RecordLocator locator = 1;
+    VersionVector version_vector = 2;
+    string correlation_id = 3;
+    string idempotency_key = 4;
+}
+
+message ConflictRecord {
+    RecordLocator locator = 1;
+    VersionVector local_version = 2;
+    VersionVector remote_version = 3;
+    bytes local_payload = 4;
+    bytes remote_payload = 5;
+    ConflictClass conflict_class = 6;
+    uint64 detected_at_ms = 7;
+    string correlation_id = 8;
+}
+
+message SyncExchange {
+    string sender_node_id = 1;
+    string recipient_node_id = 2;
+    repeated RecordEnvelope records = 3;
+    repeated VersionAck acked_records = 4;
+    uint64 state_checksum = 5;
+    CheckpointToken checkpoint = 6;
+    string correlation_id = 7;
+    string idempotency_key = 8;
+}
+
+message CheckpointAdvance {
+    string sender_node_id = 1;
+    string recipient_node_id = 2;
+    repeated VersionAck durable_acks = 3;
+    CheckpointToken durable_checkpoint = 4;
+    uint64 state_checksum = 5;
+    string correlation_id = 6;
+    string idempotency_key = 7;
+}
+
+message GapRecoveryRequest {
+    string sender_node_id = 1;
+    string recipient_node_id = 2;
+    repeated RecordLocator record_ids = 3;
+    repeated RecordLocator requested_records = 4;
+    uint64 local_state_checksum = 5;
+    uint64 remote_state_checksum = 6;
+    string reason = 7;
+    string correlation_id = 8;
+}
+
+message GapRecoveryResponse {
+    string sender_node_id = 1;
+    string recipient_node_id = 2;
+    repeated RecordLocator record_ids = 3;
+    repeated RecordLocator requested_records = 4;
+    uint64 local_state_checksum = 5;
+    uint64 remote_state_checksum = 6;
+    string correlation_id = 7;
+}
+
+message CloudVehicleSyncEnvelope {
+    oneof message {
+        SyncExchange sync_exchange = 1;
+        CheckpointAdvance checkpoint_advance = 2;
+        GapRecoveryRequest gap_recovery_request = 3;
+        GapRecoveryResponse gap_recovery_response = 4;
+    }
+}

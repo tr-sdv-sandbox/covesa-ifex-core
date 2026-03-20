@@ -23,6 +23,9 @@ add_subdirectory(scheduler)
 # Build backend transport service
 add_subdirectory(backend-transport)
 
+# Build sync common components
+add_subdirectory(sync)
+
 # Note: dispatcher-bridge is now under dispatcher/vehicle/rpc-bridge/
 # Note: discovery-sync-bridge is now under discovery/vehicle/sync-bridge/
 # Note: scheduler-sync-bridge is now under scheduler/vehicle/sync-bridge/

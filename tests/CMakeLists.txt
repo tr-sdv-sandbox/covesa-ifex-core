@@ -155,4 +155,55 @@ if(NOT CMAKE_CROSSCOMPILING)
         RESOURCE_LOCK "mqtt_broker;ifex_test_services"
         TIMEOUT 300
     )
+
+    add_executable(ifex-cloud-vehicle-sync-bridge-integration-test
+        integration/test_cloud_vehicle_sync_bridge_integration.cpp
+        integration/test_fixture.cpp
+    )
+
+    target_link_libraries(ifex-cloud-vehicle-sync-bridge-integration-test
+        PRIVATE
+            ifex-sync-core
+            ifex-sync-adapters-database
+            ifex-sync-backend-transport-bridge
+            ifex-backend-transport-server
+            ifex-cloud-backend-transport-server
+            ifex-cloud-backend-transport-client
+            ifex-proto-generated
+            GTest::gtest
+            glog::glog
+            gRPC::grpc++
+            mosquitto
+    )
+
+    target_include_directories(ifex-cloud-vehicle-sync-bridge-integration-test
+        PRIVATE
+            ${CMAKE_BINARY_DIR}/proto
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration
+            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/vehicle/service/include
+            ${CMAKE_SOURCE_DIR}/reference-services/backend-transport/cloud/service/include
+            ${CMAKE_SOURCE_DIR}/reference-services/sync/backend-transport/include
+            ${CMAKE_SOURCE_DIR}/reference-services/sync/adapters/database/include
+            ${CMAKE_SOURCE_DIR}/reference-services/sync/common/include
+    )
+
+    add_test(NAME sync_bridge_reconnect_offline
+             COMMAND ifex-cloud-vehicle-sync-bridge-integration-test
+             --gtest_filter=CloudTruckSyncBridgeIntegrationTest.BridgesStartIndependentlyAndRecoverAfterDisconnect:CloudTruckSyncBridgeIntegrationTest.ReconnectOfflineChangesConvergeBackToQuiescence)
+
+    add_test(NAME sync_bridge_duplicate_delivery_replay_integration
+             COMMAND ifex-cloud-vehicle-sync-bridge-integration-test
+             --gtest_filter=CloudTruckSyncBridgeIntegrationTest.DuplicateDeliveryIsIdempotent:CloudTruckSyncBridgeIntegrationTest.GapRecoveryRequestsAndFetchesMissingRecords)
+
+    set_tests_properties(sync_bridge_reconnect_offline PROPERTIES
+        LABELS "integration;mqtt;sync"
+        RESOURCE_LOCK "mqtt_broker;ifex_test_services"
+        TIMEOUT 300
+    )
+
+    set_tests_properties(sync_bridge_duplicate_delivery_replay_integration PROPERTIES
+        LABELS "integration;mqtt;sync"
+        RESOURCE_LOCK "mqtt_broker;ifex_test_services"
+        TIMEOUT 300
+    )
 endif()
