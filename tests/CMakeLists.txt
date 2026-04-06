@@ -187,23 +187,34 @@ if(NOT CMAKE_CROSSCOMPILING)
             ${CMAKE_SOURCE_DIR}/reference-services/sync/common/include
     )
 
-    add_test(NAME sync_bridge_reconnect_offline
+    add_test(NAME database_sync_e2e
+             COMMAND ifex-cloud-vehicle-sync-bridge-integration-test)
+
+    add_test(NAME stale_ack_database_sync_e2e
              COMMAND ifex-cloud-vehicle-sync-bridge-integration-test
-             --gtest_filter=CloudTruckSyncBridgeIntegrationTest.BridgesStartIndependentlyAndRecoverAfterDisconnect:CloudTruckSyncBridgeIntegrationTest.ReconnectOfflineChangesConvergeBackToQuiescence)
+             --gtest_filter=CloudVehicleSyncBridgeIntegrationTest.StaleAckReplayLeavesCheckpointMonotonicAndIgnored)
 
-    add_test(NAME sync_bridge_duplicate_delivery_replay_integration
+    add_test(NAME malformed_envelope_database_sync_e2e
              COMMAND ifex-cloud-vehicle-sync-bridge-integration-test
-             --gtest_filter=CloudTruckSyncBridgeIntegrationTest.DuplicateDeliveryIsIdempotent:CloudTruckSyncBridgeIntegrationTest.GapRecoveryRequestsAndFetchesMissingRecords)
+             --gtest_filter=CloudVehicleSyncBridgeIntegrationTest.MalformedEnvelopeIsRejectedWithoutStateCorruption)
 
-    set_tests_properties(sync_bridge_reconnect_offline PROPERTIES
-        LABELS "integration;mqtt;sync"
-        RESOURCE_LOCK "mqtt_broker;ifex_test_services"
-        TIMEOUT 300
-    )
+    add_test(NAME gap_recovery_database_sync_e2e
+             COMMAND ifex-cloud-vehicle-sync-bridge-integration-test
+             --gtest_filter=CloudVehicleSyncBridgeIntegrationTest.GapRecoveryRequestsAndFetchesMissingRecords)
 
-    set_tests_properties(sync_bridge_duplicate_delivery_replay_integration PROPERTIES
-        LABELS "integration;mqtt;sync"
-        RESOURCE_LOCK "mqtt_broker;ifex_test_services"
-        TIMEOUT 300
+    add_test(NAME sender_mismatch_database_sync_e2e
+             COMMAND ifex-cloud-vehicle-sync-bridge-integration-test
+             --gtest_filter=CloudVehicleSyncBridgeIntegrationTest.SenderMismatchEnvelopeIsIgnoredBeforeApply)
+
+    set_tests_properties(
+        database_sync_e2e
+        stale_ack_database_sync_e2e
+        malformed_envelope_database_sync_e2e
+        gap_recovery_database_sync_e2e
+        sender_mismatch_database_sync_e2e
+        PROPERTIES
+            LABELS "integration;mqtt;sync;e2e"
+            RESOURCE_LOCK "mqtt_broker;ifex_test_services"
+            TIMEOUT 300
     )
 endif()

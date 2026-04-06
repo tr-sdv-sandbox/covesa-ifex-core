@@ -15,13 +15,24 @@ bool version_ack_equals(const VersionAck& lhs, const VersionAck& rhs) {
            lhs.version_vector == rhs.version_vector;
 }
 
-bool has_ack(const std::vector<VersionAck>& acks, const VersionAck& candidate) {
-    for (const VersionAck& ack : acks) {
-        if (version_ack_equals(ack, candidate)) {
+bool replayed_by_known_ack(const std::vector<VersionAck>& known_acks,
+                           const VersionAck& incoming_ack) {
+    for (const VersionAck& known_ack : known_acks) {
+        if (!locator_equals(known_ack.locator, incoming_ack.locator)) {
+            continue;
+        }
+
+        const CompareResult cmp = compare_versions(known_ack.version_vector,
+                                                   incoming_ack.version_vector);
+        if (cmp == CompareResult::kEqual || cmp == CompareResult::kLocalDominates) {
             return true;
         }
     }
     return false;
+}
+
+bool has_checkpoint_for(const CheckpointToken& checkpoint, const VersionAck& incoming_ack) {
+    return locator_equals(checkpoint.last_record, incoming_ack.locator);
 }
 
 bool is_remote_sender_authorized(RecordOwner owner, const std::string& remote_sender_node_id) {
@@ -192,7 +203,13 @@ AckProcessingResult CloudVehicleSyncCore::process_acks(const std::vector<Version
     result.next_checkpoint = current_checkpoint;
 
     for (const VersionAck& incoming_ack : incoming_acks) {
-        if (has_ack(known_acks, incoming_ack) || has_ack(result.accepted_acks, incoming_ack)) {
+        if (replayed_by_known_ack(known_acks, incoming_ack) ||
+            replayed_by_known_ack(result.accepted_acks, incoming_ack) ||
+            (has_checkpoint_for(current_checkpoint, incoming_ack) &&
+             (compare_versions(current_checkpoint.last_version, incoming_ack.version_vector) ==
+                  CompareResult::kEqual ||
+              compare_versions(current_checkpoint.last_version, incoming_ack.version_vector) ==
+                  CompareResult::kLocalDominates))) {
             result.replayed_acks.push_back(incoming_ack);
             continue;
         }

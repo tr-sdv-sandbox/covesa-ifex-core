@@ -406,7 +406,7 @@ TEST_F(SchedulerIntegrationTest, JobsSurviveRestart) {
     ASSERT_TRUE(RestartScheduler()) << "Failed to restart scheduler";
 
     // Reconnect to scheduler
-    scheduler_channel_ = grpc::CreateChannel(TEST_SCHEDULER_ADDRESS, grpc::InsecureChannelCredentials());
+    scheduler_channel_ = grpc::CreateChannel(GetSchedulerAddress(), grpc::InsecureChannelCredentials());
 
     // Verify jobs still exist after restart
     // THIS WILL FAIL UNTIL PERSISTENCE IS IMPLEMENTED

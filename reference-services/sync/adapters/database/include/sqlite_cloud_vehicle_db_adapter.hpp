@@ -30,10 +30,14 @@ public:
 
     std::vector<CanonicalRecord> list_dirty_records(const DirtyRecordQuery& query) override;
     ApplyResult apply_record(const CanonicalRecord& record,
-                             const std::string& idempotency_key) override;
+                             const std::string& idempotency_key,
+                             const std::string& sender_node_id = "") override;
     CheckpointReadResult read_checkpoint(const SyncSessionKey& session) override;
     void write_checkpoint(const SyncSessionKey& session,
                           const CheckpointToken& checkpoint) override;
+    void persist_remote_acks(const SyncSessionKey& session,
+                             const std::vector<VersionAck>& durable_acks) override;
+    std::vector<VersionAck> list_remote_acks(const SyncSessionKey& session) override;
     std::uint64_t compute_state_checksum(const StateScope& scope) override;
     std::vector<RecordLocator> list_record_ids(const RecordIdQuery& query) override;
     void persist_conflict(const ConflictRecord& conflict) override;

@@ -18,13 +18,19 @@ public:
 
     virtual ApplyResult apply_record(
         const CanonicalRecord& record,
-        const std::string& idempotency_key) = 0;
+        const std::string& idempotency_key,
+        const std::string& sender_node_id = "") = 0;
 
     virtual CheckpointReadResult read_checkpoint(
         const SyncSessionKey& session) = 0;
     virtual void write_checkpoint(
         const SyncSessionKey& session,
         const CheckpointToken& checkpoint) = 0;
+    virtual void persist_remote_acks(
+        const SyncSessionKey& session,
+        const std::vector<VersionAck>& durable_acks) = 0;
+    virtual std::vector<VersionAck> list_remote_acks(
+        const SyncSessionKey& session) = 0;
 
     virtual std::uint64_t compute_state_checksum(
         const StateScope& scope) = 0;

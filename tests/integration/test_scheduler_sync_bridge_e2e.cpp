@@ -175,7 +175,7 @@ protected:
     bool StartVehicleServices() {
         // Vehicle scheduler - use fixture's Discovery for service validation
         reference::SchedulerServer::Config sched_config;
-        sched_config.discovery_endpoint = TEST_DISCOVERY_ADDRESS;
+        sched_config.discovery_endpoint = GetDiscoveryAddress();
         // In-memory, no persistence (empty persistence_dir)
 
         vehicle_scheduler_ = std::make_unique<reference::SchedulerServer>(sched_config);

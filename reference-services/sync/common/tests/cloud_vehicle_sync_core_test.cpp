@@ -1,6 +1,10 @@
 #include "../include/cloud_vehicle_sync_core.hpp"
 
-#include <gtest/gtest.h>
+#if __has_include(<gtest/gtest.h>)
+#  include <gtest/gtest.h>
+#else
+#  include "../../adapters/testing/tests/gtest_fallback.h"
+#endif
 
 namespace ifex {
 namespace sync {
@@ -130,16 +134,35 @@ TEST(SyncCoreTest, AckReplayDoesNotAdvanceCheckpoint) {
     checkpoint.last_version = record.version_vector;
 
     const AckProcessingResult first = CloudVehicleSyncCore::process_acks({ack}, {}, checkpoint);
-    EXPECT_TRUE(first.checkpoint_advanced);
-    EXPECT_EQ(first.accepted_acks.size(), 1U);
-    EXPECT_EQ(first.replayed_acks.size(), 0U);
-    EXPECT_EQ(first.next_checkpoint.sequence_number, 11U);
+    EXPECT_FALSE(first.checkpoint_advanced);
+    EXPECT_EQ(first.accepted_acks.size(), 0U);
+    EXPECT_EQ(first.replayed_acks.size(), 1U);
+    EXPECT_EQ(first.next_checkpoint.sequence_number, 10U);
 
     const AckProcessingResult replay = CloudVehicleSyncCore::process_acks({ack}, {ack}, first.next_checkpoint);
     EXPECT_FALSE(replay.checkpoint_advanced);
     EXPECT_EQ(replay.accepted_acks.size(), 0U);
     EXPECT_EQ(replay.replayed_acks.size(), 1U);
-    EXPECT_EQ(replay.next_checkpoint.sequence_number, 11U);
+    EXPECT_EQ(replay.next_checkpoint.sequence_number, 10U);
+}
+
+TEST(SyncCoreTest, DominatedAckReplayDoesNotAdvanceCheckpoint) {
+    const CanonicalRecord stale_record = make_record("id-5", "jobs", "cloud", {1, 0}, RecordOperation::kUpdate, "p");
+    const CanonicalRecord newest_record = make_record("id-5", "jobs", "cloud", {2, 0}, RecordOperation::kUpdate, "p2");
+    const VersionAck stale_ack = make_ack(stale_record);
+    const VersionAck newest_ack = make_ack(newest_record);
+
+    CheckpointToken checkpoint;
+    checkpoint.sequence_number = 10;
+    checkpoint.last_record = newest_record.locator;
+    checkpoint.last_version = newest_record.version_vector;
+
+    const AckProcessingResult replay = CloudVehicleSyncCore::process_acks({stale_ack}, {newest_ack}, checkpoint);
+    EXPECT_FALSE(replay.checkpoint_advanced);
+    EXPECT_EQ(replay.accepted_acks.size(), 0U);
+    EXPECT_EQ(replay.replayed_acks.size(), 1U);
+    EXPECT_EQ(replay.next_checkpoint.sequence_number, 10U);
+    EXPECT_EQ(replay.next_checkpoint.last_version.cloud_seq, 2U);
 }
 
 TEST(SyncCoreTest, GapRecoveryOnlyOnMismatchWithoutDirty) {

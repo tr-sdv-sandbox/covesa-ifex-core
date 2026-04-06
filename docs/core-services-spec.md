@@ -4,12 +4,12 @@
 
 The IFEX platform consists of four core infrastructure services:
 
-| Service | Question | Responsibility |
-|---------|----------|----------------|
-| **Discovery** | Where is it? | Service registry, health monitoring, capability catalog |
-| **Dispatcher** | How do I call it? | Dynamic method routing, parameter validation, JSON↔Protobuf |
-| **Orchestrator** | What's the workflow? | Multi-step coordination, conditional logic, error handling |
-| **Scheduler** | When should it run? | Time-based triggers, event triggers, recurring patterns |
+| Service          | Question             | Responsibility                                              |
+| ---------------- | -------------------- | ----------------------------------------------------------- |
+| **Discovery**    | Where is it?         | Service registry, health monitoring, capability catalog     |
+| **Dispatcher**   | How do I call it?    | Dynamic method routing, parameter validation, JSON↔Protobuf |
+| **Orchestrator** | What's the workflow? | Multi-step coordination, conditional logic, error handling  |
+| **Scheduler**    | When should it run?  | Time-based triggers, event triggers, recurring patterns     |
 
 These services enable loose coupling between components. Services register themselves at runtime, can be discovered by name, and called without compile-time dependencies.
 
@@ -52,6 +52,7 @@ These services enable loose coupling between components. Services register thems
 ```
 
 **Flow:**
+
 1. All services register with Discovery at startup
 2. Clients can call Dispatcher directly for single operations
 3. Scheduler triggers Orchestrator for scheduled workflows
@@ -69,6 +70,7 @@ Central registry where services announce their existence and capabilities. Clien
 ### Rationale
 
 Without a registry, clients need hardcoded addresses and compile-time knowledge of services. Discovery eliminates this:
+
 - Services come and go dynamically
 - Multiple instances can coexist
 - Clients get current endpoint + full API schema at runtime
@@ -76,39 +78,39 @@ Without a registry, clients need hardcoded addresses and compile-time knowledge 
 
 ### API
 
-| Method | Description |
-|--------|-------------|
-| `register_service` | Service announces itself with endpoint and IFEX schema |
-| `unregister_service` | Service removes itself from registry |
-| `get_service` | Lookup single service by name |
-| `query_services` | Find services matching filter (name pattern, method, transport) |
-| `heartbeat` | Service reports it's still alive |
-| `validate_method_call` | Check if a method call would be valid |
-| `get_method_schema` | Get parameter schema for a method |
+| Method                 | Description                                                     |
+| ---------------------- | --------------------------------------------------------------- |
+| `register_service`     | Service announces itself with endpoint and IFEX schema          |
+| `unregister_service`   | Service removes itself from registry                            |
+| `get_service`          | Lookup single service by name                                   |
+| `query_services`       | Find services matching filter (name pattern, method, transport) |
+| `heartbeat`            | Service reports it's still alive                                |
+| `validate_method_call` | Check if a method call would be valid                           |
+| `get_method_schema`    | Get parameter schema for a method                               |
 
 ### Data Structures
 
 ```yaml
 service_info_t:
-  name: string                    # Service name
-  version: string                 # Major.minor version
+  name: string # Service name
+  version: string # Major.minor version
   description: string
   status: AVAILABLE | STARTING | STOPPING | ERROR | UNAVAILABLE
   endpoint:
     transport: GRPC | DBUS | SOMEIP | HTTP_REST | MQTT
-    address: string               # host:port or equivalent
-  namespaces:                     # From IFEX schema
+    address: string # host:port or equivalent
+  namespaces: # From IFEX schema
     - name: string
       methods:
         - name: string
           input_parameters: [...]
           output_parameters: [...]
-  ifex_schema: string             # Full IFEX YAML (optional)
-  last_heartbeat_ms: uint64       # Epoch milliseconds
+  ifex_schema: string # Full IFEX YAML (optional)
+  last_heartbeat_ms: uint64 # Epoch milliseconds
 
 service_filter_t:
-  name_pattern: string            # Glob pattern
-  has_method: string              # Must have this method
+  name_pattern: string # Glob pattern
+  has_method: string # Must have this method
   transport_type: transport_type_t
   available_only: boolean
 ```
@@ -135,6 +137,7 @@ Routes method calls to any IFEX service. Caller specifies service name + method 
 ### Rationale
 
 Direct gRPC calls require knowing the service's protobuf interface at compile time. Dispatcher provides:
+
 - Single entry point for all service calls
 - Runtime service lookup via Discovery
 - Parameter validation using IFEX schema
@@ -143,8 +146,8 @@ Direct gRPC calls require knowing the service's protobuf interface at compile ti
 
 ### API
 
-| Method | Description |
-|--------|-------------|
+| Method        | Description                                  |
+| ------------- | -------------------------------------------- |
 | `call_method` | Execute any method on any registered service |
 
 ### Data Structures
@@ -153,15 +156,15 @@ Direct gRPC calls require knowing the service's protobuf interface at compile ti
 method_call_t:
   service_name: string
   method_name: string
-  parameters: string              # JSON-encoded
-  timeout_ms: uint32              # Default: 5000
+  parameters: string # JSON-encoded
+  timeout_ms: uint32 # Default: 5000
 
 call_result_t:
   status: SUCCESS | FAILED | TIMEOUT | SERVICE_UNAVAILABLE | METHOD_NOT_FOUND | INVALID_PARAMETERS
-  response: string                # JSON-encoded result
+  response: string # JSON-encoded result
   error_message: string
   duration_ms: uint32
-  service_endpoint: string        # Where the call was routed
+  service_endpoint: string # Where the call was routed
 ```
 
 ### Call Flow
@@ -189,12 +192,14 @@ Executes multi-step workflows that coordinate multiple services. Workflows are d
 ### Rationale
 
 Complex operations require coordinating multiple services with conditional logic, error handling, and result passing. Without orchestration:
+
 - Each integration is custom code
 - Error handling is duplicated
 - Changes require recompilation
 - AI can't generate complex operations
 
 Orchestrator provides:
+
 - Declarative workflow definitions
 - Step dependencies and parallel execution
 - Conditional branching
@@ -203,14 +208,14 @@ Orchestrator provides:
 
 ### API
 
-| Method | Description |
-|--------|-------------|
-| `register_workflow` | Register a workflow definition |
-| `execute_workflow` | Start workflow execution with inputs |
+| Method                 | Description                              |
+| ---------------------- | ---------------------------------------- |
+| `register_workflow`    | Register a workflow definition           |
+| `execute_workflow`     | Start workflow execution with inputs     |
 | `get_execution_status` | Get status of running/completed workflow |
-| `cancel_execution` | Cancel a running workflow |
-| `list_workflows` | List registered workflow definitions |
-| `get_workflow` | Get a specific workflow definition |
+| `cancel_execution`     | Cancel a running workflow                |
+| `list_workflows`       | List registered workflow definitions     |
+| `get_workflow`         | Get a specific workflow definition       |
 
 ### Data Structures
 
@@ -219,34 +224,34 @@ workflow_definition_t:
   name: string
   version: string
   description: string
-  input_schema: string            # JSON Schema for inputs
+  input_schema: string # JSON Schema for inputs
   steps: step_definition_t[]
 
 step_definition_t:
   id: string
   service: string
   method: string
-  parameters: string              # JSON template with {{}} expressions
-  depends_on: string[]            # Step IDs this depends on
-  when: string                    # Condition expression
+  parameters: string # JSON template with {{}} expressions
+  depends_on: string[] # Step IDs this depends on
+  when: string # Condition expression
   timeout_ms: uint32
   retry_count: uint8
-  compensate_method: string       # Called on rollback
+  compensate_method: string # Called on rollback
 
 workflow_execution_t:
   execution_id: string
   workflow_name: string
   status: PENDING | RUNNING | COMPLETED | FAILED | CANCELLED | PAUSED
-  inputs: string                  # JSON
+  inputs: string # JSON
   step_results: step_result_t[]
-  started_at: string              # ISO8601
+  started_at: string # ISO8601
   completed_at: string
   error_message: string
 
 step_result_t:
   step_id: string
   status: PENDING | RUNNING | COMPLETED | FAILED | SKIPPED | COMPENSATING
-  result: string                  # JSON from service
+  result: string # JSON from service
   error_message: string
   duration_ms: uint32
 ```
@@ -325,11 +330,13 @@ Calendar-style job scheduler. Jobs specify a service method (or workflow) to exe
 ### Rationale
 
 Many vehicle operations are time-based:
+
 - Pre-condition cabin before departure
 - Run diagnostics overnight
 - Schedule maintenance checks
 
 Scheduler provides:
+
 - CRUD for scheduled jobs
 - Recurring schedules (daily, weekly, cron)
 - Calendar views for UI
@@ -338,13 +345,13 @@ Scheduler provides:
 
 ### API
 
-| Method | Description |
-|--------|-------------|
-| `create_job` | Schedule a new job |
-| `get_job` | Get single job by ID |
-| `get_jobs` | List jobs with optional filter |
-| `update_job` | Modify scheduled job |
-| `delete_job` | Remove job |
+| Method              | Description                              |
+| ------------------- | ---------------------------------------- |
+| `create_job`        | Schedule a new job                       |
+| `get_job`           | Get single job by ID                     |
+| `get_jobs`          | List jobs with optional filter           |
+| `update_job`        | Modify scheduled job                     |
+| `delete_job`        | Remove job                               |
 | `get_calendar_view` | Get jobs in date range (for calendar UI) |
 
 ### Data Structures
@@ -352,20 +359,20 @@ Scheduler provides:
 ```yaml
 job_t:
   id: string
-  title: string                   # Human-readable name
-  service: string                 # Target service (or "ifex-orchestrator")
-  method: string                  # Target method (or "execute_workflow")
-  parameters: string              # JSON-encoded
-  scheduled_time: string          # ISO8601
-  recurrence_rule: string         # "daily" | "weekly" | "hourly" | cron expression
-  end_time: string                # For recurring jobs
+  title: string # Human-readable name
+  service: string # Target service (or "ifex-orchestrator")
+  method: string # Target method (or "execute_workflow")
+  parameters: string # JSON-encoded
+  scheduled_time: string # ISO8601
+  recurrence_rule: string # "daily" | "weekly" | "hourly" | cron expression
+  end_time: string # For recurring jobs
   status: PENDING | RUNNING | COMPLETED | FAILED | CANCELLED
   created_at: string
   updated_at: string
   executed_at: string
-  next_run_time: string           # For recurring
+  next_run_time: string # For recurring
   error_message: string
-  result: string                  # JSON result from execution
+  result: string # JSON result from execution
 
 job_filter_t:
   start_date: string
@@ -378,16 +385,18 @@ job_filter_t:
 ### Job Examples
 
 **Simple job (calls service directly):**
+
 ```yaml
 title: "Morning defrost"
 service: defrost-service
 method: start_defrost
-parameters: {"intensity": "rapid"}
+parameters: { "intensity": "rapid" }
 scheduled_time: "2025-01-15T06:30:00Z"
 recurrence_rule: "0 30 6 * * MON-FRI"
 ```
 
 **Workflow job (calls Orchestrator):**
+
 ```yaml
 title: "Departure prep"
 service: ifex-orchestrator
@@ -402,6 +411,7 @@ scheduled_time: "2025-01-15T06:30:00Z"
 ### Execution
 
 Background thread polls pending jobs every second:
+
 1. Find jobs where `scheduled_time <= now` and status = PENDING
 2. Set status = RUNNING
 3. Call Dispatcher with service/method/parameters
@@ -412,6 +422,7 @@ Background thread polls pending jobs every second:
 ### Persistence
 
 Jobs are persisted to disk immediately on create/update/delete:
+
 - Configurable via `--persistence-dir` flag or `SCHEDULER_PERSISTENCE_DIR` env var
 - JSON format with job_counter, jobs array, and version
 - Jobs survive scheduler restarts (even ungraceful shutdowns)
@@ -461,6 +472,7 @@ Jobs are persisted to disk immediately on create/update/delete:
 ```
 
 Or use the helper script:
+
 ```bash
 ./start-all-bg.sh
 ```
@@ -469,15 +481,15 @@ Or use the helper script:
 
 ## Current Limitations (POC)
 
-| Limitation | Impact |
-|------------|--------|
-| Discovery in-memory | Service registry lost on restart |
+| Limitation                     | Impact                                            |
+| ------------------------------ | ------------------------------------------------- |
+| Discovery in-memory            | Service registry lost on restart                  |
 | Scheduler persistence optional | Must configure `--persistence-dir` for durability |
-| Single instance | No clustering or replication |
-| Basic recurrence | Only daily/weekly/hourly, partial cron |
-| No authentication | Open access |
-| No rate limiting | No protection against flooding |
-| Orchestrator not implemented | Workflows are future work |
+| Single instance                | No clustering or replication                      |
+| Basic recurrence               | Only daily/weekly/hourly, partial cron            |
+| No authentication              | Open access                                       |
+| No rate limiting               | No protection against flooding                    |
+| Orchestrator not implemented   | Workflows are future work                         |
 
 ---
 
@@ -485,8 +497,8 @@ Or use the helper script:
 
 Beyond the core infrastructure, the platform includes reference implementations:
 
-| Service | Purpose | Documentation |
-|---------|---------|---------------|
+| Service               | Purpose                               | Documentation                                               |
+| --------------------- | ------------------------------------- | ----------------------------------------------------------- |
 | **Backend Transport** | Vehicle-to-cloud communication (MQTT) | [README](../reference-services/backend-transport/README.md) |
 
 These services demonstrate best practices and can be used as-is or adapted for specific deployments.

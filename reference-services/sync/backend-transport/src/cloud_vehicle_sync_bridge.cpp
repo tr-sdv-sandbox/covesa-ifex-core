@@ -58,6 +58,34 @@ std::string ack_key(const VersionAck& ack) {
     return ss.str();
 }
 
+std::vector<VersionAck> merge_known_acks(const std::vector<VersionAck>& durable_acks,
+                                         const std::vector<VersionAck>& in_memory_acks) {
+    std::vector<VersionAck> merged;
+    merged.reserve(durable_acks.size() + in_memory_acks.size());
+    std::unordered_set<std::string> seen_keys;
+    seen_keys.reserve(durable_acks.size() + in_memory_acks.size());
+
+    for (const VersionAck& ack : durable_acks) {
+        const std::string key = ack_key(ack);
+        if (seen_keys.insert(key).second) {
+            merged.push_back(ack);
+        }
+    }
+    for (const VersionAck& ack : in_memory_acks) {
+        const std::string key = ack_key(ack);
+        if (seen_keys.insert(key).second) {
+            merged.push_back(ack);
+        }
+    }
+
+    return merged;
+}
+
+bool sender_matches_expected(const std::string& sender_node_id,
+                             const std::string& expected_remote_node_id) {
+    return !sender_node_id.empty() && sender_node_id == expected_remote_node_id;
+}
+
 std::uint64_t now_ms() {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                      std::chrono::system_clock::now().time_since_epoch())
@@ -528,11 +556,15 @@ private:
         if (!sync.recipient_node_id().empty() && sync.recipient_node_id() != config_.common.local_node_id) {
             return;
         }
+        if (!sender_matches_expected(sync.sender_node_id(), config_.common.remote_node_id)) {
+            return;
+        }
 
         for (const auto& proto_record : sync.records()) {
             CanonicalRecord record = from_proto_record(proto_record);
             const std::string idempotency_key = ensure_record_idempotency_key(record, sync.sender_node_id());
-            const ApplyResult result = config_.common.adapter->apply_record(record, idempotency_key);
+            const ApplyResult result = config_.common.adapter->apply_record(
+                record, idempotency_key, config_.common.remote_node_id);
 
             {
                 std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -585,6 +617,9 @@ private:
             advance.recipient_node_id() != config_.common.local_node_id) {
             return;
         }
+        if (!sender_matches_expected(advance.sender_node_id(), config_.common.remote_node_id)) {
+            return;
+        }
 
         std::vector<VersionAck> incoming_acks;
         incoming_acks.reserve(advance.durable_acks_size());
@@ -605,16 +640,23 @@ private:
                                                        ? checkpoint_result.checkpoint
                                                        : CheckpointToken();
 
+        const std::vector<VersionAck> durable_known_acks =
+            config_.common.adapter->list_remote_acks(session_key());
+
         std::vector<VersionAck> known_acks_copy;
         {
             std::lock_guard<std::mutex> lock(known_acks_mutex_);
             known_acks_copy = known_acks_;
         }
 
+        const std::vector<VersionAck> known_acks =
+            merge_known_acks(durable_known_acks, known_acks_copy);
+
         const AckProcessingResult processing = CloudVehicleSyncCore::process_acks(
-            incoming_acks, known_acks_copy, current_checkpoint);
+            incoming_acks, known_acks, current_checkpoint);
 
         if (!processing.accepted_acks.empty()) {
+            config_.common.adapter->persist_remote_acks(session_key(), processing.accepted_acks);
             {
                 std::lock_guard<std::mutex> lock(known_acks_mutex_);
                 known_acks_.insert(known_acks_.end(), processing.accepted_acks.begin(),
@@ -643,6 +685,9 @@ private:
 
         if (!request.recipient_node_id().empty() &&
             request.recipient_node_id() != config_.common.local_node_id) {
+            return;
+        }
+        if (!sender_matches_expected(request.sender_node_id(), config_.common.remote_node_id)) {
             return;
         }
 
@@ -710,6 +755,9 @@ private:
 
         if (!response.recipient_node_id().empty() &&
             response.recipient_node_id() != config_.common.local_node_id) {
+            return;
+        }
+        if (!sender_matches_expected(response.sender_node_id(), config_.common.remote_node_id)) {
             return;
         }
 

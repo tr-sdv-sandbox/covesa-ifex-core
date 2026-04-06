@@ -2,7 +2,7 @@
 
 **Document Version:** 1.0  
 **Date:** 2026-03-26  
-**Scope:** v1 reference implementation, non-production  
+**Scope:** v1 reference implementation, non-production
 
 ## Overview
 
@@ -12,11 +12,11 @@ This guide covers how to integrate custom data repositories with the cloud-vehic
 
 The protocol splits responsibilities:
 
-| Responsibility | Owner | Provided By |
-|---|---|---|
-| Protocol logic (versioning, conflict detection, gap recovery) | `CloudVehicleSyncCore` | Core library |
-| Data persistence and queries | Your adapter | Your implementation |
-| Transport envelope handling | Transport bridge | Reference implementation |
+| Responsibility                                                | Owner                  | Provided By              |
+| ------------------------------------------------------------- | ---------------------- | ------------------------ |
+| Protocol logic (versioning, conflict detection, gap recovery) | `CloudVehicleSyncCore` | Core library             |
+| Data persistence and queries                                  | Your adapter           | Your implementation      |
+| Transport envelope handling                                   | Transport bridge       | Reference implementation |
 
 By implementing one adapter interface, your storage backend gains conflict surfacing, idempotency, and resumable sync automatically.
 
@@ -40,7 +40,8 @@ public:
     // Apply incoming record, with idempotency handling
     virtual ApplyResult apply_record(
         const CanonicalRecord& record,
-        const std::string& idempotency_key) = 0;
+        const std::string& idempotency_key,
+        const std::string& sender_node_id = "") = 0;
 
     // Checkpoint management (track sync progress)
     virtual CheckpointReadResult read_checkpoint(
@@ -48,6 +49,11 @@ public:
     virtual void write_checkpoint(
         const SyncSessionKey& session,
         const CheckpointToken& checkpoint) = 0;
+    virtual void persist_remote_acks(
+        const SyncSessionKey& session,
+        const std::vector<VersionAck>& durable_acks) = 0;
+    virtual std::vector<VersionAck> list_remote_acks(
+        const SyncSessionKey& session) = 0;
 
     // Checksumming (verify state match between peers)
     virtual uint64_t compute_state_checksum(
@@ -73,6 +79,7 @@ public:
 All adapters work with these canonical types defined in `cloud_vehicle_sync_types.hpp`:
 
 #### RecordLocator
+
 Unique identity for a record across distributed systems:
 
 ```cpp
@@ -84,6 +91,7 @@ struct RecordLocator {
 ```
 
 #### CanonicalRecord
+
 The unified record format all adapters handle:
 
 ```cpp
@@ -111,6 +119,7 @@ struct CanonicalRecord {
 ```
 
 #### VersionVector
+
 Logical, not wall-clock based:
 
 ```cpp
@@ -129,6 +138,7 @@ bool dominates(const VersionVector& other) const {
 ```
 
 #### CheckpointToken
+
 Tracks sync progress across reconnects:
 
 ```cpp
@@ -142,6 +152,7 @@ struct CheckpointToken {
 This is what's persisted after each successful batch. On reconnect, protocol core resumes from the checkpoint instead of full rescan.
 
 #### ConflictRecord
+
 Persisted when sync detects incompatible updates:
 
 ```cpp
@@ -167,6 +178,7 @@ Returns records that have not yet been acknowledged by the remote side.
 **Purpose:** On reconnect, the protocol sends all dirty records again (at-least-once semantics). The adapter identifies which ones are unacked using the query session context.
 
 **Query Input:**
+
 ```cpp
 struct DirtyRecordQuery {
     SyncSessionKey session;    // (local_node_id, remote_node_id, namespace)
@@ -184,11 +196,13 @@ struct SyncSessionKey {
 **Returns:** Vector of `CanonicalRecord` representing all records in this namespace that are either new or have not been acked by the named remote peer yet.
 
 **Implementation guidance:**
-- Maintain a per-session ACK ledger. When `write_checkpoint()` is called, record which records have been acked.
+
+- Maintain a per-session ACK ledger (populated by `persist_remote_acks()` calls, independent of checkpoints).
 - `list_dirty_records()` returns records NOT in the ack ledger, ordered by (record_id) for determinism.
 - Include tombstones only if `include_tombstones == true` to support optional cleanup scans.
 
 **Example (pseudo-SQL):**
+
 ```sql
 SELECT r.* FROM records r
 WHERE r.namespace = :namespace
@@ -210,8 +224,10 @@ Receive and durably persist a record from the remote side.
 **Purpose:** The protocol core has already decided this record should be applied (ownership checks, version comparison done). Your adapter just needs to persist it atomically.
 
 **Inputs:**
+
 - `record`: The incoming record with version vector, payload, operation.
 - `idempotency_key`: A string like `"{origin}:{record_id}:{version_hash}"` that identifies this exact version. If the same key is applied twice, it's a replay.
+- `sender_node_id` (optional): Authenticated peer identity validated at bridge boundary (e.g., mTLS certificate CN). Use to enforce that incoming records originate from the expected peer. Do not confuse with `record.locator.origin_node_id` (record creator metadata, may differ if records flow through intermediaries).
 
 **Returns:** `ApplyResult` indicating what happened:
 
@@ -233,6 +249,7 @@ struct ApplyResult {
 ```
 
 **Implementation guidance:**
+
 - Check if `idempotency_key` exists in your dedup table. If yes, return `kDuplicate`.
 - Check ownership: if the record's origin cannot modify this record, return `kNonOwnerRejected`.
 - Compare versions: if incoming version is stale (older), return `kStaleRejected`.
@@ -248,6 +265,7 @@ Persist and retrieve sync progress.
 **Purpose:** On reconnect, instead of sending all records again, the protocol resumes from the last checkpoint, which reduces bandwidth and latency.
 
 **`read_checkpoint()` input:**
+
 ```cpp
 struct SyncSessionKey {
     std::string local_node_id;
@@ -257,6 +275,7 @@ struct SyncSessionKey {
 ```
 
 **Returns:**
+
 ```cpp
 struct CheckpointReadResult {
     bool found = false;
@@ -268,6 +287,7 @@ Implementation: Query your checkpoint table for the named session. If not found,
 
 **`write_checkpoint()` input:**
 The same session key plus a checkpoint token:
+
 ```cpp
 struct CheckpointToken {
     std::uint64_t sequence_number;   // Batch number (increments on each advance)
@@ -276,12 +296,31 @@ struct CheckpointToken {
 };
 ```
 
-**Dual purpose:** This call also updates the ACK ledger. After this call:
-- The checkpoint is persisted (so reconnect resumes from here).
-- All records up to `last_record` are marked as acked by the named remote peer.
-- Subsequent `list_dirty_records()` calls will exclude records up to and including `last_record`.
+**Purpose:** Persist sync progress durably so reconnects can resume from the checkpoint instead of full rescan.
 
-Implementation: Insert/upsert the checkpoint and mark all records up to `last_record` as acked in your session_acks table.
+Implementation: Insert/upsert the checkpoint into your checkpoint table. Verify the new sequence_number is monotonically higher than any prior checkpoint for this session.
+
+#### `persist_remote_acks()` and `list_remote_acks()`
+
+Manage durable acknowledgment state, separate from checkpoints.
+
+**Purpose:** Track which record versions have been confirmed received and applied by the remote peer. On reconnect, the bridge can skip re-sending already-acked records and rebuild in-memory ACK state from persistent storage.
+
+**`persist_remote_acks()` input:**
+
+```cpp
+struct VersionAck {
+    RecordLocator locator;        // Which record
+    VersionVector version_vector;  // Up to which version is acked
+};
+```
+
+**Implementation:** Persist the ack set durably into a per-session ack ledger. This is typically a separate table from records (e.g., `remote_acks` table with columns: `local_node_id`, `remote_node_id`, `namespace`, `record_id`, `origin_node_id`, `cloud_seq`, `truck_seq`).
+
+**`list_remote_acks()` returns:**
+All persisted acks for the given session as a vector of `VersionAck`. On a process restart, the bridge calls this to rebuild its in-memory state before resuming sync.
+
+**Key detail:** ACK durability is separate from checkpoint writes. A checkpoint represents sync progress; ACKs represent remote acknowledgments. Both must persist to survive restarts safely.
 
 #### `compute_state_checksum()`
 
@@ -290,6 +329,7 @@ Calculate a deterministic hash of your current state.
 **Purpose:** Both sides compute the same checksum; if they differ, gap recovery is triggered to find missing/extra records.
 
 **Input:**
+
 ```cpp
 struct StateScope {
     std::string namespace_name;    // Which data to checksum
@@ -297,14 +337,15 @@ struct StateScope {
 };
 ```
 
-**Returns:** A `uint64_t` checksum (e.g., xxHash64 of all record bytes in the scope).
+**Returns:** A `uint64_t` checksum (e.g., FNV-1a style deterministic hash over logical-record bytes in the scope).
 
 **Implementation guidance:**
+
 - Select all records in the namespace (optionally excluding tombstones).
 - Sort by record_id for determinism.
-- For each record, compute xxHash64 of: `record_id || namespace || origin_node_id || payload || schema_version`.
-- Exclude wall-clock fields: `wall_clock_ms`, `created_at_ms`, `updated_at_ms` do NOT participate.
-- XOR all individual hashes together (or chain them into one hash).
+- For each record (sorted deterministically), mix: `namespace || origin_node_id || record_id || cloud_seq || truck_seq || operation || payload || schema_version || tombstone_state || tombstone_reason`.
+- Exclude wall-clock and transport metadata fields: `wall_clock_ms`, `created_at_ms`, `updated_at_ms`, `idempotency_key`, `correlation_id`, and `payload_checksum` do NOT participate.
+- Use a stable deterministic combiner so equivalent logical state yields identical output regardless of apply order.
 
 **Critical:** Checksums MUST be deterministic. If two adapters have the same logical records, they MUST produce the same checksum, even if applied in different order.
 
@@ -313,6 +354,7 @@ struct StateScope {
 Used during gap recovery to identify which records you have.
 
 **Input:**
+
 ```cpp
 struct RecordIdQuery {
     std::string namespace_name;
@@ -332,6 +374,7 @@ Implementation: Simple query to your records table, return all locators in the s
 Store and retrieve conflict records.
 
 **`persist_conflict()` input:**
+
 ```cpp
 struct ConflictRecord {
     RecordLocator locator;
@@ -349,6 +392,7 @@ struct ConflictRecord {
 Implementation: Insert into your conflicts table. Do NOT auto-resolve; leave it for operators/applications to handle.
 
 **`query_conflicts()` input:**
+
 ```cpp
 struct ConflictQuery {
     std::string namespace_name;
@@ -367,6 +411,7 @@ Implementation: Simple query with filters. When applications resolve a conflict,
 Identify old tombstones ready for deletion.
 
 **Input:**
+
 ```cpp
 struct TombstoneGcQuery {
     SyncSessionKey session;
@@ -385,7 +430,7 @@ Implementation: Query for records with `operation = kDelete AND tombstone_at_ms 
 
 ### 1.4 A Complete Example: In-Memory Adapter
 
-Here's a minimal but complete adapter for testing:
+Here's a minimal in-memory adapter reference (pseudocode, omitting `persist_remote_acks()` and `list_remote_acks()` for brevity; see section 1.2 for required signatures):
 
 ```cpp
 #include "cloud_vehicle_db_adapter.hpp"
@@ -403,7 +448,7 @@ public:
             if (record.locator.namespace_name != query.session.namespace_name) {
                 continue;
             }
-            if (record.operation == RecordOperation::kDelete && 
+            if (record.operation == RecordOperation::kDelete &&
                 !query.include_tombstones) {
                 continue;
             }
@@ -411,7 +456,7 @@ public:
             auto ack_key = std::string(query.session.remote_node_id) + ":" +
                           std::string(record.locator.record_id.begin(),
                                     record.locator.record_id.end());
-            if (acked_records_.find(ack_key) == acked_records_.end()) {
+            if (remote_acks_.find(ack_key) == remote_acks_.end()) {
                 result.push_back(record);
             }
             if (result.size() >= query.limit) break;
@@ -421,9 +466,10 @@ public:
 
     ApplyResult apply_record(
         const CanonicalRecord& record,
-        const std::string& idempotency_key) override {
+        const std::string& idempotency_key,
+        const std::string& sender_node_id = "") override {
         ApplyResult result;
-        
+
         // Check idempotency
         if (seen_idempotency_keys_.count(idempotency_key)) {
             result.disposition = ApplyDisposition::kDuplicate;
@@ -436,7 +482,7 @@ public:
                             record.locator.record_id.end());
         records_[id] = record;
         seen_idempotency_keys_.insert(idempotency_key);
-        
+
         result.disposition = ApplyDisposition::kApplied;
         result.durable_version = record.version_vector;
         return result;
@@ -460,12 +506,9 @@ public:
         auto key = session.local_node_id + ":" + session.remote_node_id + ":" +
                    session.namespace_name;
         checkpoints_[key] = checkpoint;
-        
-        // Mark records up to checkpoint as acked
-        auto ack_key = session.remote_node_id + ":" +
-                      std::string(checkpoint.last_record.record_id.begin(),
-                                checkpoint.last_record.record_id.end());
-        acked_records_.insert(ack_key);
+
+        // Checkpoint persistence is independent of ACK persistence.
+        // Remote ACK durability is handled via persist_remote_acks(...).
     }
 
     uint64_t compute_state_checksum(
@@ -475,12 +518,18 @@ public:
             if (record.locator.namespace_name != scope.namespace_name) {
                 continue;
             }
-            if (record.operation == RecordOperation::kDelete && 
+            if (record.operation == RecordOperation::kDelete &&
                 !scope.include_tombstones) {
                 continue;
             }
-            // Simple: XOR of all payload hashes
-            combined ^= xxhash64(record.payload);
+            // Example FNV-1a-style logical-state mixing (pseudo-code)
+            combined = fnv1a_mix(combined, record.locator.namespace_name);
+            combined = fnv1a_mix(combined, record.locator.origin_node_id);
+            combined = fnv1a_mix(combined, record.locator.record_id);
+            combined = fnv1a_mix(combined, record.version_vector.cloud_seq);
+            combined = fnv1a_mix(combined, record.version_vector.truck_seq);
+            combined = fnv1a_mix(combined, static_cast<uint32_t>(record.operation));
+            combined = fnv1a_mix(combined, record.payload);
         }
         return combined;
     }
@@ -492,7 +541,7 @@ public:
             if (record.locator.namespace_name != query.namespace_name) {
                 continue;
             }
-            if (record.operation == RecordOperation::kDelete && 
+            if (record.operation == RecordOperation::kDelete &&
                 !query.include_tombstones) {
                 continue;
             }
@@ -525,30 +574,46 @@ public:
         return result;
     }
 
-    std::vector<CanonicalRecord> list_tombstones_for_gc(
-        const TombstoneGcQuery& query) override {
-        std::vector<CanonicalRecord> result;
-        for (const auto& [id, record] : records_) {
-            if (record.locator.namespace_name != query.session.namespace_name) {
-                continue;
-            }
-            if (record.operation != RecordOperation::kDelete) {
-                continue;
-            }
-            if (record.tombstone_at_ms >= query.retention_cutoff_ms) {
-                continue;
-            }
-            result.push_back(record);
-            if (result.size() >= query.limit) break;
-        }
-        return result;
-    }
+     std::vector<CanonicalRecord> list_tombstones_for_gc(
+         const TombstoneGcQuery& query) override {
+         std::vector<CanonicalRecord> result;
+         for (const auto& [id, record] : records_) {
+             if (record.locator.namespace_name != query.session.namespace_name) {
+                 continue;
+             }
+             if (record.operation != RecordOperation::kDelete) {
+                 continue;
+             }
+             if (record.tombstone_at_ms >= query.retention_cutoff_ms) {
+                 continue;
+             }
+             result.push_back(record);
+             if (result.size() >= query.limit) break;
+         }
+         return result;
+     }
+
+     // REQUIRED: Persist durable remote ACK set
+     void persist_remote_acks(
+         const SyncSessionKey& session,
+         const std::vector<VersionAck>& durable_acks) override {
+         // In-memory store: update remote_acks_ with {session, durable_acks}
+         // Real implementation: persist to database as separate ACK ledger
+     }
+
+     // REQUIRED: Retrieve persisted remote ACKs for session
+     std::vector<VersionAck> list_remote_acks(
+         const SyncSessionKey& session) override {
+         // In-memory retrieve: return remote_acks_[session]
+         // Real implementation: query persisted ACK ledger
+         return {};
+     }
 
 private:
     std::map<std::string, CanonicalRecord> records_;
     std::unordered_map<std::string, CheckpointToken> checkpoints_;
     std::unordered_set<std::string> seen_idempotency_keys_;
-    std::unordered_set<std::string> acked_records_;
+    std::unordered_set<std::string> remote_acks_;
     std::vector<ConflictRecord> conflicts_;
 };
 
@@ -562,6 +627,7 @@ private:
 #### Compilation
 
 Link your adapter implementation against:
+
 - `ifex-sync-core` - protocol logic
 - `ifex-proto-generated` - canonical record types
 
@@ -595,34 +661,34 @@ Test your adapter in isolation:
 
 TEST(MyAdapterTest, ApplyRecordAndRetrieveDirty) {
     MyAdapter adapter;
-    
+
     CanonicalRecord record;
     record.locator.record_id = ByteBuffer{0x01, 0x02};
     record.locator.namespace_name = "jobs";
     record.locator.origin_node_id = "cloud";
     record.version_vector = {1, 0};
     record.payload = ByteBuffer{0xAA, 0xBB};
-    
+
     auto result = adapter.apply_record(record, "cloud:job-1:hash123");
     EXPECT_EQ(result.disposition, ApplyDisposition::kApplied);
-    
+
     // Retrieve it
     DirtyRecordQuery query;
     query.session.local_node_id = "truck-001";
     query.session.remote_node_id = "cloud";
     query.session.namespace_name = "jobs";
-    
+
     auto dirty = adapter.list_dirty_records(query);
     EXPECT_EQ(dirty.size(), 1);
     EXPECT_EQ(dirty[0].locator.record_id, record.locator.record_id);
 }
 
-TEST(MyAdapterTest, CheckpointAdvanceMarksRecordsAcked) {
+TEST(MyAdapterTest, CheckpointAndAckPersistenceAreIndependent) {
     MyAdapter adapter;
-    
+
     // Apply a record
     // ...
-    
+
     // Checkpoint it
     CheckpointToken checkpoint;
     checkpoint.sequence_number = 1;
@@ -630,20 +696,27 @@ TEST(MyAdapterTest, CheckpointAdvanceMarksRecordsAcked) {
     checkpoint.last_record.namespace_name = "jobs";
     checkpoint.last_record.origin_node_id = "cloud";
     checkpoint.last_version = {1, 0};
-    
+
     SyncSessionKey session;
     session.local_node_id = "truck-001";
     session.remote_node_id = "cloud";
     session.namespace_name = "jobs";
-    
+
     adapter.write_checkpoint(session, checkpoint);
-    
-    // Now list_dirty_records should return empty
+
+    // Still dirty until explicit remote ACK durability is written
     DirtyRecordQuery query;
     query.session = session;
-    
-    auto dirty = adapter.list_dirty_records(query);
-    EXPECT_EQ(dirty.size(), 0);  // Acked, so not dirty
+    auto dirty_before_ack = adapter.list_dirty_records(query);
+    EXPECT_EQ(dirty_before_ack.size(), 1);
+
+    VersionAck ack;
+    ack.locator = checkpoint.last_record;
+    ack.version_vector = checkpoint.last_version;
+    adapter.persist_remote_acks(session, {ack});
+
+    auto dirty_after_ack = adapter.list_dirty_records(query);
+    EXPECT_EQ(dirty_after_ack.size(), 0);
 }
 ```
 
@@ -657,11 +730,11 @@ Conflicts are the primary way operators detect data anomalies.
 
 #### Conflict Classes
 
-| Class | Meaning | Example | Action |
-|-------|---------|---------|--------|
-| `CONCURRENT_UPDATE` | Both sides modified independently | Cloud modified job config AND truck added execution result to same record | Manual review and merge decision |
-| `NON_OWNER_MUTATION` | Non-owner attempted write | Truck tried to modify a cloud-owned job definition | Reject mutation, investigate truck-side logic error |
-| `STALE_REPLAY` | Very old version replayed (shouldn't happen) | Version from 2 hours ago arrives after newer version already stored | Check for clock skew or transport issues; usually safe to ignore |
+| Class                | Meaning                                      | Example                                                                   | Action                                                           |
+| -------------------- | -------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `CONCURRENT_UPDATE`  | Both sides modified independently            | Cloud modified job config AND truck added execution result to same record | Manual review and merge decision                                 |
+| `NON_OWNER_MUTATION` | Non-owner attempted write                    | Truck tried to modify a cloud-owned job definition                        | Reject mutation, investigate truck-side logic error              |
+| `STALE_REPLAY`       | Very old version replayed (shouldn't happen) | Version from 2 hours ago arrives after newer version already stored       | Check for clock skew or transport issues; usually safe to ignore |
 
 #### Querying Conflicts
 
@@ -675,6 +748,7 @@ adapter.query_conflicts({
 ```
 
 Each conflict includes:
+
 - `local_version` / `remote_version`: Version vectors showing what each side had
 - `local_payload` / `remote_payload`: The actual data (opaque bytes; deserialize per schema)
 - `detected_at_ms`: When sync first saw the conflict
@@ -685,7 +759,7 @@ Each conflict includes:
 Once you've determined the correct state, update the record and mark conflict resolved:
 
 ```cpp
-// Apply the resolved version
+// Apply the resolved version (sender_node_id optional, defaults to empty)
 adapter.apply_record(resolved_record, "manual-resolution");
 
 // Mark conflict as resolved
@@ -705,11 +779,11 @@ A checkpoint shows where sync last completed successfully:
 Checkpoint = (sequence_number, last_record, last_version)
 ```
 
-| Field | Meaning |
-|---|---|
-| `sequence_number` | Batch counter. Increments after each successful sync round. |
-| `last_record` | Record ID of the last record in that batch. Sync won't re-send records before this. |
-| `last_version` | The version vector of that last record. Used to detect if state changed since checkpoint. |
+| Field             | Meaning                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `sequence_number` | Batch counter. Increments after each successful sync round.                               |
+| `last_record`     | Record ID of the last record in that batch. Sync won't re-send records before this.       |
+| `last_version`    | The version vector of that last record. Used to detect if state changed since checkpoint. |
 
 #### Measuring Sync Lag
 
@@ -735,6 +809,7 @@ If `compute_state_checksum(scope)` on vehicle differs from cloud's checksum:
 4. **Resumes from checkpoint** - Doesn't re-send everything
 
 Operators should see:
+
 - Temporary increase in network traffic (ID list exchange, missing record fetch)
 - Possible slight latency spike (one-time catch-up)
 - Return to normal sync pace after convergence
@@ -758,6 +833,7 @@ UPDATE records SET operation = kDelete, tombstone_at_ms = now() WHERE record_id 
 #### Tombstone Retention Policy
 
 Tombstones are retained until:
+
 1. Age exceeds 30 days (configurable: `SYNC_TOMBSTONE_RETENTION_DAYS`)
 2. **AND** all remote peers have acknowledged them
 
@@ -787,10 +863,11 @@ for (const auto& tombstone : tombstones) {
 #### What Version Vectors Tell You
 
 ```
-version_vector = { cloud_seq: 5, vehicle_seq: 2 }
+version_vector = { cloud_seq: 5, truck_seq: 2 }
 ```
 
 This record was:
+
 - Modified 5 times by the cloud
 - Modified 2 times by the vehicle
 - Total 7 edits
@@ -798,16 +875,16 @@ This record was:
 #### Dominance and Convergence
 
 ```
-Local:  { cloud_seq: 5, vehicle_seq: 2 }
-Remote: { cloud_seq: 5, vehicle_seq: 1 }
+Local:  { cloud_seq: 5, truck_seq: 2 }
+Remote: { cloud_seq: 5, truck_seq: 1 }
 
-Local dominates: YES (both cloud seqs equal, but local vehicle_seq is higher)
+Local dominates: YES (both cloud seqs equal, but local truck_seq is higher)
 Action: Remote accepts local version
 ```
 
 ```
-Local:  { cloud_seq: 5, vehicle_seq: 2 }
-Remote: { cloud_seq: 4, vehicle_seq: 3 }
+Local:  { cloud_seq: 5, truck_seq: 2 }
+Remote: { cloud_seq: 4, truck_seq: 3 }
 
 Neither dominates: CONFLICT
 Action: Both versions preserved in conflict table
@@ -832,23 +909,25 @@ adapter.query_conflicts({conflict_class: CONCURRENT_UPDATE})
 
 This is **pilot/prototype** sync for evaluation. In production, the following are NOT handled:
 
-| Capability | v1 Status | Notes |
-|---|---|---|
-| Single record stream per vehicle | Supported | One namespace at a time |
-| Multi-vehicle fleet scaling | **NOT IN v1** | Partition/sharding required for 1000+ vehicles |
-| Automatic conflict resolution | **NOT IN v1** | Conflicts surfaced; application/operator decides |
-| Cross-vehicle peer sync | **NOT IN v1** | Only cloud-vehicle sync |
-| Deployment automation | **NOT IN v1** | Manual service startup, config management not included |
-| Multi-cloud failover | **NOT IN v1** | Single cloud endpoint |
-| Transport negotiation | **NOT IN v1** | Fixed to MQTT for v1 |
+| Capability                       | v1 Status     | Notes                                                         |
+| -------------------------------- | ------------- | ------------------------------------------------------------- |
+| Single record stream per vehicle | Supported     | One namespace at a time                                       |
+| Multi-vehicle fleet scaling      | **NOT IN v1** | Partition/sharding required for 1000+ vehicles                |
+| Automatic conflict resolution    | **NOT IN v1** | Conflicts surfaced; application/operator decides              |
+| Cross-vehicle peer sync          | **NOT IN v1** | Only cloud-vehicle sync                                       |
+| Deployment automation            | **NOT IN v1** | Manual service startup, config management not included        |
+| Multi-cloud failover             | **NOT IN v1** | Single cloud endpoint                                         |
+| Transport negotiation            | **NOT IN v1** | Protocol is transport-agnostic; v1 reference bridge uses MQTT |
 
 ### 3.2 Coexisting with Existing Sync Bridges
 
 During rollout, you may have:
+
 - **Old scheduler-sync-bridge** (scheduler jobs only)
 - **New cloud-vehicle-sync-bridge** (generic data)
 
 They can coexist because:
+
 1. Different content IDs on MQTT (scheduler = 202, cloud-vehicle = 203+)
 2. Different storage backends (scheduler has its DB, sync has adapters)
 3. Different namespace scopes (scheduler records in "scheduler-jobs", sync in "jobs", etc.)
@@ -856,16 +935,19 @@ They can coexist because:
 #### Migration Path (Recommended)
 
 **Phase 1: Parallel Run (2-4 weeks)**
-- Deploy cloud-vehicle-sync for *new* data records (different namespace)
+
+- Deploy cloud-vehicle-sync for _new_ data records (different namespace)
 - Old scheduler-sync continues for existing job definitions
 - Verify conflict surfacing, checkpoint advance, tombstone GC
 
 **Phase 2: Cutover (if successful)**
+
 - Migrate job definitions to cloud-vehicle-sync adapter
 - Archive old scheduler-sync database
 - Update code to use cloud-vehicle-sync interface
 
 **Phase 3: Decommission (optional)**
+
 - Remove scheduler-sync code if not needed for audit trail
 - Consolidate all sync through cloud-vehicle-sync
 
@@ -913,13 +995,13 @@ Checksums, conflicts, and ACKs are per-namespace, so they won't collide.
 
 #### Troubleshooting
 
-| Symptom | Likely Cause | Action |
-|---|---|---|
-| Checkpoint not advancing | Adapter bug in `write_checkpoint()` | Check logs, verify atomicity |
-| Conflicts every sync | Ownership matrix not followed | Verify record origin_node_id |
-| Checksum always different | Non-deterministic hasher or schema mismatch | Verify payload encoding consistency |
-| Lag grows unbounded | Adapter `list_dirty_records()` bug or network down | Check adapter limits, network status |
-| Tombstones not cleaned | GC not running or retention policy too new | Verify GC job scheduled, check cutoff_ms |
+| Symptom                   | Likely Cause                                       | Action                                   |
+| ------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| Checkpoint not advancing  | Adapter bug in `write_checkpoint()`                | Check logs, verify atomicity             |
+| Conflicts every sync      | Ownership matrix not followed                      | Verify record origin_node_id             |
+| Checksum always different | Non-deterministic hasher or schema mismatch        | Verify payload encoding consistency      |
+| Lag grows unbounded       | Adapter `list_dirty_records()` bug or network down | Check adapter limits, network status     |
+| Tombstones not cleaned    | GC not running or retention policy too new         | Verify GC job scheduled, check cutoff_ms |
 
 ---
 
@@ -937,7 +1019,7 @@ make -j$(nproc) ifex-sync-core ifex-sync-adapters-database
 
 **Prerequisite:** CMake must find Protobuf development files and gRPC.
 
-#### Run adapter contract tests
+#### Run end-to-end sync integration tests
 
 ```bash
 ctest --test-dir build -R "database_sync_e2e" --output-on-failure
@@ -945,6 +1027,8 @@ ctest --test-dir build -R "gap_recovery_database_sync_e2e" --output-on-failure
 ctest --test-dir build -R "stale_ack_database_sync_e2e" --output-on-failure
 ctest --test-dir build -R "malformed_envelope_database_sync_e2e" --output-on-failure
 ```
+
+**What these test:** Full sync session lifecycle with SQLite adapter backend, including reconnect, gap recovery, ACK durability, and conflict detection.
 
 **Environment:** Requires Docker daemon for MQTT broker. See `.sisyphus/notepads/cloud-truck-sync-protocol/issues.md` for environment limitations.
 
@@ -961,8 +1045,8 @@ query.include_resolved = false;
 
 auto unresolved = adapter->query_conflicts(query);
 for (const auto& c : unresolved) {
-    std::cout << "Conflict: " << c.locator.record_id 
-              << " Local v" << c.local_version.cloud_seq 
+    std::cout << "Conflict: " << c.locator.record_id
+              << " Local v" << c.local_version.cloud_seq
               << " vs Remote v" << c.remote_version.cloud_seq << "\n";
 }
 ```
@@ -1004,7 +1088,7 @@ auto local_checksum = adapter->compute_state_checksum({
 
 ## Summary
 
-**Adapter SPI:** One interface, eight methods. Implement once, get conflict surfacing and resumable sync for free.
+**Adapter SPI:** One interface, eleven methods (`list_dirty_records`, `apply_record`, `read_checkpoint`, `write_checkpoint`, `persist_remote_acks`, `list_remote_acks`, `compute_state_checksum`, `list_record_ids`, `persist_conflict`, `query_conflicts`, `list_tombstones_for_gc`). Implement once, get conflict surfacing and resumable sync for free.
 
 **Onboarding:** Reference implementations show in-memory and SQLite patterns. Your domain-specific adapter reuses protocol core logic.
 

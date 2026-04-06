@@ -5,6 +5,16 @@
 #include <cstdlib>
 #include <atomic>
 #include <algorithm>
+#include <set>
+#include <utility>
+#include <vector>
+#include <cstring>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <limits.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -16,10 +26,176 @@ pid_t IntegrationTestFixture::test_types_pid_ = 0;
 pid_t IntegrationTestFixture::scheduler_pid_ = 0;
 bool IntegrationTestFixture::services_started_ = false;
 
+int IntegrationTestFixture::discovery_port_ = IntegrationTestFixture::TEST_DISCOVERY_PORT;
+int IntegrationTestFixture::dispatcher_port_ = IntegrationTestFixture::TEST_DISPATCHER_PORT;
+int IntegrationTestFixture::echo_port_ = IntegrationTestFixture::TEST_ECHO_PORT;
+int IntegrationTestFixture::test_types_port_ = IntegrationTestFixture::TEST_TYPES_PORT;
+int IntegrationTestFixture::scheduler_port_ = IntegrationTestFixture::TEST_SCHEDULER_PORT;
+
+std::string IntegrationTestFixture::discovery_address_ = IntegrationTestFixture::TEST_DISCOVERY_ADDRESS;
+std::string IntegrationTestFixture::dispatcher_address_ = IntegrationTestFixture::TEST_DISPATCHER_ADDRESS;
+std::string IntegrationTestFixture::echo_address_ = IntegrationTestFixture::TEST_ECHO_ADDRESS;
+std::string IntegrationTestFixture::test_types_address_ = IntegrationTestFixture::TEST_TYPES_ADDRESS;
+std::string IntegrationTestFixture::scheduler_address_ = IntegrationTestFixture::TEST_SCHEDULER_ADDRESS;
+
 // Static member definitions - MQTT
 std::string IntegrationTestFixture::mqtt_host_;
 int IntegrationTestFixture::mqtt_port_ = IntegrationTestFixture::MQTT_DEFAULT_PORT;
 bool IntegrationTestFixture::mqtt_started_ = false;
+
+namespace {
+
+std::string make_local_address(int port) {
+    return "localhost:" + std::to_string(port);
+}
+
+bool is_build_dir(const fs::path& candidate) {
+    return fs::exists(candidate / "CMakeCache.txt") &&
+           fs::exists(candidate / "reference-services") &&
+           fs::exists(candidate / "tests");
+}
+
+bool is_repo_root(const fs::path& candidate) {
+    return fs::exists(candidate / "CMakeLists.txt") &&
+           fs::exists(candidate / "reference-services") &&
+           fs::exists(candidate / "tests");
+}
+
+fs::path normalize_build_dir_candidate(const fs::path& candidate) {
+    fs::path ifex_subdir = candidate / "covesa-ifex-core" / "reference-services";
+    if (fs::exists(ifex_subdir)) {
+        return candidate / "covesa-ifex-core";
+    }
+    return candidate;
+}
+
+fs::path find_build_dir_from(fs::path start) {
+    fs::path current = std::move(start);
+    while (!current.empty() && current != current.root_path()) {
+        if (is_build_dir(current)) {
+            return normalize_build_dir_candidate(current);
+        }
+        current = current.parent_path();
+    }
+    return {};
+}
+
+fs::path find_repo_root_from(fs::path start) {
+    fs::path current = std::move(start);
+    while (!current.empty() && current != current.root_path()) {
+        if (is_repo_root(current)) {
+            return current;
+        }
+        current = current.parent_path();
+    }
+    return {};
+}
+
+fs::path get_executable_path() {
+#ifdef __APPLE__
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> buffer(size);
+    if (_NSGetExecutablePath(buffer.data(), &size) == 0) {
+        return fs::weakly_canonical(fs::path(buffer.data()));
+    }
+    return {};
+#else
+    char buffer[PATH_MAX] = {0};
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len <= 0) {
+        return {};
+    }
+    buffer[len] = '\0';
+    return fs::weakly_canonical(fs::path(buffer));
+#endif
+}
+
+bool can_bind_port(int port) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return false;
+    }
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+
+    bool ok = bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+    close(sock);
+    return ok;
+}
+
+int choose_port(int preferred_port, const std::set<int>& reserved) {
+    constexpr int kFallbackSpan = 128;
+    for (int candidate = preferred_port; candidate <= preferred_port + kFallbackSpan; ++candidate) {
+        if (reserved.count(candidate) != 0) {
+            continue;
+        }
+        if (can_bind_port(candidate)) {
+            return candidate;
+        }
+    }
+    return 0;
+}
+
+std::vector<fs::path> build_dir_candidates() {
+    std::vector<fs::path> candidates;
+
+    fs::path executable_path = get_executable_path();
+    if (!executable_path.empty()) {
+        candidates.push_back(find_build_dir_from(executable_path.parent_path()));
+        fs::path repo_root = find_repo_root_from(executable_path.parent_path());
+        if (!repo_root.empty()) {
+            candidates.push_back(repo_root / "build");
+        }
+    }
+
+    candidates.push_back(find_build_dir_from(fs::current_path()));
+
+    fs::path repo_root = find_repo_root_from(fs::current_path());
+    if (!repo_root.empty()) {
+        candidates.push_back(repo_root / "build");
+    }
+
+    candidates.push_back(fs::current_path());
+    candidates.push_back(fs::current_path() / "build");
+
+    std::vector<fs::path> normalized_candidates;
+    for (const fs::path& candidate : candidates) {
+        if (candidate.empty() || !is_build_dir(candidate)) {
+            continue;
+        }
+
+        fs::path normalized = fs::weakly_canonical(candidate);
+        if (std::find(normalized_candidates.begin(), normalized_candidates.end(), normalized) == normalized_candidates.end()) {
+            normalized_candidates.push_back(normalized);
+        }
+    }
+
+    return normalized_candidates;
+}
+
+fs::path resolve_build_dir() {
+    std::vector<fs::path> candidates = build_dir_candidates();
+    if (!candidates.empty()) {
+        return candidates.front();
+    }
+    return {};
+}
+
+fs::path resolve_build_relative_path(const fs::path& relative_path) {
+    for (const fs::path& build_dir : build_dir_candidates()) {
+        fs::path candidate = build_dir / relative_path;
+        if (fs::exists(candidate)) {
+            return fs::weakly_canonical(candidate);
+        }
+    }
+    return {};
+}
+
+}
 
 // Cleanup function called on exit (ensures services are stopped even on crash/abort)
 static void cleanup_services_atexit() {
@@ -44,15 +220,9 @@ void IntegrationTestFixture::GlobalSetUp() {
     std::filesystem::remove_all("/tmp/ifex-scheduler-test-persist");
     std::filesystem::create_directories("/tmp/ifex-scheduler-test-persist");
 
-    // Kill any stray processes from previous test runs on our test ports
-    // This handles cases where tests crashed or were interrupted
-    LOG(INFO) << "Cleaning up stray processes on test ports...";
-    for (int port : {TEST_DISCOVERY_PORT, TEST_DISPATCHER_PORT, TEST_SCHEDULER_PORT,
-                     TEST_ECHO_PORT, TEST_TYPES_PORT}) {
-        std::string cmd = "fuser -k " + std::to_string(port) + "/tcp 2>/dev/null";
-        [[maybe_unused]] int r = std::system(cmd.c_str());
+    if (!resolve_runtime_addresses()) {
+        FAIL() << "Unable to resolve free runtime ports for integration test services";
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // Start MQTT container first (optional - tests can skip if not available)
     if (!StartMqttContainer()) {
@@ -61,39 +231,39 @@ void IntegrationTestFixture::GlobalSetUp() {
 
     // Start discovery service first (others depend on it)
     discovery_pid_ = start_service(
-        get_build_dir() + "/reference-services/discovery/vehicle/service/ifex-discovery-service",
+        "reference-services/discovery/vehicle/service/ifex-discovery-service",
         "discovery",
-        TEST_DISCOVERY_PORT
+        GetDiscoveryPort()
     );
 
-    if (!wait_for_service(TEST_DISCOVERY_ADDRESS)) {
+    if (!wait_for_service(GetDiscoveryAddress())) {
         TearDownTestSuite();
         FAIL() << "Discovery service failed to start";
     }
 
     // Start all other services in parallel (they all depend only on discovery)
     dispatcher_pid_ = start_service(
-        get_build_dir() + "/reference-services/dispatcher/vehicle/service/ifex-dispatcher-service",
+        "reference-services/dispatcher/vehicle/service/ifex-dispatcher-service",
         "dispatcher",
-        TEST_DISPATCHER_PORT
+        GetDispatcherPort()
     );
 
     scheduler_pid_ = start_service(
-        get_build_dir() + "/reference-services/scheduler/vehicle/service/ifex-scheduler-service",
+        "reference-services/scheduler/vehicle/service/ifex-scheduler-service",
         "scheduler",
-        TEST_SCHEDULER_PORT
+        GetSchedulerPort()
     );
 
     echo_pid_ = start_service(
-        get_build_dir() + "/test-services/ifex-echo-service",
+        "test-services/ifex-echo-service",
         "echo",
-        TEST_ECHO_PORT
+        GetEchoPort()
     );
 
     test_types_pid_ = start_service(
-        get_build_dir() + "/tests/test-types/ifex-test-types-service",
+        "tests/test-types/ifex-test-types-service",
         "test-types",
-        TEST_TYPES_PORT
+        GetTestTypesPort()
     );
 
     // Wait for all services in parallel using threads
@@ -102,10 +272,10 @@ void IntegrationTestFixture::GlobalSetUp() {
     std::atomic<bool> echo_ready{false};
     std::atomic<bool> test_types_ready{false};
 
-    std::thread t1([&]() { dispatcher_ready = wait_for_service(TEST_DISPATCHER_ADDRESS); });
-    std::thread t2([&]() { scheduler_ready = wait_for_service(TEST_SCHEDULER_ADDRESS); });
-    std::thread t3([&]() { echo_ready = wait_for_service(TEST_ECHO_ADDRESS); });
-    std::thread t4([&]() { test_types_ready = wait_for_service(TEST_TYPES_ADDRESS); });
+    std::thread t1([&]() { dispatcher_ready = wait_for_service(GetDispatcherAddress()); });
+    std::thread t2([&]() { scheduler_ready = wait_for_service(GetSchedulerAddress()); });
+    std::thread t3([&]() { echo_ready = wait_for_service(GetEchoAddress()); });
+    std::thread t4([&]() { test_types_ready = wait_for_service(GetTestTypesAddress()); });
 
     t1.join();
     t2.join();
@@ -155,9 +325,9 @@ void IntegrationTestFixture::cleanup_all_services() {
 
 void IntegrationTestFixture::SetUp() {
     // Create channels for each test
-    discovery_channel_ = grpc::CreateChannel(TEST_DISCOVERY_ADDRESS, grpc::InsecureChannelCredentials());
-    dispatcher_channel_ = grpc::CreateChannel(TEST_DISPATCHER_ADDRESS, grpc::InsecureChannelCredentials());
-    scheduler_channel_ = grpc::CreateChannel(TEST_SCHEDULER_ADDRESS, grpc::InsecureChannelCredentials());
+    discovery_channel_ = grpc::CreateChannel(GetDiscoveryAddress(), grpc::InsecureChannelCredentials());
+    dispatcher_channel_ = grpc::CreateChannel(GetDispatcherAddress(), grpc::InsecureChannelCredentials());
+    scheduler_channel_ = grpc::CreateChannel(GetSchedulerAddress(), grpc::InsecureChannelCredentials());
 }
 
 void IntegrationTestFixture::TearDown() {
@@ -165,10 +335,14 @@ void IntegrationTestFixture::TearDown() {
 }
 
 pid_t IntegrationTestFixture::start_service(const std::string& executable, const std::string& name, int port) {
-    if (!fs::exists(executable)) {
-        LOG(ERROR) << "Service executable not found: " << executable;
+    fs::path resolved_executable = resolve_build_relative_path(executable);
+    if (resolved_executable.empty()) {
+        LOG(ERROR) << "Service executable not found: " << executable
+                   << " (cwd=" << fs::current_path().string() << ")";
         return 0;
     }
+
+    std::string resolved_executable_string = resolved_executable.string();
 
     pid_t pid = fork();
 
@@ -188,47 +362,47 @@ pid_t IntegrationTestFixture::start_service(const std::string& executable, const
         // Execute the service
         if (name == "discovery") {
             std::string listen_param = "--listen=" + listen_addr;
-            execl(executable.c_str(), executable.c_str(), listen_param.c_str(), nullptr);
+            execl(resolved_executable_string.c_str(), resolved_executable_string.c_str(), listen_param.c_str(), nullptr);
         } else if (name == "dispatcher") {
             std::string listen_param = "--listen=" + listen_addr;
-            std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
-            execl(executable.c_str(), executable.c_str(),
+            std::string discovery_param = "--discovery=" + GetDiscoveryAddress();
+            execl(resolved_executable_string.c_str(), resolved_executable_string.c_str(),
                   listen_param.c_str(),
                   discovery_param.c_str(),
                   nullptr);
         } else if (name == "scheduler") {
             std::string listen_param = "--listen=" + listen_addr;
-            std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
+            std::string discovery_param = "--discovery=" + GetDiscoveryAddress();
             std::string persist_param = "--persistence-dir=/tmp/ifex-scheduler-test-persist";
-            execl(executable.c_str(), executable.c_str(),
+            execl(resolved_executable_string.c_str(), resolved_executable_string.c_str(),
                   listen_param.c_str(),
                   discovery_param.c_str(),
                   persist_param.c_str(),
                   nullptr);
         } else if (name == "echo") {
             std::string listen_param = "--listen=" + listen_addr;
-            std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
-            execl(executable.c_str(), executable.c_str(),
+            std::string discovery_param = "--discovery=" + GetDiscoveryAddress();
+            execl(resolved_executable_string.c_str(), resolved_executable_string.c_str(),
                   listen_param.c_str(),
                   discovery_param.c_str(),
                   nullptr);
         } else if (name == "test-types") {
-            fs::path test_types_dir = fs::path(executable).parent_path();
+            fs::path test_types_dir = resolved_executable.parent_path();
             if (chdir(test_types_dir.c_str()) != 0) {
                 LOG(ERROR) << "Failed to change to test-types directory: " << test_types_dir;
                 _exit(1);
             }
 
             std::string listen_param = "--listen=" + listen_addr;
-            std::string discovery_param = "--discovery=" + std::string(TEST_DISCOVERY_ADDRESS);
-            execl(executable.c_str(), executable.c_str(),
+            std::string discovery_param = "--discovery=" + GetDiscoveryAddress();
+            execl(resolved_executable_string.c_str(), resolved_executable_string.c_str(),
                   listen_param.c_str(),
                   discovery_param.c_str(),
                   nullptr);
         }
 
         // If exec fails
-        LOG(ERROR) << "Failed to exec " << executable << ": " << strerror(errno);
+        LOG(ERROR) << "Failed to exec " << resolved_executable_string << ": " << strerror(errno);
         _exit(1);
     } else if (pid < 0) {
         LOG(ERROR) << "Failed to fork for " << name << " service";
@@ -297,25 +471,12 @@ bool IntegrationTestFixture::wait_for_service(const std::string& address, int ti
 }
 
 std::string IntegrationTestFixture::get_build_dir() {
-    // Try to find the build directory relative to the test executable
-    fs::path current = fs::current_path();
-
-    // Look for CMakeCache.txt to identify build directory
-    while (!current.empty() && current != current.root_path()) {
-        if (fs::exists(current / "CMakeCache.txt")) {
-            // Check if we're in a parent build directory (covesa-ifex-core as subdirectory)
-            // In this case, services are in <build>/covesa-ifex-core/reference-services/
-            fs::path ifex_subdir = current / "covesa-ifex-core" / "reference-services";
-            if (fs::exists(ifex_subdir)) {
-                return (current / "covesa-ifex-core").string();
-            }
-            return current.string();
-        }
-        current = current.parent_path();
+    fs::path build_dir = resolve_build_dir();
+    if (!build_dir.empty()) {
+        return build_dir.string();
     }
 
-    // Fallback to current directory
-    return ".";
+    return fs::current_path().string();
 }
 
 std::string IntegrationTestFixture::get_schema_dir() {
@@ -341,6 +502,53 @@ std::string IntegrationTestFixture::get_schema_dir() {
     return "./ifex";
 }
 
+bool IntegrationTestFixture::resolve_runtime_addresses() {
+    std::set<int> reserved;
+
+    discovery_port_ = choose_port(TEST_DISCOVERY_PORT, reserved);
+    if (discovery_port_ == 0) {
+        return false;
+    }
+    reserved.insert(discovery_port_);
+
+    dispatcher_port_ = choose_port(TEST_DISPATCHER_PORT, reserved);
+    if (dispatcher_port_ == 0) {
+        return false;
+    }
+    reserved.insert(dispatcher_port_);
+
+    scheduler_port_ = choose_port(TEST_SCHEDULER_PORT, reserved);
+    if (scheduler_port_ == 0) {
+        return false;
+    }
+    reserved.insert(scheduler_port_);
+
+    echo_port_ = choose_port(TEST_ECHO_PORT, reserved);
+    if (echo_port_ == 0) {
+        return false;
+    }
+    reserved.insert(echo_port_);
+
+    test_types_port_ = choose_port(TEST_TYPES_PORT, reserved);
+    if (test_types_port_ == 0) {
+        return false;
+    }
+
+    discovery_address_ = make_local_address(discovery_port_);
+    dispatcher_address_ = make_local_address(dispatcher_port_);
+    scheduler_address_ = make_local_address(scheduler_port_);
+    echo_address_ = make_local_address(echo_port_);
+    test_types_address_ = make_local_address(test_types_port_);
+
+    LOG(INFO) << "Resolved integration test addresses: "
+              << "discovery=" << discovery_address_ << ", "
+              << "dispatcher=" << dispatcher_address_ << ", "
+              << "scheduler=" << scheduler_address_ << ", "
+              << "echo=" << echo_address_ << ", "
+              << "test-types=" << test_types_address_;
+    return true;
+}
+
 bool IntegrationTestFixture::RestartScheduler() {
     LOG(INFO) << "=== Restarting scheduler service ===";
 
@@ -352,9 +560,9 @@ bool IntegrationTestFixture::RestartScheduler() {
 
     // Start scheduler again
     scheduler_pid_ = start_service(
-        get_build_dir() + "/reference-services/scheduler/vehicle/service/ifex-scheduler-service",
+        "reference-services/scheduler/vehicle/service/ifex-scheduler-service",
         "scheduler",
-        TEST_SCHEDULER_PORT
+        GetSchedulerPort()
     );
 
     if (scheduler_pid_ == 0) {
@@ -363,7 +571,7 @@ bool IntegrationTestFixture::RestartScheduler() {
     }
 
     // Wait for scheduler to be ready
-    if (!wait_for_service(TEST_SCHEDULER_ADDRESS)) {
+    if (!wait_for_service(GetSchedulerAddress())) {
         LOG(ERROR) << "Scheduler failed to become ready after restart";
         return false;
     }

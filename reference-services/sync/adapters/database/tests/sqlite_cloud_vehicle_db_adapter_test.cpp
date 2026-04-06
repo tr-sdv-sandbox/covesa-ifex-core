@@ -89,6 +89,12 @@ TEST(DatabaseAdapterContract, DirtyEnumerationUsesPerSessionAcks) {
         checkpoint.last_record = first.locator;
         checkpoint.last_version = first.version_vector;
         adapter.write_checkpoint(session, checkpoint);
+        VersionAck first_ack;
+        first_ack.locator = first.locator;
+        first_ack.version_vector = first.version_vector;
+        first_ack.correlation_id = "ack-job-1";
+        first_ack.idempotency_key = "ack-idem-job-1";
+        adapter.persist_remote_acks(session, {first_ack});
 
         const std::vector<CanonicalRecord> dirty =
             adapter.list_dirty_records({session, 10, true});
@@ -211,6 +217,12 @@ TEST(DatabaseAdapterContract, TombstoneGcRequiresAckAndRetentionCutoff) {
         checkpoint.last_record = tombstone.locator;
         checkpoint.last_version = tombstone.version_vector;
         adapter.write_checkpoint(session, checkpoint);
+        VersionAck tombstone_ack;
+        tombstone_ack.locator = tombstone.locator;
+        tombstone_ack.version_vector = tombstone.version_vector;
+        tombstone_ack.correlation_id = "ack-fact-1";
+        tombstone_ack.idempotency_key = "ack-idem-fact-1";
+        adapter.persist_remote_acks(session, {tombstone_ack});
 
         EXPECT_EQ(adapter.list_tombstones_for_gc({session, 400, 10}).size(), 0U);
         EXPECT_EQ(adapter.list_tombstones_for_gc({session, 500, 10}).size(), 1U);

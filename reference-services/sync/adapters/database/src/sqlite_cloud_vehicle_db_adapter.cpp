@@ -161,10 +161,6 @@ bool column_bool(sqlite3_stmt* stmt, int index) {
     return sqlite3_column_int(stmt, index) != 0;
 }
 
-bool has_locator(const RecordLocator& locator) {
-    return !locator.namespace_name.empty() || !locator.origin_node_id.empty() || !locator.record_id.empty();
-}
-
 bool has_session_limit(std::size_t limit) {
     return limit != 0;
 }
@@ -574,7 +570,8 @@ std::vector<CanonicalRecord> SqliteCloudVehicleDbAdapter::list_dirty_records(
 }
 
 ApplyResult SqliteCloudVehicleDbAdapter::apply_record(const CanonicalRecord& record,
-                                                    const std::string& idempotency_key) {
+                                                     const std::string& idempotency_key,
+                                                     const std::string& sender_node_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     Transaction transaction(db_);
 
@@ -599,7 +596,7 @@ ApplyResult SqliteCloudVehicleDbAdapter::apply_record(const CanonicalRecord& rec
         record,
         local_record.has_value() ? &*local_record : nullptr,
         owner_for(record.locator.namespace_name),
-        record.locator.origin_node_id,
+        sender_node_id.empty() ? record.locator.origin_node_id : sender_node_id,
         conflict_detected_at_ms(record));
 
     ApplyResult result;
@@ -640,7 +637,7 @@ CheckpointReadResult SqliteCloudVehicleDbAdapter::read_checkpoint(const SyncSess
 }
 
 void SqliteCloudVehicleDbAdapter::write_checkpoint(const SyncSessionKey& session,
-                                                 const CheckpointToken& checkpoint) {
+                                                   const CheckpointToken& checkpoint) {
     std::lock_guard<std::mutex> lock(mutex_);
     Transaction transaction(db_);
 
@@ -651,11 +648,43 @@ void SqliteCloudVehicleDbAdapter::write_checkpoint(const SyncSessionKey& session
     }
 
     store_checkpoint(db_, session, checkpoint);
-    if (has_locator(checkpoint.last_record)) {
-        maybe_store_remote_ack(db_, session, checkpoint.last_record, checkpoint.last_version);
-    }
 
     transaction.commit();
+}
+
+void SqliteCloudVehicleDbAdapter::persist_remote_acks(const SyncSessionKey& session,
+                                                      const std::vector<VersionAck>& durable_acks) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Transaction transaction(db_);
+    for (const VersionAck& ack : durable_acks) {
+        maybe_store_remote_ack(db_, session, ack.locator, ack.version_vector);
+    }
+    transaction.commit();
+}
+
+std::vector<VersionAck> SqliteCloudVehicleDbAdapter::list_remote_acks(
+    const SyncSessionKey& session) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    Statement stmt(db_,
+                   "SELECT record_namespace, record_origin_node_id, record_id, ack_cloud_seq, ack_truck_seq "
+                   "FROM remote_acks WHERE local_node_id = ? AND remote_node_id = ? AND namespace_name = ? "
+                   "ORDER BY record_namespace, record_origin_node_id, record_id");
+    bind_text(stmt.get(), 1, session.local_node_id);
+    bind_text(stmt.get(), 2, session.remote_node_id);
+    bind_text(stmt.get(), 3, session.namespace_name);
+
+    std::vector<VersionAck> durable_acks;
+    while (step_row(db_, stmt.get())) {
+        VersionAck ack;
+        ack.locator.namespace_name = column_text(stmt.get(), 0);
+        ack.locator.origin_node_id = column_text(stmt.get(), 1);
+        ack.locator.record_id = column_blob(stmt.get(), 2);
+        ack.version_vector.cloud_seq = column_u64(stmt.get(), 3);
+        ack.version_vector.truck_seq = column_u64(stmt.get(), 4);
+        durable_acks.push_back(std::move(ack));
+    }
+    return durable_acks;
 }
 
 std::uint64_t SqliteCloudVehicleDbAdapter::compute_state_checksum(const StateScope& scope) {

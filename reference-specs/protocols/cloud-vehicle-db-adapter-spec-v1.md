@@ -1,4 +1,4 @@
-# Cloud-Truck Database Adapter Specification v1
+# Cloud-Vehicle Database Adapter Specification v1
 
 **Version:** 1.0  
 **Date:** 2026-03-17  
@@ -8,13 +8,13 @@
 
 ### 1.1 Purpose
 
-This specification defines the persistence contract for a cloud-truck synchronization adapter. The adapter owns durable storage, replay safety, checkpoint persistence, conflict persistence, tombstone retention, and deterministic state queries while remaining independent of transport bindings and database engine details.
+This specification defines the persistence contract for a cloud-vehicle synchronization adapter. The adapter owns durable storage, replay safety, checkpoint persistence, conflict persistence, tombstone retention, and deterministic state queries while remaining independent of transport bindings and database engine details.
 
 ### 1.2 Scope
 
 The adapter contract covers:
 
-- Canonical record persistence for cloud-truck sync
+- Canonical record persistence for cloud-vehicle sync
 - Dirty-record enumeration for fast-path sync
 - Idempotent apply of inbound records
 - Durable checkpoint read/write per sync session
@@ -171,7 +171,16 @@ Checkpoint storage MUST be separate from record apply so the core protocol can:
 
 `read_checkpoint` MUST return the last durable checkpoint for the requested sync session, or no value when the session has no prior progress.
 
-## 7. Checksum and Record-ID Listing
+## 7. ACK Persistence (Separate from Checkpoint)
+
+Durable ACK tracking is distinct from checkpoints. The adapter MUST support persistent storage and retrieval of remote acknowledgments:
+
+- `persist_remote_acks(session, acks)` MUST durably store which record versions have been confirmed by the remote peer.
+- `list_remote_acks(session)` MUST return all persisted acks for a session on restart, enabling the bridge to rebuild in-memory state without losing acknowledgment history.
+
+ACKs and checkpoints are managed separately so the bridge can detect and skip already-acked records across process restarts.
+
+## 8. Checksum and Record-ID Listing
 
 ### 7.1 Checksum Scope
 
@@ -194,11 +203,11 @@ It MUST exclude:
 - conflict records
 - correlation metadata
 
-### 7.2 Determinism
+### 8.1 Determinism
 
 The checksum result MUST be deterministic for identical logical state regardless of read order or storage layout.
 
-### 7.3 Record-ID Listing
+### 8.2 Record-ID Listing
 
 `list_record_ids` MUST:
 
@@ -206,13 +215,13 @@ The checksum result MUST be deterministic for identical logical state regardless
 - support inclusion of tombstones when requested
 - expose the full logical set used during gap recovery
 
-## 8. Conflict Persistence and Query
+## 9. Conflict Persistence and Query
 
-### 8.1 Persistence
+### 9.1 Persistence
 
 When a conflict is surfaced by the protocol core or adapter-owned ownership validation, the adapter MUST store the conflict durably before reporting success to the caller.
 
-### 8.2 Queryability
+### 9.2 Queryability
 
 `query_conflicts` MUST support querying by namespace and time range and MAY allow additional filters such as resolution state or record locator.
 
@@ -223,13 +232,13 @@ Conflict query results MUST include enough detail for an application or test har
 - what payloads were in dispute
 - why the conflict was surfaced
 
-## 9. Tombstone Lifecycle and Garbage Collection
+## 10. Tombstone Lifecycle and Garbage Collection
 
-### 9.1 Tombstone Creation
+### 10.1 Tombstone Creation
 
 Delete operations MUST be represented as canonical records with `operation=DELETE`. The adapter MUST preserve the tombstone record rather than removing the logical row immediately.
 
-### 9.2 Visibility
+### 10.2 Visibility
 
 Tombstones MUST remain visible to:
 
@@ -238,7 +247,7 @@ Tombstones MUST remain visible to:
 - record-ID listing when tombstones are included
 - contract-test queries that verify retention behavior
 
-### 9.3 GC Eligibility
+### 10.3 GC Eligibility
 
 A tombstone is GC-eligible only when all of the following are true:
 
@@ -246,17 +255,18 @@ A tombstone is GC-eligible only when all of the following are true:
 2. every relevant remote session has acknowledged the tombstone version
 3. no active gap-recovery workflow still depends on it for reconciliation
 
-### 9.4 GC Contract
+### 10.4 GC Contract
 
 The SPI only exposes candidate enumeration. An implementation MAY provide a separate purge mechanism later, but v1 requires at minimum that the adapter can list tombstones that are safe to collect without guessing.
 
-## 10. SPI Contract Summary
+## 11. SPI Contract Summary
 
 The v1 SPI MUST expose operations for:
 
 - dirty-record enumeration
-- idempotent apply
+- idempotent apply (with sender validation via sender_node_id)
 - checkpoint read/write
+- durable ACK persistence and retrieval
 - checksum computation
 - record-ID listing
 - conflict persistence/query
@@ -264,7 +274,7 @@ The v1 SPI MUST expose operations for:
 
 The SPI MUST remain transport-neutral and storage-engine-neutral.
 
-## 11. Contract-Test Obligations
+## 12. Contract-Test Obligations
 
 Every adapter implementation MUST pass the same contract suite. The suite MUST verify at least:
 
@@ -279,7 +289,7 @@ Every adapter implementation MUST pass the same contract suite. The suite MUST v
 9. **Tombstone GC candidacy** never returns an unacknowledged tombstone as safe to collect.
 10. **No transport leakage** confirms the contract does not require topics, partitions, brokers, or storage-engine-specific fields.
 
-## 12. Out of Scope
+## 13. Out of Scope
 
 The following remain out of scope for v1:
 
@@ -289,9 +299,9 @@ The following remain out of scope for v1:
 - automatic conflict-resolution policy
 - physical purge API for tombstones beyond candidate discovery
 
-## 13. References
+## 14. References
 
-- `reference-specs/protocols/cloud-truck-sync-protocol-v1.md`
-- `proto/internal/cloud-truck-sync-envelope.proto`
-- `reference-services/sync/common/include/cloud_truck_sync_types.hpp`
-- `reference-services/sync/common/include/cloud_truck_db_adapter.hpp`
+- `reference-specs/protocols/cloud-vehicle-sync-protocol-v1.md`
+- `proto/internal/cloud-vehicle-sync-envelope.proto`
+- `reference-services/sync/common/include/cloud_vehicle_sync_types.hpp`
+- `reference-services/sync/common/include/cloud_vehicle_db_adapter.hpp`

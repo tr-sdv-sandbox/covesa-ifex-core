@@ -27,6 +27,18 @@ protected:
     static constexpr const char* TEST_TYPES_ADDRESS = "localhost:50095";
     static constexpr const char* TEST_SCHEDULER_ADDRESS = "localhost:50094";
 
+    static int discovery_port_;
+    static int dispatcher_port_;
+    static int echo_port_;
+    static int test_types_port_;
+    static int scheduler_port_;
+
+    static std::string discovery_address_;
+    static std::string dispatcher_address_;
+    static std::string echo_address_;
+    static std::string test_types_address_;
+    static std::string scheduler_address_;
+
     // ==========================================================================
     // MQTT Docker Container Configuration
     // ==========================================================================
@@ -77,10 +89,23 @@ public:
     static int GetMqttPort() { return mqtt_port_; }
     static bool IsMqttAvailable() { return mqtt_started_; }
 
+    static const std::string& GetDiscoveryAddress() { return discovery_address_; }
+    static const std::string& GetDispatcherAddress() { return dispatcher_address_; }
+    static const std::string& GetEchoAddress() { return echo_address_; }
+    static const std::string& GetTestTypesAddress() { return test_types_address_; }
+    static const std::string& GetSchedulerAddress() { return scheduler_address_; }
+
+    static int GetDiscoveryPort() { return discovery_port_; }
+    static int GetDispatcherPort() { return dispatcher_port_; }
+    static int GetEchoPort() { return echo_port_; }
+    static int GetTestTypesPort() { return test_types_port_; }
+    static int GetSchedulerPort() { return scheduler_port_; }
+
 private:
     static pid_t start_service(const std::string& executable, const std::string& name, int port);
     static void stop_service(pid_t& pid, const std::string& name);
     static bool wait_for_service(const std::string& address, int timeout_seconds = 5);
+    static bool resolve_runtime_addresses();
 
     static std::string get_build_dir();
     static std::string get_schema_dir();

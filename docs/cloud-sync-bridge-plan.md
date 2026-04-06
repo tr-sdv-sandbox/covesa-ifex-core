@@ -3,10 +3,12 @@
 ## Problem Statement
 
 Currently, the sync protocol logic is duplicated:
+
 1. **ifex-core** `cloud/cloud-scheduler-service/` - In-memory, for testing
 2. **offboard-services** `services/ingestion/scheduler_mirror/` - PostgreSQL, for production
 
 Both implement Scheduler Sync Protocol v2 but separately, leading to:
+
 - Code duplication
 - Potential protocol divergence
 - Testing one implementation doesn't validate the other
@@ -14,6 +16,7 @@ Both implement Scheduler Sync Protocol v2 but separately, leading to:
 ## Goal
 
 Create a **generic cloud-scheduler-sync-bridge** that:
+
 1. Uses IFEX-generated gRPC interfaces (no custom abstractions)
 2. Works with ANY implementation of cloud-scheduler-service
 3. Works with ANY implementation of cloud-backend-transport
@@ -22,6 +25,7 @@ Create a **generic cloud-scheduler-sync-bridge** that:
 ## Key Design Principle: Separation of Concerns
 
 **Scheduler Service = Storage + Checksum**
+
 - Stores jobs with version vector fields (cloud_seq, vehicle_seq, authority, etc.)
 - Stores sync state (checksums) per vehicle
 - **Recomputes cloud_checksum on every job create/update/delete** (uses libs/scheduler/checksum.hpp)
@@ -30,6 +34,7 @@ Create a **generic cloud-scheduler-sync-bridge** that:
 - Does NOT implement version vector comparison logic
 
 **Sync Bridge = Protocol**
+
 - Owns the sync protocol wire format (V2C_SyncMessage, C2V_SyncMessage)
 - Parses incoming V2C messages, extracts job data
 - Compares version vectors, decides what to update
@@ -38,6 +43,7 @@ Create a **generic cloud-scheduler-sync-bridge** that:
 - Calls scheduler's generic job API
 
 **Why this separation?**
+
 - Sync protocol can evolve without changing scheduler API
 - Scheduler implementations (in-memory, PostgreSQL) stay simple
 - Single place to test/debug sync protocol logic
@@ -511,6 +517,7 @@ Vehicle → V2C message (protobuf) → Backend Transport
 ## Migration Plan
 
 ### Phase 1: Add Internal Methods to cloud-scheduler-service (ifex-core)
+
 1. Add internal methods to IFEX spec (get_jobs_for_vehicle, upsert_job, etc.)
 2. Run generate_proto.sh
 3. Implement methods in CloudSchedulerService (in-memory)
@@ -518,6 +525,7 @@ Vehicle → V2C message (protobuf) → Backend Transport
 5. Verify existing dashboard API still works
 
 ### Phase 2: Create cloud-scheduler-sync-bridge (ifex-core)
+
 1. Create IFEX spec for bridge monitoring API
 2. Implement sync bridge with all protocol logic:
    - V2C/C2V message parsing (uses existing proto/internal/scheduler-sync-v2.proto)
@@ -528,6 +536,7 @@ Vehicle → V2C message (protobuf) → Backend Transport
 4. Verify protocol correctness matches current scheduler_mirror behavior
 
 ### Phase 3: Add Internal Methods to offboard-services
+
 1. Implement same internal methods in scheduler_service_impl.cpp (PostgreSQL)
    - get_jobs_for_vehicle → SQL query
    - upsert_job → UPSERT with version fields
@@ -539,6 +548,7 @@ Vehicle → V2C message (protobuf) → Backend Transport
 5. E2E tests with production-like data
 
 ### Phase 4: Deprecate scheduler_mirror
+
 1. Route all sync traffic through new sync bridge
 2. Remove scheduler_mirror from deployment
 3. Remove scheduler_mirror code

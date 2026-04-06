@@ -1,4 +1,4 @@
-# Cloud-Truck Synchronization Protocol v1 Specification
+# Cloud-Vehicle Synchronization Protocol v1 Specification
 
 **Version:** 1.0  
 **Date:** 2026-03-17  
@@ -50,11 +50,12 @@ This specification defines a bidirectional synchronization protocol between clou
 Every record synchronized via this protocol is uniquely identified by:
 
 ```
-Canonical Identity = (record_id, origin_node_id)
+Canonical Identity = (record_id, namespace_name, origin_node_id)
 ```
 
 Where:
 - **record_id**: Opaque bytes or string, unique per record type within scope (e.g., job ID, config key)
+- **namespace_name**: Logical scope for the record stream (e.g., "jobs", "config")
 - **origin_node_id**: Stable identifier for the node that created the record (e.g., "cloud", "truck-001")
 
 ### 2.2 Per-Origin Logical Versioning
@@ -64,7 +65,7 @@ Each record carries a version vector with per-origin sequence numbers:
 ```
 Version Vector = {
   cloud_seq: uint64,      // Sequence of updates from cloud for this record
-  vehicle_seq: uint64,    // Sequence of updates from vehicle for this record
+  truck_seq: uint64,      // Sequence of updates from vehicle for this record
   // (may extend to >2 origins in future)
 }
 ```
@@ -72,9 +73,9 @@ Version Vector = {
 **Invariant:** For a given `(record_id, origin)` pair, the sequence is strictly monotonic increasing. Only the origin that created the record can increment its own sequence.
 
 **Example:**
-- Record created by cloud: version = {cloud_seq: 1, vehicle_seq: 0}
-- Vehicle modifies it: version = {cloud_seq: 1, vehicle_seq: 1}
-- Cloud re-modifies: version = {cloud_seq: 2, vehicle_seq: 1}
+- Record created by cloud: version = {cloud_seq: 1, truck_seq: 0}
+- Vehicle modifies it: version = {cloud_seq: 1, truck_seq: 1}
+- Cloud re-modifies: version = {cloud_seq: 2, truck_seq: 1}
 
 ### 2.3 Authority and Ownership Matrix
 
@@ -100,10 +101,12 @@ Every record exchanged via the protocol is wrapped in a canonical envelope:
 
 ```
 Record Envelope = {
-  record_id: bytes,                    // Unique identifier
-  origin_node_id: string,              // "cloud" or "truck-{id}"
-  namespace: string,                   // Scope/type (e.g., "jobs", "config")
-  version_vector: VersionVector,       // {cloud_seq, vehicle_seq, ...}
+  locator: {
+    record_id: bytes,
+    namespace_name: string,
+    origin_node_id: string,
+  },
+  version_vector: VersionVector,       // {cloud_seq, truck_seq}
   operation: enum (CREATE | UPDATE | DELETE),  // Intent
   payload: bytes,                      // Opaque record data
   schema_version: uint32,              // For versioning payload format
@@ -118,7 +121,7 @@ Record Envelope = {
   correlation_id: string,              // For request/response if applicable
   
   // Optional metadata
-  checksum_payload: uint64,            // xxHash64 of payload (for integrity check)
+  payload_checksum: uint64,            // Optional payload-integrity helper
   tombstone_at_ms: uint64,             // When record was soft-deleted (if operation=DELETE)
   tombstone_reason: string,            // Why deleted (optional)
 }
@@ -160,8 +163,8 @@ At any point in time, one side has a version that dominates the other. They conv
 Given two versions of the same record:
 
 ```
-Local  = {cloud_seq: A, vehicle_seq: B}
-Remote = {cloud_seq: C, vehicle_seq: D}
+Local  = {cloud_seq: A, truck_seq: B}
+Remote = {cloud_seq: C, truck_seq: D}
 ```
 
 **Dominance:**
@@ -189,103 +192,210 @@ Dirty record = any record that has not been acked by the remote side yet.
 
 ## 4. Envelope and Message Types
 
-### 4.1 Sync Exchange Envelope
+### 4.1 Top-Level Envelope: CloudVehicleSyncEnvelope
 
-All sync traffic is wrapped in a directional envelope with explicit type discrimination:
+All sync traffic on the wire is wrapped in a single top-level envelope message with explicit **oneof** type discrimination. This ensures:
+- Type-safe message routing (receiver knows message category before unmarshalling)
+- Backward compatibility (new message types can be added as new oneof cases)
+- Clear protocol state machine (each case has distinct semantics and handlers)
+
+**Canonical wire envelope structure (from proto/internal/cloud-vehicle-sync-envelope.proto):**
 
 ```protobuf
-// Direction marker (used for context only; not transmitted)
-enum Direction {
-  CLOUD_TO_VEHICLE = 0;
-  VEHICLE_TO_CLOUD = 1;
+message CloudVehicleSyncEnvelope {
+  oneof message {
+    SyncExchange sync_exchange = 1;              // Fast path: dirty records + acks + checkpoint
+    CheckpointAdvance checkpoint_advance = 2;   // Durable ACK persistence (separate from sync)
+    GapRecoveryRequest gap_recovery_request = 3;  // Recovery path: ID list exchange
+    GapRecoveryResponse gap_recovery_response = 4; // Recovery path: ID list response
+  }
+}
+```
+
+**Reception logic:**
+- Receiver unmarshals outer CloudVehicleSyncEnvelope
+- Inspects which oneof case is set
+- Dispatches to appropriate handler (SyncExchange handler, CheckpointAdvance handler, etc.)
+- Each message type carries its own sender_node_id and correlation_id for routing and validation
+
+The constituent message types are:
+
+```protobuf
+// Canonical wire envelope structure (from proto/internal/cloud-vehicle-sync-envelope.proto)
+
+message CheckpointToken {
+  uint64 sequence_number = 1;  // Monotonic batch counter
+  RecordLocator last_record = 2;  // Last record processed at this checkpoint
+  VersionVector last_version = 3;  // Version vector of that record
 }
 
-// Wrapper envelope (direction-neutral payload)
-message SyncMessage {
-  string origin_node_id = 1;           // Sender identity
-  string recipient_node_id = 2;        // Target node (for routing)
-  
-  // Sync state
-  repeated RecordEnvelope records = 3; // Dirty records being sent
-  repeated VersionAck acked_records = 4; // ACKs for received records
-  uint64 state_checksum = 5;           // Checksum of sender's full state
-  
-  // Metadata
-  uint64 sent_at_ms = 10;              // Sender's wall-clock at send time
-  uint32 checkpoint_token = 11;        // Opaque token for resume
-  string correlation_id = 12;          // For linking request/response if needed
+message RecordLocator {
+  bytes record_id = 1;
+  string namespace_name = 2;
+  string origin_node_id = 3;  // Creator identity (cloud or vehicle)
 }
 
-// Version acknowledgment (without full record payload)
+message RecordEnvelope {
+  RecordLocator locator = 1;
+  VersionVector version_vector = 2;
+  RecordOperation operation = 3;  // CREATE, UPDATE, DELETE
+  bytes payload = 4;
+  uint32 schema_version = 5;
+  string idempotency_key = 6;
+  string correlation_id = 7;
+  uint64 payload_checksum = 8;
+  uint64 wall_clock_ms = 9;
+  uint64 created_at_ms = 10;
+  uint64 updated_at_ms = 11;
+  uint64 tombstone_at_ms = 12;
+  string tombstone_reason = 13;
+}
+
 message VersionAck {
-  bytes record_id = 1;
-  string namespace = 2;
-  VersionVector version_vector = 3;
-  // Acknowledges: "I received and stored your version of this record"
+  RecordLocator locator = 1;  // Which record is acked
+  VersionVector version_vector = 2;  // Up to which version
+  string correlation_id = 3;
+  string idempotency_key = 4;
 }
 
-// Gap detection message (recovery path only)
-message GapDetectMessage {
-  string origin_node_id = 1;
-  repeated bytes my_record_ids = 2;    // All IDs I have
-  repeated bytes requested_record_ids = 3; // IDs I need from you
-  
-  // Trigger condition
-  uint64 my_checksum = 4;              // My current checksum
-  uint64 your_last_checksum = 5;       // Checksum you reported last time
-  string reason = 6;                   // Diagnostic (e.g., "checksum mismatch")
+message SyncExchange {
+  string sender_node_id = 1;  // Authenticated peer identity (validated at bridge boundary)
+  string recipient_node_id = 2;
+  repeated RecordEnvelope records = 3;  // Dirty records being sent
+  repeated VersionAck acked_records = 4;  // Acknowledgments of received records
+  uint64 state_checksum = 5;  // Checksum of sender's full state
+  CheckpointToken checkpoint = 6;  // Sync progress for resume
+  string correlation_id = 7;
+  string idempotency_key = 8;
 }
 
-// Conflict record (persisted in storage, surfaced to application)
-message ConflictRecord {
-  bytes record_id = 1;
-  string namespace = 2;
-  VersionVector local_version = 3;
-  VersionVector remote_version = 4;
-  bytes local_payload = 5;             // What we have locally
-  bytes remote_payload = 6;            // What remote side sent
-  ConflictClass conflict_class = 7;    // Categorization (see below)
-  uint64 detected_at_ms = 8;           // When conflict was first seen
-  string resolver_note = 9;            // Application-set resolution hint
+message CheckpointAdvance {
+  string sender_node_id = 1;  // Authenticated peer identity
+  string recipient_node_id = 2;
+  repeated VersionAck durable_acks = 3;  // Persisted ACK set
+  CheckpointToken durable_checkpoint = 4;  // Durable checkpoint state
+  uint64 state_checksum = 5;
+  string correlation_id = 6;
+  string idempotency_key = 7;
+}
+
+message GapRecoveryRequest {
+  string sender_node_id = 1;  // Authenticated peer identity
+  string recipient_node_id = 2;
+  repeated RecordLocator record_ids = 3;  // All IDs sender has
+  repeated RecordLocator requested_records = 4;  // IDs sender needs from recipient
+  uint64 local_state_checksum = 5;  // Sender's current checksum
+  uint64 remote_state_checksum = 6;  // Last known remote checksum
+  string reason = 7;  // Diagnostic context
+  string correlation_id = 8;
+}
+
+message GapRecoveryResponse {
+  string sender_node_id = 1;  // Authenticated peer identity
+  string recipient_node_id = 2;
+  repeated RecordLocator record_ids = 3;  // All IDs sender has
+  repeated RecordLocator requested_records = 4;  // IDs recipient requested
+  uint64 local_state_checksum = 5;  // Sender's current checksum
+  uint64 remote_state_checksum = 6;  // Last known remote checksum
+  string correlation_id = 7;
+}
+
+message CloudVehicleSyncEnvelope {
+  oneof message {
+    SyncExchange sync_exchange = 1;
+    CheckpointAdvance checkpoint_advance = 2;
+    GapRecoveryRequest gap_recovery_request = 3;
+    GapRecoveryResponse gap_recovery_response = 4;
+  }
+}
+
+enum RecordOperation {
+  RECORD_OPERATION_CREATE = 0;
+  RECORD_OPERATION_UPDATE = 1;
+  RECORD_OPERATION_DELETE = 2;
 }
 
 enum ConflictClass {
-  CONCURRENT_UPDATE = 0;   // Both sides updated independently (versions incomparable)
-  NON_OWNER_MUTATION = 1;  // Non-owner tried to modify owned record
-  STALE_REPLAY = 2;        // Received an older version (should not apply)
+  CONFLICT_CLASS_CONCURRENT_UPDATE = 0;   // Both sides updated independently
+  CONFLICT_CLASS_NON_OWNER_MUTATION = 1;  // Non-owner attempted write
+  CONFLICT_CLASS_STALE_REPLAY = 2;        // Older version than local state
 }
 
 message VersionVector {
   uint64 cloud_seq = 1;
-  uint64 vehicle_seq = 2;
+  uint64 truck_seq = 2;  // truck sequence
 }
 ```
 
-### 4.2 Checkpoint Token
+### 4.2 sender_node_id: Peer Identity at Bridge Boundary
 
-Opaque token incremented after each successful batch of applies. Used to resume sync without full state re-scan:
+The `sender_node_id` field present in **all** message types (SyncExchange, CheckpointAdvance, GapRecoveryRequest, GapRecoveryResponse) represents the **authenticated peer identity** established at the bridge boundary. It is **not** derived from or validated against record content.
+
+**Key distinction:**
+- **`sender_node_id`**: Authenticated peer identity (e.g., mTLS certificate CN, OAuth2 subject). Validated at bridge entry. Same for all messages from that peer in a session.
+- **`record.locator.origin_node_id`**: Record creator identity (immutable metadata attached to record). May differ from sender_node_id if records flow through intermediaries or caches.
+
+**Bridge validation logic:**
+1. Incoming message `sender_node_id` MUST match authenticated peer identity (reject if mismatch)
+2. Ownership checks compare `record.locator.origin_node_id` against authority matrix (not against sender_node_id)
+3. Example: Cloud bridge receives SyncExchange with sender_node_id="truck-001", records include origin_node_id="truck-001" → passes ownership
+4. Example: Cloud bridge receives SyncExchange with sender_node_id="truck-001", records include origin_node_id="cloud" → cloud record from non-cloud source, fails ownership check
+
+**Implication:** A truck can forward a cloud-created record (origin_node_id="cloud") if authorized, but sender_node_id still reflects the truck as the immediate peer sending the message.
+
+### 4.3 Message Types: Fast Path vs. Durability
+
+The proto model distinguishes two primary message types by concern:
+
+**SyncExchange** (fast path):
+- **Purpose:** Bidirectional record exchange in normal operation
+- **Contents:** Dirty records (to send), acked records (confirmations), state_checksum, checkpoint (for resume)
+- **Checkpoint field:** Included but optional; checkpoint_advance message used for explicit durable persistence
+- **Delivery model:** At-least-once (best effort, may be lost)
+- **When used:** Fast sync when connectivity is available; sending/receiving dirty records
+
+**CheckpointAdvance** (durable persistence):
+- **Purpose:** Explicitly persist acknowledgments and checkpoints to storage
+- **Contents:** durable_acks (persisted ACK set), durable_checkpoint (persisted checkpoint), state_checksum
+- **Separation:** ACK durability is decoupled from SyncExchange messages
+- **Delivery model:** Must be durably persisted by receiver before acknowledging
+- **When used:** After a burst of SyncExchange messages, to ensure ACK/checkpoint state survives restart
+
+**RecoveryMessages** (GapRecoveryRequest/Response):
+- **Purpose:** Resume after suspected data loss or checksum mismatch
+- **Contents:** Full record ID lists from both peers, checksums for validation
+- **Trigger:** Checksum mismatch + no dirty records = gap detection
+- **Flow:** Request ID lists → compare → identify missing → re-sync via SyncExchange
+
+This separation ensures:
+- Fast path doesn't force synchronous durable writes on every message
+- ACK/checkpoint durability is explicit and testable
+- Recovery is orthogonal to normal sync flow
+
+### 4.4 Checkpoint Token Fields
+
+Checkpoint token contains explicit fields (not opaque):
 
 ```
-Checkpoint = {
-  last_applied_record_id: bytes,       // Last record successfully applied
-  last_applied_origin: string,         // Origin of that record
-  last_applied_version: VersionVector, // Version at that point
-  sequence_number: uint32,             // Monotonic counter
+CheckpointToken {
+  sequence_number,     // Monotonic batch counter (never decreases)
+  last_record,         // Locator of last applied record
+  last_version,        // Version vector at that point
 }
 ```
 
-Receiver persists checkpoint after ACKing records. On reconnect, sender can resume from `checkpoint_token` instead of rescanning all records.
+This enables resume from exact position without full state rescan.
 
-### 4.3 Message Correlation
+### 4.5 Message Correlation
 
-If the protocol is used in a request-response pattern (e.g., "send me all records for vehicle X"):
+All message types carry a `correlation_id` field enabling async request-response matching when used in request-response patterns (e.g., "send me all records for vehicle X"):
 
 ```
-Request: SyncMessage { correlation_id = "abc-123", ... }
-Response: SyncMessage { correlation_id = "abc-123", ... }
+Request: SyncExchange { correlation_id = "abc-123", sender_node_id = "cloud", ... }
+Response: SyncExchange { correlation_id = "abc-123", sender_node_id = "truck-001", ... }
 ```
 
-The `correlation_id` allows callers to match async responses.
+The `correlation_id` allows callers to match async responses across network boundaries.
 
 ## 5. Sync Flow
 
@@ -299,7 +409,8 @@ CLOUD                                           VEHICLE
   │ dirty: [job-A]                               │ dirty: [job-X]
   │ checksum: 0xAAAA                             │ checksum: 0xBBBB
   │                                               │
-  ├──── SyncMessage ─────────────────────────────▶
+  ├──── SyncExchange ────────────────────────────▶
+  │     sender_node_id: "cloud"                   │
   │     records: []                               │
   │     acked_records: []                         │
   │     state_checksum: 0xAAAA                    │
@@ -307,7 +418,8 @@ CLOUD                                           VEHICLE
   │                          Mismatch, has dirty  │
   │                          Send dirty (fast)    │
   │                                               │
-  ◀──── SyncMessage ─────────────────────────────┤
+  ◀──── SyncExchange ────────────────────────────┤
+  │     sender_node_id: "truck-001"               │
   │     records: [job-X@{0,1}]  (dirty)           │
   │     acked_records: []                         │
   │     state_checksum: 0xBBBB                    │
@@ -316,7 +428,8 @@ CLOUD                                           VEHICLE
   │ job-A still dirty                             │
   │ Send dirty job-A + ACK job-X                  │
   │                                               │
-  ├──── SyncMessage ─────────────────────────────▶
+  ├──── SyncExchange ────────────────────────────▶
+  │     sender_node_id: "cloud"                   │
   │     records: [job-A@{1,0}]  (dirty)           │
   │     acked_records: [job-X@{0,1}]  (ack)       │
   │     state_checksum: 0xCCCC                    │
@@ -324,7 +437,8 @@ CLOUD                                           VEHICLE
   │                          Apply job-A          │
   │                          Store ACK for job-X  │
   │                                               │
-  ◀──── SyncMessage ─────────────────────────────┤
+  ◀──── SyncExchange ────────────────────────────┤
+  │     sender_node_id: "truck-001"               │
   │     records: []                               │
   │     acked_records: [job-A@{1,0}]  (ack)       │
   │     state_checksum: 0xCCCC                    │
@@ -335,7 +449,7 @@ CLOUD                                           VEHICLE
   ═══════════════════ QUIESCENT ═══════════════════
 ```
 
-**Key:** ACKs allow both sides to update their `remote_version` bookkeeping. Convergence happens when `local_version == remote_version` for all records and checksums match.
+**Key:** ACKs allow both sides to persist remote acknowledgments. Convergence happens when `local_version == remote_version` for all records and checksums match.
 
 ### 5.2 Recovery Path (Gap Detection)
 
@@ -347,24 +461,27 @@ CLOUD                                           VEHICLE
   │ checksum: 0xAAAA                             │ checksum: 0xBBBB
   │ no dirty records                              │ no dirty records
   │                                               │
-  ├──── GapDetectMessage ────────────────────────▶
-  │     my_record_ids: [id1, id2, id3]            │
-  │     requested_record_ids: []                  │
-  │     my_checksum: 0xAAAA                       │
+  ├──── GapRecoveryRequest ──────────────────────▶
+  │     sender_node_id: "cloud"                   │
+  │     record_ids: [id1, id2, id3]               │
+  │     requested_records: []                     │
+  │     local_state_checksum: 0xAAAA              │
   │                                               │
   │                          Compare IDs          │
   │                          Missing: [id4]       │
   │                          Extra: [id5]         │
   │                                               │
-  ◀──── GapDetectMessage ────────────────────────┤
-  │     my_record_ids: [id1, id2, id4, id5]       │
-  │     requested_record_ids: [id3]               │
-  │     my_checksum: 0xBBBB                       │
+  ◀──── GapRecoveryResponse ─────────────────────┤
+  │     sender_node_id: "truck-001"               │
+  │     record_ids: [id1, id2, id4, id5]          │
+  │     requested_records: [id3]                  │
+  │     local_state_checksum: 0xBBBB              │
   │                                               │
   │ Send missing records: id4, id5                │
   │ (full re-sync of missing)                     │
   │                                               │
-  ├──── SyncMessage ─────────────────────────────▶
+  ├──── SyncExchange ────────────────────────────▶
+  │     sender_node_id: "cloud"                   │
   │     records: [record-id4, record-id5]         │
   │     ...                                       │
   │                                               │
@@ -375,7 +492,7 @@ CLOUD                                           VEHICLE
 ```
 
 **Trigger:** Checksum mismatch + no dirty records = suspected gap.  
-**Action:** Exchange full ID lists, identify missing records, re-sync.
+**Action:** Exchange full ID lists via GapRecoveryRequest/Response, identify missing records, re-sync via SyncExchange.
 
 ## 6. Idempotency and Replay Semantics
 
@@ -394,17 +511,17 @@ The storage adapter deduplicates applies by this key:
 ### 6.2 Replay Detection and ACKing
 
 ```
-Receive SyncMessage with records R1, R2:
+Receive SyncExchange with records R1, R2:
   1. For each record in R1, R2:
        a. Compute idempotency_key
        b. Check if already applied (lookup in storage)
        c. If yes: mark as acked (no state change)
        d. If no: apply, store new state, mark as acked
   2. After all records processed:
-       a. Increment checkpoint_token
+       a. Increment CheckpointToken.sequence_number
        b. Compute new state_checksum
        c. Send back VersionAck for each record
-       d. Include new checkpoint_token and state_checksum
+       d. Include new CheckpointToken and state_checksum in next SyncExchange message
 ```
 
 **Invariant:** Multiple applies of the same record with the same version do not advance state beyond first apply.
@@ -431,9 +548,8 @@ After successful batch apply and ack exchange:
 ```
 Checkpoint {
   sequence_number: N+1,
-  last_applied_record_id: bytes,
-  last_applied_version: VersionVector,
-  timestamp_ms: now,
+  last_record: RecordLocator,
+  last_version: VersionVector,
 }
 ```
 
@@ -445,9 +561,9 @@ On reconnect:
 
 ```
 Sender (cloud) queries receiver (vehicle) for current checkpoint
-Receiver returns: checkpoint_token = N
-Sender looks up: "Give me all records changed since checkpoint N"
-Sender builds SyncMessage with only dirty records since N
+Receiver returns: CheckpointToken with sequence_number = N
+Sender looks up: "Give me all records changed since CheckpointToken.sequence_number N"
+Sender builds SyncExchange with only dirty records (those not acked by receiver) since N
 → Much faster than full state rescan
 ```
 
@@ -474,7 +590,7 @@ Where `remote_version_ack` = the version of this record that the remote side has
 The storage adapter provides method:
 
 ```
-GetDirtyRecords(namespace: string, limit: int) 
+list_dirty_records(query) 
   → List<RecordEnvelope>
 ```
 
@@ -483,7 +599,7 @@ Returns records where `local_version > remote_version_ack`, up to `limit`.
 ### 8.3 Fast Path Optimization
 
 If dirty list is small (< N records):
-- Send all dirty records in one SyncMessage
+- Send all dirty records in one SyncExchange
 - Receiver applies, sends acks
 - Converges in 1-2 round trips
 
@@ -507,18 +623,17 @@ RecordEnvelope {
 }
 ```
 
-Sender increments its sequence: `cloud_seq` or `vehicle_seq`.
+Sender increments its sequence: `cloud_seq` or `truck_seq`.
 
 ### 9.2 Tombstone Visibility and Querying
 
 Tombstones are queryable/visible until retention rules expire:
 
 ```
-GetAllRecords(include_tombstones: true)
-  → returns active records + tombstones
+list_tombstones_for_gc(TombstoneGcQuery{...})
+  → returns tombstones eligible for garbage collection
 
-GetTombstonesForGC(max_age_ms: X)
-  → returns tombstones older than X milliseconds
+query policy can be configured to include namespace filters and age thresholds
 ```
 
 ### 9.3 Tombstone Garbage Collection Safety
@@ -550,8 +665,8 @@ Justification: Allows vehicles disconnected for ~4 weeks to reconnect and learn 
 Both cloud and vehicle independently updated the same record:
 
 ```
-Local  = {cloud_seq: 1, vehicle_seq: 2}  (vehicle updated last)
-Remote = {cloud_seq: 2, vehicle_seq: 1}  (cloud updated, but vehicle has old seq)
+Local  = {cloud_seq: 1, truck_seq: 2}  (vehicle updated last)
+Remote = {cloud_seq: 2, truck_seq: 1}  (cloud updated, but vehicle has old seq)
 
 Neither dominates → CONFLICT
 ```
@@ -575,8 +690,8 @@ Received update from VEHICLE
 Received an older version than what we already have:
 
 ```
-Local  = {cloud_seq: 2, vehicle_seq: 1}
-Remote = {cloud_seq: 1, vehicle_seq: 1}  (older cloud_seq)
+Local  = {cloud_seq: 2, truck_seq: 1}
+Remote = {cloud_seq: 1, truck_seq: 1}  (older cloud_seq)
 
 Remote is dominated by Local → stale, do not apply
 ```
@@ -610,11 +725,11 @@ Application queries conflict table to:
 Adapter exposes:
 
 ```
-GetConflicts(namespace: string, since_ms: uint64)
+query_conflicts(ConflictQuery{namespace_name, include_resolved, ...})
   → List<ConflictRecord>
 
-MarkConflictResolved(record_id: bytes, resolution: string)
-  → Marks conflict as handled (soft delete in conflict table)
+persist_conflict(conflict_with_resolved_flag)
+  → Upserts conflict state, including resolved lifecycle updates
 ```
 
 ## 11. Ownership Invariants and Conflict Classes
@@ -662,8 +777,8 @@ Checksums cover logical record state only; exclude:
 ```
 For each record (sorted by record_id, namespace):
   1. Extract: {record_id, origin, version_vector, operation, payload}
-  2. Compute: hash = xxHash64(serialized_record)
-  3. Combine: running_checksum = xxHash64(running_checksum ^ hash)
+2. Compute and combine using deterministic FNV-1a style mixing over logical fields
+3. Continue in deterministic order for all scoped records
 
 Final checksum = running_checksum
 ```
@@ -679,7 +794,7 @@ If dirty records exist:
   → Fast path: send dirty records, receiver applies, recompute
   
 If NO dirty records exist:
-  → Recovery path: exchange ID lists (GapDetectMessage)
+  → Recovery path: exchange ID lists (GapRecoveryRequest/GapRecoveryResponse)
      Identify missing/extra records
      Re-sync missing ones
 ```
@@ -688,11 +803,11 @@ If NO dirty records exist:
 
 Explicitly NOT included in v1 (planned for future versions or different protocols):
 
-- **Cross-truck replication:** Truck-to-truck sync not addressed; only cloud-truck
+- **Cross-vehicle replication:** Vehicle-to-vehicle sync not addressed; only cloud-vehicle
 - **Fleet partition scaling:** No orchestration of sync fanout across thousands of vehicles
 - **Automatic conflict resolution policies:** Each deployment chooses its own policy; this spec only surfaces conflicts
 - **Exactly-once semantics:** Model is at-least-once with idempotency; some ordering edge cases may allow re-apply of benign operations
-- **Multi-protocol transport:** Spec is transport-agnostic (gRPC, MQTT, AMQP, etc. all valid); specific bindings in separate docs
+- **Multi-protocol transport:** Spec is transport-agnostic (gRPC, MQTT, AMQP, etc. all valid); specific bindings in separate docs. MQTT is a reference bridge runtime for v1, not the canonical protocol.
 - **Encryption or signing:** Security assumed at transport layer (TLS, MQTT TLS, etc.)
 - **Rate limiting or throttling:** Deployment-specific; not addressed in protocol
 - **Metrics and observability APIs:** Monitoring/alerting is storage adapter responsibility
@@ -702,45 +817,50 @@ Explicitly NOT included in v1 (planned for future versions or different protocol
 The storage adapter implements:
 
 ```cpp
-class StorageAdapter {
+class CloudVehicleDbAdapter {
 public:
-  // Apply a record with idempotency check
-  ApplyResult ApplyRecord(
-    const RecordEnvelope& record,
-    const std::string& idempotency_key);
-  
-  // Get dirty records since last checkpoint
-  std::vector<RecordEnvelope> GetDirtyRecords(
-    const std::string& namespace,
-    const CheckpointToken& from_checkpoint,
-    int limit);
+  // Apply a record with idempotency check and sender validation
+  ApplyResult apply_record(
+    const CanonicalRecord& record,
+    const std::string& idempotency_key,
+    const std::string& sender_node_id = "");
+   
+   // Get records not yet acked by remote peer (dirty records)
+   std::vector<CanonicalRecord> list_dirty_records(
+     const DirtyRecordQuery& query);
   
   // Compute checksum of all records in namespace
-  uint64_t ComputeChecksum(const std::string& namespace);
+  uint64_t compute_state_checksum(const StateScope& scope);
   
   // Get all record IDs in namespace (for gap detection)
-  std::vector<bytes> GetAllRecordIds(const std::string& namespace);
+  std::vector<RecordLocator> list_record_ids(
+    const RecordIdQuery& query);
   
   // Persist a conflict record
-  void StoreConflict(const ConflictRecord& conflict);
+  void persist_conflict(const ConflictRecord& conflict);
   
   // Query conflicts
-  std::vector<ConflictRecord> GetConflicts(
-    const std::string& namespace,
-    uint64_t since_ms);
+  std::vector<ConflictRecord> query_conflicts(
+    const ConflictQuery& query);
   
   // Checkpoint ops
-  CheckpointToken GetCurrentCheckpoint();
-  void AdvanceCheckpoint(const CheckpointToken& new_checkpoint);
+  CheckpointReadResult read_checkpoint(const SyncSessionKey& session);
+  void write_checkpoint(const SyncSessionKey& session,
+    const CheckpointToken& checkpoint);
+  
+  // Durable ACK persistence (separate from checkpoints)
+  void persist_remote_acks(const SyncSessionKey& session,
+    const std::vector<VersionAck>& acks);
+  std::vector<VersionAck> list_remote_acks(
+    const SyncSessionKey& session);
   
   // Tombstone queries
-  std::vector<RecordEnvelope> GetTombstones(
-    const std::string& namespace,
-    uint64_t max_age_ms);
+  std::vector<CanonicalRecord> list_tombstones_for_gc(
+    const TombstoneGcQuery& query);
 };
 ```
 
-Full adapter SPI defined in Task 2 (cloud-truck-db-adapter-spec-v1.md).
+Full adapter SPI defined in `cloud-vehicle-db-adapter-spec-v1.md`.
 
 ## 15. Summary: Protocol Invariants
 
@@ -758,7 +878,7 @@ Full adapter SPI defined in Task 2 (cloud-truck-db-adapter-spec-v1.md).
 ## References
 
 - **Version Vector Semantics:** Inspired by Lamport logical clocks and vector clocks (Mattern, Fidge)
-- **Checksum Design:** xxHash64 for speed and determinism (no cryptographic guarantee needed; integrity via transport)
+- **Checksum Design:** deterministic FNV-1a style logical-state hashing (no cryptographic guarantee needed; integrity via transport)
 - **Conflict Handling:** Authority-based resolution (similar to CRDT approach with ownership domains)
 - **At-Least-Once Delivery:** Idempotency keys ensure safe replay (Kafka, RabbitMQ pattern)
 - **Soft Delete via Tombstones:** Standard eventual-consistency technique (Dynamo, Cassandra)
