@@ -1,8 +1,20 @@
 # Cloud-Vehicle Synchronization: Adapter Onboarding and Operations Guide
 
-**Document Version:** 1.0  
-**Date:** 2026-03-26  
-**Scope:** v1 reference implementation, non-production
+**Document Version:** 1.1  
+**Date:** 2026-06-08  
+**Scope:** v1 reference implementation, non-production; includes v2 migration pointer
+
+## v2 Specification Pointer
+
+A v2 documentation/specification set is available for future Rust implementation and arbitrary database-table synchronization:
+
+- `reference-specs/protocols/cloud-vehicle-sync-protocol-v2.md`
+- `reference-specs/protocols/cloud-vehicle-db-adapter-spec-v2.md`
+- `reference-specs/protocols/cloud-vehicle-database-sync-adapter-example-v2.md`
+
+v2 supersedes the v1 `CloudVehicleDbAdapter` shape when implemented. Instead of one C++ adapter interface, v2 specifies Rust traits for canonical record storage, ACK/checkpoint sessions, conflicts, tombstones, time state, domain codecs, transport bindings, and replaceable time providers. Roughtime is used as the initial boot-time evidence provider; after rough time and active connectivity are available, SNTP is used for normal clock synchronization. Both are intentionally behind replaceable interfaces so future time or clock technologies can be substituted without changing sync protocol logic.
+
+Use this v1 guide for the current reference code. Use the v2 specs when planning new database synchronization use cases such as vehicle configuration and user profiles.
 
 ## Overview
 
